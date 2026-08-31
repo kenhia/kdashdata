@@ -1,3 +1,5 @@
 .scratch/
 .env
 .korg-sprint-proposal
+build/
+build-aarch64/

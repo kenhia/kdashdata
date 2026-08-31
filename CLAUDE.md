@@ -70,10 +70,12 @@ rendering; aarch64 and x86_64); (3) thin publisher wrappers, Rust and Python.
 The dashboards and their publisher daemons live in their own repos and
 consume this one — nothing here runs as a service.
 
-Status: contract v0 landed (sprint 001, korg:1733) — see
-`docs/architecture.md` (decisions CD-1…CD-6, open questions OQ-n),
-`contracts/rules.md` and `contracts/registry.md`. Next: the shared C
-consumer library (sprint 002).
+Status: contract v0 landed (sprint 001, korg:1733); the shared C consumer
+library landed (sprint 002, korg:1751). See `docs/architecture.md`
+(decisions CD-1…CD-10, open questions OQ-n), `contracts/rules.md`,
+`contracts/registry.md`, and `include/kdash/kdash.h` for the library's API.
+Next: the Rust/Python publisher wrappers, or kstudiodash's first
+consumption of the library (korg:1728).
 
 Conventions and constraints:
 
@@ -87,5 +89,8 @@ Conventions and constraints:
   real consumer exists.
 - korg project: kdashdata. Read first: `sprints/planning/roadmap.md`, then
   `docs/` and `contracts/` once sprint 001 lands.
-- `just check` is a python3-stdlib gate (`scripts/check.py`): every JSON
-  file parses, every relative markdown link resolves.
+- `just check` is two gates: `check-docs` (python3 stdlib only,
+  `scripts/check.py` — every JSON file parses, every relative markdown link
+  resolves) plus a CMake build of the C library and its ctest unit tests.
+  The unit tests cover only the pure core (no Redis, no network); the socket
+  paths are verified live with `just dump`, which needs `REDISCLI_AUTH`.

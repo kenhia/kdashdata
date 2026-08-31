@@ -1,0 +1,9 @@
+cJSON 1.7.18
+Upstream: https://github.com/DaveGamble/cJSON (tag v1.7.18)
+Files vendored: cJSON.c, cJSON.h, LICENSE
+License: MIT (see LICENSE)
+
+Vendored verbatim — do not edit. Parsing uses the default CJSON_NESTING_LIMIT
+recursion guard. Vendored rather than taken as a system dependency so the
+aarch64 cross build needs nothing in the Pi sysroot but hiredis (sprint 002,
+CD-9). The same copy, at the same version, is vendored in kdeskdash.

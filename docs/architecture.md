@@ -85,6 +85,20 @@ Resolution rules inherited from the kpidash-client implementation: resolve
 on **every** connect (a moved Redis is picked up within one loop interval);
 local config override wins outright; khlenv never holds the password (CD-2).
 
+The library's resolution order, as implemented in sprint 002: explicit
+`$KDASH_CENTRAL_REDIS` in the environment, then khlenv's new stem, then —
+**on a 404 miss only** — khlenv's legacy alias, then the historical default
+`rpi53:6379` when khlenv itself cannot be reached. A `204` at either stem is
+an explicit null and stops the walk: "deliberately no endpoint" is an answer,
+not a reason to fall back further.
+
+Both stems are seeded in the khlenv store (k-homelab `khlenv/store.yml`) and
+resolve to `rpi53:6379` as of 2026-08-31 — the new one added in sprint 002,
+after that sprint measured it missing and every consumer reaching the
+endpoint through the legacy alias. **If the central Redis moves, both entries
+move together**, and the legacy one retires only when kpidash-client's
+publishers have migrated (CD-3).
+
 ## CD-5 — Consumers are read-only
 
 Dashboards read feeds; they do not write to homelab services. The narrow
@@ -122,6 +136,53 @@ desk pair, not fleet-shared state. It therefore does **not** move to the
 central Redis — each pair keeps its own endpoint (dev pair on
 `rpidash2:6380` today, work pair on its own instance). The nudge channel's
 auth token and the pair-local scoping are features of this shape, not debt.
+
+## CD-9 — Two dependencies, and no more: hiredis (system) + cJSON (vendored)
+
+The shared C library (sprint 002) is where this repo stopped being
+dependency-free, so the budget is stated rather than discovered:
+
+- **hiredis — a system dependency.** Debian ships it (`libhiredis-dev`) on
+  every architecture the dashboards run, both dashboards already link it,
+  and vendoring a Redis client to avoid a package that is already installed
+  everywhere would be the wrong trade. Found with **CMake config first,
+  pkg-config as the fallback** — the fallback is not decoration: the aarch64
+  sysroot ships `hiredis.pc` and no CMake config, so it is the path every
+  cross build actually takes.
+- **cJSON — vendored, in `lib/cjson/`.** Payloads are JSON, so something has
+  to parse them; vendoring one MIT file pair keeps the cross build needing
+  nothing in the sysroot but hiredis, and it is the same copy at the same
+  version kdeskdash already carries. Vendored verbatim — never edited.
+
+Anything further needs a decision here first. In particular, the library
+speaks khlenv's HTTP protocol directly rather than taking libcurl for one
+unencrypted GET (see CD-4); a resolver whose whole debugging story is
+`curl -i` does not justify a dependency.
+
+## CD-10 — The library is a pure core plus a thin I/O shell
+
+The consumer library splits in two, and the split is load-bearing rather
+than tidy:
+
+- **Pure core** — key grammar, both freshness models, the five payload
+  parsers. No Redis, no sockets, no ambient clock (`now` is always a
+  parameter). It builds and tests on any host with a C compiler and
+  nothing installed.
+- **I/O shell** — endpoint discovery, the connection handle, the typed
+  readers. Thin by construction: it fetches bytes and hands them to the
+  core.
+
+This is the kdeskdash `claude_feed.c` / `claude_redis.c` split, promoted to
+a rule, and it is what makes the repo's gate honest: the logic that is
+actually easy to get wrong — a key that should have been skipped, a required
+field that should have rejected a record, a staleness boundary — is all
+unit-testable with no Redis, no network, and no hardware. What is left
+untested by `just check` is the socket code, which is verified live against
+the real fleet (`just dump`).
+
+The library has **no rendering of any kind** and never will: no LVGL, no
+layout, no colours. Three dashboards with three different screens share a
+data model, not a look.
 
 ## Open questions
 

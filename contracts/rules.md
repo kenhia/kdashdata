@@ -79,5 +79,11 @@ staleness means something, loose enough that one missed write isn't a flap.
 
 Read-only (CD-5); degrade-don't-block (CD-6); trust published state only
 while fresh; validate at the choke point and skip bad records. The shared C
-library (sprint 002) implements this once — dashboards should consume feeds
-through it rather than hand-rolling hiredis loops.
+library implements this once (sprint 002, `include/kdash/`) — dashboards
+should consume feeds through it rather than hand-rolling hiredis loops.
+
+What the library does **not** do is decide staleness for you. The expiring
+feeds answer freshness by key absence, and the ts-owned ones hand back `ts`
+so the panel applies its own window — that is what "reader-owned staleness"
+means, and a library that pre-filtered stale records would take the decision
+away from the only code that knows how it wants to render one.
