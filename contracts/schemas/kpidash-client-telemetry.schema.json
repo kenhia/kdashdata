@@ -1,0 +1,43 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/kenhia/kdashdata/contracts/schemas/kpidash-client-telemetry.schema.json",
+  "title": "kpidash client telemetry",
+  "description": "Payload of kpidash:client:{host}:telemetry — latest-value, SET EX 15, written ~5 s.",
+  "type": "object",
+  "required": ["hostname", "ts", "cpu_pct", "ram_used_mb", "ram_total_mb"],
+  "additionalProperties": true,
+  "properties": {
+    "hostname": { "type": "string", "pattern": "^[A-Za-z0-9._-]{1,63}$" },
+    "ts": { "type": "number", "description": "Unix seconds (float), writer's clock" },
+    "cpu_pct": { "type": "number", "minimum": 0, "description": "Average CPU utilisation, 0-100" },
+    "top_core_pct": { "type": "number", "minimum": 0, "description": "Busiest single core, 0-100; optional" },
+    "ram_used_mb": { "type": "number", "minimum": 0 },
+    "ram_total_mb": { "type": "number", "minimum": 0 },
+    "gpu": {
+      "type": ["object", "null"],
+      "description": "Null or absent when no GPU present",
+      "additionalProperties": true,
+      "properties": {
+        "name": { "type": "string" },
+        "vram_used_mb": { "type": "number", "minimum": 0 },
+        "vram_total_mb": { "type": "number", "minimum": 0 },
+        "compute_pct": { "type": "number", "minimum": 0 }
+      }
+    },
+    "disks": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["label", "used_gb", "total_gb", "pct"],
+        "additionalProperties": true,
+        "properties": {
+          "label": { "type": "string" },
+          "type": { "type": "string", "enum": ["nvme", "ssd", "hdd", "other"] },
+          "used_gb": { "type": "number", "minimum": 0 },
+          "total_gb": { "type": "number", "minimum": 0 },
+          "pct": { "type": "number", "minimum": 0, "maximum": 100 }
+        }
+      }
+    }
+  }
+}

@@ -1,0 +1,15 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/kenhia/kdashdata/contracts/schemas/kpidash-apttemps.schema.json",
+  "title": "kpidash apartment temperatures",
+  "description": "Payload of kpidash:apttemps:{zone} — latest-value, no TTL, reader-owned staleness via ts (300 s window in kpidash). {zone} is a lowercase slug and is authoritative; the payload zone field is a display label.",
+  "type": "object",
+  "required": ["temp_f", "humidity_pct", "ts"],
+  "additionalProperties": true,
+  "properties": {
+    "zone": { "type": "string", "description": "Display label (proper case); optional" },
+    "temp_f": { "type": "number", "description": "Temperature °F, rendered to 1 decimal" },
+    "humidity_pct": { "type": "number", "description": "Relative humidity, whole number" },
+    "ts": { "type": "number", "description": "Unix seconds (float); drives staleness" }
+  }
+}

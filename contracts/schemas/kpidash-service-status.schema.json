@@ -1,0 +1,19 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/kenhia/kdashdata/contracts/schemas/kpidash-service-status.schema.json",
+  "title": "kpidash service status",
+  "description": "Payload of kpidash:services:{name}:{host} — latest-value, no TTL, reader-owned staleness via ts (60 s window in kpidash). Key is always 4 segments; {host} sentinel `_` means no host. Identity is (name, host); the key is authoritative over any payload echo.",
+  "type": "object",
+  "required": ["ts", "state", "text"],
+  "additionalProperties": true,
+  "properties": {
+    "ts": { "type": "number", "description": "Unix seconds (float) of last payload; drives staleness" },
+    "state": {
+      "type": "string",
+      "enum": ["ok", "unhealthy", "maintenance", "down", "unknown"]
+    },
+    "text": { "type": "string", "description": "Short status text shown on the card" },
+    "host": { "type": "string", "description": "Echo of the key's host segment, display only" },
+    "icon": { "type": "integer", "description": "Optional icon index (kpidash lv_font_icons_56)" }
+  }
+}

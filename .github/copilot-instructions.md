@@ -70,7 +70,10 @@ rendering; aarch64 and x86_64); (3) thin publisher wrappers, Rust and Python.
 The dashboards and their publisher daemons live in their own repos and
 consume this one — nothing here runs as a service.
 
-Status: fresh scaffold. Contract v0 is sprint 001 (korg:1733).
+Status: contract v0 landed (sprint 001, korg:1733) — see
+`docs/architecture.md` (decisions CD-1…CD-6, open questions OQ-n),
+`contracts/rules.md` and `contracts/registry.md`. Next: the shared C
+consumer library (sprint 002).
 
 Conventions and constraints:
 
