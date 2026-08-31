@@ -1,0 +1,28 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/kenhia/kdashdata/contracts/schemas/kpidash-client-health.schema.json",
+  "title": "kpidash client health",
+  "description": "Payload of kpidash:client:{host}:health — latest-value, SET EX 5, written ~3 s. Key absence = client offline.",
+  "type": "object",
+  "required": ["hostname", "last_seen_ts"],
+  "additionalProperties": true,
+  "properties": {
+    "hostname": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9._-]{1,63}$",
+      "description": "Lowercase system hostname; must match the {host} key segment"
+    },
+    "last_seen_ts": {
+      "type": "number",
+      "description": "Unix seconds (float) of this ping, writer's clock"
+    },
+    "uptime_seconds": {
+      "type": "number",
+      "description": "Client system uptime; optional"
+    },
+    "os_name": {
+      "type": "string",
+      "description": "os-release PRETTY_NAME, fallback platform.system()+release; optional"
+    }
+  }
+}

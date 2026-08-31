@@ -1,0 +1,24 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/kenhia/kdashdata/contracts/schemas/kpidash-client-dev-telemetry.schema.json",
+  "title": "kpidash client dev telemetry",
+  "description": "Payload of kpidash:client:{host}:dev_telemetry — high-frequency graph feed, SET EX 5, written ~1 s. Read only while a graph is enabled.",
+  "type": "object",
+  "required": ["hostname", "ts", "cpu_pct", "ram_used_mb", "ram_total_mb"],
+  "additionalProperties": true,
+  "properties": {
+    "hostname": { "type": "string", "pattern": "^[A-Za-z0-9._-]{1,63}$" },
+    "host": {
+      "type": "string",
+      "description": "Routes samples to a per-host graph series; readers treat absence as \"(legacy)\""
+    },
+    "ts": { "type": "number", "description": "Unix seconds (float), writer's clock" },
+    "cpu_pct": { "type": "number", "minimum": 0 },
+    "top_core_pct": { "type": "number", "minimum": 0 },
+    "ram_used_mb": { "type": "number", "minimum": 0 },
+    "ram_total_mb": { "type": "number", "minimum": 0 },
+    "gpu_compute_pct": { "type": "number", "minimum": 0 },
+    "gpu_vram_used_mb": { "type": "number", "minimum": 0 },
+    "gpu_vram_total_mb": { "type": "number", "minimum": 0 }
+  }
+}
