@@ -34,8 +34,9 @@ service.
   have that problem; the failure mode is "central Redis unreachable", and the
   answer is CD-6 (degrade, don't block), not more Redis.
 
-Exception today: the Claude-activity and kvscf feed families live on
-`rpidash2:6380`, not the central Redis — see OQ-1.
+Exception today: the Claude-activity family lives on `rpidash2:6380`
+pending its migration to central (CD-7); the kvscf family stays off-central
+by design (CD-8).
 
 ## CD-2 — Auth: one fleet password, `REDISCLI_AUTH` is the contract
 
@@ -100,13 +101,28 @@ trusted only while fresh (the kdeskdash claude-feed ladder — fresh → idle �
 stale — is the model). This lands in the shared C library once (sprint 002)
 instead of in three dashboards.
 
+## CD-7 — `claude:*` migrates to the central Redis, as a korg program
+
+The Claude-activity family is genuinely fleet-shared and will move from its
+interim home (`rpidash2:6380`) to the central Redis. The move is **not a
+single-sprint change** — the blast radius spans the publisher hooks and
+statusline on every fleet host, kdeskdash env on both devices, AUTH coverage
+for every writer, and feed freshness through the cutover — so it runs as a
+**korg program**, with its gates and slices decided when the program is
+proposed. Until that program completes, `rpidash2:6380` remains the family's
+sanctioned interim home, and the family's schemas land with the move (or
+sooner if a new consumer needs them).
+
+## CD-8 — `kvscf:*` stays with its workstation pair
+
+kvscf data is symbiotic between kvscf running on a workstation (cleo, kwork)
+and the desk dashboard sitting in front of that workstation's keyboard
+(rpidash2, rpidash3): a direct data **and control** exchange within one
+desk pair, not fleet-shared state. It therefore does **not** move to the
+central Redis — each pair keeps its own endpoint (dev pair on
+`rpidash2:6380` today, work pair on its own instance). The nudge channel's
+auth token and the pair-local scoping are features of this shape, not debt.
+
 ## Open questions
 
-- **OQ-1 — Home of the `claude:*` and `kvscf:*` families.** Today they live
-  on `rpidash2:6380` (rpidash2's local instance doubles as the shared home;
-  rpidash3 reads it over the LAN). Options: migrate to the central Redis
-  (leaning — one shared home beats two; requires REDISCLI_AUTH coverage on
-  the writers and a kdeskdash env change) or sanction `rpidash2:6380` as a
-  second shared home permanently. Decide before kstudiodash consumes either
-  family.
 - **OQ-2 — Redis ACL writer/reader split** (see CD-2).

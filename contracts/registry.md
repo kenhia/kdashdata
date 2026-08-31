@@ -10,7 +10,8 @@
 | Home | Endpoint | Auth | Holds |
 |---|---|---|---|
 | Central | `rpi53:6379` | `REDISCLI_AUTH` (krot: rpi53-redis-password) | `kpidash:*` |
-| Claude/kvscf (OQ-1) | `rpidash2:6380` | per-app env | `claude:*`, `kvscf:*` |
+| Claude interim (CD-7) | `rpidash2:6380` | per-app env | `claude:*` — until the migration program runs |
+| Workstation pair (CD-8) | dev pair `rpidash2:6380`; work pair its own | per-app env | `kvscf:*` — stays with the pair by design |
 | Dashboard-local | `127.0.0.1:6379` on each dashboard host | none/local | `<dashboard>:*` |
 
 ## Family: kpidash (central, live)
@@ -50,12 +51,14 @@ publishing", not "that host is down" — check the publisher.
 | `kpidash:screenshot` | one-shot command (GETDEL) | device self-screenshot |
 | `kpidash:system:*` | diagnostics | logpath/version plain strings; mem:current + mem:ring (LPUSH, trim 1500) |
 
-## Family: claude (rpidash2:6380, live — home under OQ-1)
+## Family: claude (rpidash2:6380 interim, live — migrating to central per CD-7)
 
 Owner: the Claude-activity publisher (`publisher/claude-pub.sh` + Claude
 Code hooks/statusline; see kdeskdash sprint 007). Read by kdeskdash
-(rpidash2 + rpidash3). Not yet schema'd — do that when the family's home
-(OQ-1) is settled or when kstudiodash consumes it, whichever comes first.
+(rpidash2 + rpidash3). Will move to the central Redis via a korg program
+(CD-7 — blast radius: every fleet host's hooks, both kdeskdash devices,
+AUTH coverage, cutover freshness). Not yet schema'd — schemas land with the
+move program, or sooner if a new consumer (kstudiodash) needs them first.
 
 | Key | Type / pattern | Notes |
 |---|---|---|
@@ -66,11 +69,15 @@ Code hooks/statusline; see kdeskdash sprint 007). Read by kdeskdash
 Freshness ladder (reader-derived, the CD-6 model): published status trusted
 while fresh; no event for 15 min → idle; 40 min → stale.
 
-## Family: kvscf (rpidash2:6380 by convention, live — home under OQ-1)
+## Family: kvscf (workstation-pair Redis, live — stays put per CD-8)
 
-Owner: kvscf (Windows publisher on cleo). Read/commanded by kdeskdash.
-kdeskdash defaults this endpoint to the claude endpoint; rpidash3
-deliberately points at a different (work-side) kvscf instance.
+Owner: kvscf (Windows publisher on the pair's workstation: cleo for the dev
+pair, kwork for the work pair). Read/commanded by the desk dashboard in
+front of that keyboard — a direct data + control exchange within one pair,
+which is why this family never moves to central (CD-8). kdeskdash defaults
+this endpoint to the claude endpoint today (dev pair `rpidash2:6380`);
+rpidash3 points at the work-side instance. Once `claude:*` migrates (CD-7),
+kvscf keeps the pair endpoint — the shared default decouples then.
 
 | Key / channel | Type / pattern | Notes |
 |---|---|---|

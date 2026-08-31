@@ -68,3 +68,14 @@ Note for the ship: this repo is public and these docs name internal
 hostnames (rpi53, rpidash2, kstudio) — consistent with the project's
 public-from-day-one stance and free of secrets/endpoints beyond hostnames,
 but it is a deliberate call, not an oversight.
+
+## Addendum (same day, sprint review)
+
+OQ-1 settled on review with Ken and split into two decisions: **CD-7** —
+`claude:*` migrates to the central Redis, executed as a korg **program**
+because the blast radius (fleet-wide publisher hooks, both kdeskdash
+devices, AUTH coverage, cutover freshness) exceeds a single sprint;
+`rpidash2:6380` is the sanctioned interim home until then. **CD-8** —
+`kvscf:*` never moves: its data is symbiotic between kvscf on a workstation
+(cleo/kwork) and the desk dashboard in front of that keyboard — a pair-local
+data + control exchange, not fleet-shared state.
