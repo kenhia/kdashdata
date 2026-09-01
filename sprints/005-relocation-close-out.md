@@ -160,16 +160,29 @@ is not arbitrary — every step's failure mode is "the new state is empty", neve
 2. kdeskdash: `KDD_LEGS=claude` as the shipped default, the `interim` arm
    deleted, and the poll guard's read moved onto `kdash-pub hget`. Then
    `just publish-publisher` from its merged `main`.
-3. k-homelab: bump `kdeskdash_publisher_version` in `manifests/common.yml` and
+3. k-homelab: flip `KDASH_CLAUDE_REDIS` to `rpi53:6379` in `khlenv/store.yml`.
+   One line, which was the whole promise of the program.
+4. k-homelab: bump `kdeskdash_publisher_version` in `manifests/common.yml` and
    `bin/apply` on kai **and** kubs0, `bin/audit` clean on both. That pin is
    deliberate, not a floor — until it moves, the next apply reverts both hosts
    and silently stops the publisher. cleo by hand, unmanaged.
-4. k-homelab: flip `KDASH_CLAUDE_REDIS` to `rpi53:6379` in `khlenv/store.yml`.
-   One line, which was the whole promise of the program.
 5. Verify both panels on central, then `DEL` the `claude:*` keys on
    `rpidash2:6380` — and re-check that `kvscf:*` is still there afterwards.
 6. klams: supersede the two records the overseer named, and record the end
    state.
+
+**Steps 3 and 4 are in that order for a measured reason, and this is a
+correction** — the sequence as programmed (and as first written here) had the
+pin bump before the stem flip, which would have killed the feed silently. The
+2.1.0 publisher writes one authenticated leg on `KDASH_CLAUDE_REDIS`; while that
+stem still named the unauthenticated interim home, every write and the guard's
+read failed `AUTH called without any password configured` — an *error*, not a
+no-op — and `--best-effort` exists precisely to swallow that so a hook never
+fails. Nothing would have reported it. Both directions were run against the live
+endpoints before committing to either; the order above is the benign one, where
+the old two-leg publisher merely loses its no-auth leg to `NOAUTH` and keeps
+writing through central until the pin lands. The warning now lives in both
+k-homelab files rather than only here.
 
 **Rollback stops being neutral after step 5.** The 2.0.0 bundles still write the
 interim leg and the 1.0.0 bundle writes *only* the interim home, so a pin
@@ -181,6 +194,63 @@ Expect the claude panel to look emptier than reality for a few minutes at the
 flip: a session already running writes a keepalive that carries only `ts`, by
 design, and the parser correctly declines to render a hash with no `status`. It
 heals at that session's next turn.
+
+## Deployed
+
+**2026-09-01**, from merged `main` (`7fe2c87`), in the corrected order above.
+The overseer's clearance (korg:1754 comment 1222) covered the whole sequence
+through the `DEL` and the klams pass.
+
+**1. `kdash-pub 0.1.0-7fe2c87`** — `just publish` (linux + windows, one version,
+`latest` moved), then `just deploy-all`. Verified by **naming** the hosts, and
+by proving the new verb rather than that a file landed:
+
+| host | path | `--version` | `hget claude:limits updated_at` |
+|---|---|---|---|
+| kai | `/usr/local/bin/kdash-pub` | `0.1.0-7fe2c87 (2026-09-01)` | `1788290414`, exit 0 |
+| kubs0 | `/usr/local/bin/kdash-pub` | same | `1788290414`, exit 0 |
+| cleo | `C:\tools\bin\kdash-pub.exe` | same | `1788290414`, exit 0 |
+
+**2. kdeskdash `2.1.0-581799b`** — PR #39, squash `581799b`, `just
+publish-publisher` from main. `KDD_LEGS` defaults to `claude`, the `interim` arm
+deleted, the poll guard on `kdash-pub hget`. Its own record:
+`kdeskdash/sprints/032-claude-feed-retirement.md`.
+
+**3. The stem flip** — k-homelab `c78bfac`, `khlenv/store.yml`:
+`KDASH_CLAUDE_REDIS` `rpidash2:6380` → `rpi53:6379`. **Live on the next resolve,
+with nothing restarted** — which is CD-4's whole claim, observed rather than
+assumed.
+
+**4. The pin** — same commit, `manifests/common.yml`
+`2.0.0-c3bbe7a` → `2.1.0-581799b`. `bin/apply` on kai and kubs0, `bin/audit`
+clean on both afterwards (`claude-hooks: ok`, `kdeskdash-poll: ok`). cleo
+refreshed by hand from the same store bundle and hash-verified —
+`2bcfa823…`, matching the bundle's `SHA256SUMS`. All three publisher hosts then
+report the same VERSION and the same sha256.
+
+**5. Single-home proof, then the retirement.** A `SessionStart` fired through
+the installed script on each of kai, kubs0 and cleo produced
+`claude:session:{kai,kubs0,cleo}:flipprobe` on **central** and **nothing** on
+`rpidash2:6380`. Both panels' configured claude path answered `PONG` against
+`rpi53:6379` with `claude:limits` present and 3 live sessions visible; rpidash2
+was in `claude` mode with an established socket to `192.168.1.213:6379`.
+
+Then, by name from a captured snapshot rather than by pattern: **5 keys
+deleted** — `claude:limits`, `claude:recent`, and three
+`claude:session:*` — all of which had identical live counterparts on central, so
+nothing unique was destroyed. Afterwards a **full unfiltered `--scan`** of
+`rpidash2:6380` returns exactly four keys, all `kvscf:*`. CD-8 intact; the
+instance retired a *feed*, not itself. A subsequent live write confirmed the old
+home stays empty under traffic.
+
+**6. klams** — the two records the overseer named
+(comment 1212) superseded, plus the new end-state record:
+
+| was | now | what changed |
+|---|---|---|
+| `01a016da-…` | `01a05e7b-4908-…` | "STILL UNVERIFIED: rpidash2/rpidash3's telemetry auth" → verified 2026-09-01, on-device |
+| `019f9c03-…` | `01a05e7a-c68e-…` | rpidash3 reads the claude feed from central, not over the LAN from rpidash2 |
+| — | `01a05e7b-b77d-…` | new: the end state, the rollback coupling, and the stem-before-pin ordering rule |
 
 ## Follow-ups
 
