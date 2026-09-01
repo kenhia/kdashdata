@@ -1,0 +1,27 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/kenhia/kdashdata/contracts/schemas/claude-limits.schema.json",
+  "title": "claude usage limits",
+  "description": "Record of claude:limits — fleet-wide Claude subscription usage, one shared key with no TTL, on the central Redis since the CD-7 relocation. Grandfathered shape (CD-3). A Redis HASH, not a JSON string: fields are the DECODED record and every value arrives off the wire as a string. Several writers on several hosts share this one key, so `updated_at` is the OBSERVATION time rather than the publish time and a writer must not publish over a fresher one — a live statusline always beats a poll. The headline set and the model-scoped set carry INDEPENDENT stamps on purpose: only an oauth poll can supply the scoped fields, so a shared stamp would let a statusline write make a frozen scoped gauge look fresh. Each writer publishes its own cadence (`expected_refresh_s`) and the reader greys a gauge once that gauge's own stamp is cadence + grace old, so no consumer needs to know which source wrote it.",
+  "type": "object",
+  "required": ["five_hour_pct", "seven_day_pct"],
+  "additionalProperties": true,
+  "properties": {
+    "five_hour_pct": { "type": "number", "minimum": 0, "maximum": 100, "description": "Five-hour window utilisation; readers clamp to [0,100] and reject non-finite values" },
+    "seven_day_pct": { "type": "number", "minimum": 0, "maximum": 100, "description": "Seven-day window utilisation, same handling" },
+    "five_hour_resets_at": { "type": "integer", "description": "Unix seconds the five-hour window resets; 0 or absent = unknown. A source that does not know it leaves the previous value alone rather than writing 0" },
+    "seven_day_resets_at": { "type": "integer", "description": "Unix seconds the seven-day window resets; 0 or absent = unknown" },
+    "updated_at": { "type": "integer", "description": "Unix seconds of the OBSERVATION behind the headline fields, not of the write. This is the field a writer reads back before publishing, so it must never be advanced by a writer that did not also refresh the values beside it" },
+    "expected_refresh_s": { "type": "integer", "description": "How long the headline writer expects between its own writes (statusline 60, poll 300). The reader adds its own grace; absent means a pre-cadence writer and a legacy fixed window" },
+    "host": { "type": "string", "pattern": "^[A-Za-z0-9._-]{1,63}$", "description": "Host that made the observation; display and provenance only" },
+    "source": { "type": "string", "enum": ["statusline", "file", "oauth"], "description": "Where the observation came from: a live statusline, the desktop app's plan-usage-history file, or the oauth usage endpoint. `file` carries percentages only and no reset stamps" },
+    "ts": { "type": "integer", "description": "Publish time, stamped by the publisher wrapper (rules.md). Distinct from `updated_at`, which is when the numbers were observed" },
+    "scoped_model": { "type": "string", "description": "Display label of the model-scoped weekly window, e.g. \"Fable\". A display string with no stable id — render it, never match on it" },
+    "scoped_pct": { "type": "number", "minimum": 0, "maximum": 100, "description": "Scoped window utilisation. Half a scoped set (a percentage with no label, or the reverse) renders as no scoped gauge at all rather than an unlabelled one" },
+    "scoped_resets_at": { "type": "integer", "description": "Unix seconds the scoped window resets; 0 or absent = unknown" },
+    "scoped_active": { "type": "integer", "enum": [0, 1], "description": "1 when the scoped window is the currently binding constraint" },
+    "scoped_count": { "type": "integer", "description": "How many scoped windows the source reported. Only one has ever been observed; this records the day that changes" },
+    "scoped_updated_at": { "type": "integer", "description": "Unix seconds of the scoped observation — its OWN stamp. Absent or 0 means stampless, which the reader treats as always stale rather than letting it borrow the headline's freshness" },
+    "scoped_expected_refresh_s": { "type": "integer", "description": "Cadence of the scoped writer (poll 300); same greying rule as the headline" }
+  }
+}

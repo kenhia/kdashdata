@@ -1,0 +1,17 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/kenhia/kdashdata/contracts/schemas/claude-recent.schema.json",
+  "title": "claude recent session",
+  "description": "One element of claude:recent — an event log, capped: LPUSH on SessionEnd then LTRIM 0 19, so the list holds the 20 most recently ended Claude sessions across the fleet, newest first. On the central Redis since the CD-7 relocation; grandfathered shape (CD-3). Unlike the other two claude feeds this really is a JSON document, one per list element, so this schema describes it directly. A session ended with reason `clear` is deliberately not recorded — clearing a conversation is not finishing one. The writer owns the cap (rules.md): nothing else trims this list.",
+  "type": "object",
+  "required": ["host", "project", "ended_ts", "ts"],
+  "additionalProperties": true,
+  "properties": {
+    "host": { "type": "string", "pattern": "^[A-Za-z0-9._-]{1,63}$", "description": "Host the session ran on; a value failing the host-token contract skips the record" },
+    "project": { "type": "string", "minLength": 1, "description": "Basename of the session's cwd; an empty project skips the record" },
+    "title": { "type": "string", "description": "Claude's session name as of SessionEnd. Empty when Claude never generated one — a short session is the normal case, not a fault" },
+    "ended_ts": { "type": "integer", "description": "Unix seconds the session ended" },
+    "dur_s": { "type": "integer", "minimum": 0, "description": "Session duration in seconds; 0 means unknown, which is what a session whose start was never recorded reports" },
+    "ts": { "type": "number", "description": "Unix seconds (float) stamped by the publisher wrapper (rules.md)" }
+  }
+}

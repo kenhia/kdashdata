@@ -20,8 +20,11 @@
 //! # }
 //! ```
 //!
-//! **No rendering, no reading.** The consumer side is `libkdash` (this repo's
-//! `include/kdash/`); this crate writes.
+//! **No rendering, and one read.** The consumer side is `libkdash` (this
+//! repo's `include/kdash/`): the data model, the freshness ladder, the
+//! skip-a-bad-record discipline. This crate writes — plus the single point
+//! read a publisher needs to guard its own write against clobbering a fresher
+//! observation (CD-14). One field, no model, no policy.
 //!
 //! ## What it does not do
 //!
@@ -37,7 +40,7 @@ pub mod keys;
 pub mod payload;
 
 pub use auth::AuthError;
-pub use command::{Command, ParseError};
+pub use command::{Command, ParseError, Query};
 pub use endpoint::{EndpointError, Resolved, Stem};
 pub use keys::KeyError;
 pub use payload::PayloadError;
@@ -235,6 +238,24 @@ impl Connection {
             &["setex", key, &ttl.to_string(), payload],
             now(),
         )?)
+    }
+
+    /// One validated read (CD-14).
+    ///
+    /// `Ok(None)` covers both an absent field and an absent key: Redis does
+    /// not distinguish them, and the guard this exists for treats either as
+    /// "unknown" and publishes.
+    ///
+    /// Bytes rather than `String` because a value is whatever some writer put
+    /// there. Decoding here would report a non-UTF-8 value as a *delivery*
+    /// failure, which is the wrong thing to tell a caller about a Redis that
+    /// answered perfectly well.
+    pub fn read_field(&mut self, query: &Query) -> Result<Option<Vec<u8>>, Error> {
+        let Query::HGet { key, field } = query;
+        Ok(redis::cmd("HGET")
+            .arg(key)
+            .arg(field)
+            .query::<Option<Vec<u8>>>(&mut self.inner)?)
     }
 
     /// One validated command.

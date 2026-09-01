@@ -1,4 +1,8 @@
-//! The publish verbs, parsed and validated before anything opens a socket.
+//! The verbs, parsed and validated before anything opens a socket.
+//!
+//! Almost all of them are writes. [`Query`] is the one read (CD-14), and it
+//! lives here for the same reason the writes do: it goes through the same key
+//! grammar, so there is one place a key is judged rather than two.
 //!
 //! Both front ends go through here — the crate's typed methods and the CLI's
 //! argv — so a key that fails the grammar or a payload that fails the `ts`
@@ -68,6 +72,11 @@ impl Command {
 pub enum ParseError {
     NoVerb,
     UnknownVerb(String),
+    /// A read verb where a write was expected — a `batch` line, typically.
+    /// Distinguished from [`ParseError::UnknownVerb`] because "unknown
+    /// command" sends you looking for a typo that is not there, and one bad
+    /// line takes the whole batch down with it.
+    ReadVerbInWriteContext(&'static str),
     Arity {
         verb: &'static str,
         usage: &'static str,
@@ -84,6 +93,12 @@ impl fmt::Display for ParseError {
         match self {
             ParseError::NoVerb => write!(f, "no command given"),
             ParseError::UnknownVerb(v) => write!(f, "unknown command {v:?}"),
+            ParseError::ReadVerbInWriteContext(v) => write!(
+                f,
+                "{v} reads, so it cannot appear where a write is expected \
+                 (run it on its own: kdash-pub {})",
+                usage_for(v)
+            ),
             ParseError::Arity { verb, usage } => write!(f, "{verb}: usage: {usage}"),
             ParseError::BadTtl(t) => {
                 write!(f, "ttl {t:?} is not a positive whole number of seconds")
@@ -127,9 +142,21 @@ pub const USAGE: &[(&str, &str)] = &[
     ("ltrim", "ltrim <key> <start> <stop>"),
 ];
 
+/// The read verbs. Deliberately a second table rather than a row in [`USAGE`]:
+/// everything there is a write that [`parse`] turns into a [`Command`] and
+/// `pipeline` runs with its reply ignored, and a read is neither of those.
+/// `--help` renders both.
+pub const READ_USAGE: &[(&str, &str)] = &[("hget", "hget <key> <field>")];
+
+/// True for a verb [`parse_query`] accepts.
+pub fn is_read_verb(verb: &str) -> bool {
+    READ_USAGE.iter().any(|(name, _)| *name == verb)
+}
+
 fn usage_for(verb: &str) -> &'static str {
     USAGE
         .iter()
+        .chain(READ_USAGE)
         .find(|(name, _)| *name == verb)
         .map(|(_, usage)| *usage)
         .unwrap_or("")
@@ -249,6 +276,61 @@ pub fn parse(words: &[impl AsRef<str>], now: f64) -> Result<Command, ParseError>
                 stop: index(rest[2])?,
             })
         }
+        other if is_read_verb(other) => Err(ParseError::ReadVerbInWriteContext(
+            READ_USAGE
+                .iter()
+                .find(|(name, _)| *name == other)
+                .map(|(name, _)| *name)
+                .unwrap_or("that verb"),
+        )),
+        other => Err(ParseError::UnknownVerb(other.to_string())),
+    }
+}
+
+/// One validated read.
+///
+/// A publisher reads for exactly one reason: to guard its own write against
+/// clobbering a fresher observation (CD-14). This is not the consumer side —
+/// there is no data model here and no freshness policy, just a field.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Query {
+    /// One field of a HASH record. An absent field and an absent key are the
+    /// same answer — nothing — because Redis does not distinguish them and
+    /// neither does the guard this serves.
+    HGet { key: String, field: String },
+}
+
+impl Query {
+    pub fn key(&self) -> &str {
+        match self {
+            Query::HGet { key, .. } => key,
+        }
+    }
+}
+
+/// Parse one read from its already-split words.
+///
+/// No `now` parameter, unlike [`parse`]: a read stamps nothing, so there is no
+/// clock to inject and nothing about it that a test would need to pin.
+pub fn parse_query(words: &[impl AsRef<str>]) -> Result<Query, ParseError> {
+    let words: Vec<&str> = words.iter().map(|w| w.as_ref()).collect();
+    let (verb, rest) = words.split_first().ok_or(ParseError::NoVerb)?;
+    match *verb {
+        "hget" => {
+            if rest.len() != 2 {
+                return Err(ParseError::Arity {
+                    verb: "hget",
+                    usage: usage_for("hget"),
+                });
+            }
+            // The same choke point the writes go through: a key no reader will
+            // parse is not one a publisher may ask about either.
+            keys::check_key(rest[0])?;
+            Ok(Query::HGet {
+                key: rest[0].into(),
+                field: rest[1].into(),
+            })
+        }
         other => Err(ParseError::UnknownVerb(other.to_string())),
     }
 }
@@ -365,6 +447,84 @@ mod tests {
             parsed(&["lpush", "kdash:x:y", "nope"]),
             Err(ParseError::Payload(_))
         ));
+    }
+
+    #[test]
+    fn hget_parses_a_key_and_a_field() {
+        assert_eq!(
+            parse_query(&["hget", "claude:limits", "updated_at"]),
+            Ok(Query::HGet {
+                key: "claude:limits".into(),
+                field: "updated_at".into(),
+            })
+        );
+    }
+
+    #[test]
+    fn a_read_goes_through_the_same_key_grammar_as_a_write() {
+        // The choke point is not something a read gets to walk around.
+        assert!(matches!(
+            parse_query(&["hget", "weather:now", "temp"]),
+            Err(ParseError::Key(_))
+        ));
+    }
+
+    #[test]
+    fn hget_names_its_usage_line_on_a_bad_arity() {
+        for words in [
+            vec!["hget"],
+            vec!["hget", "claude:limits"],
+            vec!["hget", "claude:limits", "updated_at", "extra"],
+        ] {
+            assert!(
+                matches!(
+                    parse_query(&words),
+                    Err(ParseError::Arity { verb: "hget", .. })
+                ),
+                "{words:?} should have been an arity error"
+            );
+        }
+        let no_words: [&str; 0] = [];
+        assert_eq!(parse_query(&no_words), Err(ParseError::NoVerb));
+    }
+
+    #[test]
+    fn a_write_verb_is_not_a_read_and_a_read_verb_is_not_a_write() {
+        assert_eq!(
+            parse_query(&["hset", "claude:limits", "a", "b"]),
+            Err(ParseError::UnknownVerb("hset".into()))
+        );
+        // In a batch this is the difference between "look for your typo" and
+        // "this line reads" — and one bad line refuses the whole batch, so the
+        // message is the only clue the caller gets.
+        assert_eq!(
+            parsed(&["hget", "claude:limits", "updated_at"]),
+            Err(ParseError::ReadVerbInWriteContext("hget"))
+        );
+        assert!(parsed(&["hget", "claude:limits", "updated_at"])
+            .unwrap_err()
+            .to_string()
+            .contains("hget <key> <field>"));
+    }
+
+    #[test]
+    fn read_usage_covers_exactly_the_verbs_parse_query_accepts() {
+        for (verb, usage) in READ_USAGE {
+            assert!(!usage.is_empty(), "{verb} has no usage line");
+            assert!(
+                is_read_verb(verb),
+                "{verb} is documented but not a read verb"
+            );
+            assert!(
+                !matches!(parse_query(&[verb]), Err(ParseError::UnknownVerb(_))),
+                "{verb} is documented but not accepted"
+            );
+        }
+        // And no verb is in both tables — that would make `parse` and
+        // `parse_query` disagree about what the word means.
+        for (write_verb, _) in USAGE {
+            assert!(!is_read_verb(write_verb), "{write_verb} is in both tables");
+        }
     }
 
     #[test]

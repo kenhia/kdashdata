@@ -11,13 +11,16 @@ use the [Python package](../python/) instead — CD-11 in
 ```sh
 kdash-pub set   kpidash:services:demo:kai '{"state":"ok","text":"up"}'
 kdash-pub setex kdash:selftest:kai 300 '{"host":"kai","publisher":"rust"}'
-kdash-pub --stem KDASH_CLAUDE_REDIS --no-auth hset claude:session:kai:abc status working
+kdash-pub --stem KDASH_CLAUDE_REDIS hset claude:session:kai:abc status working
+kdash-pub --stem KDASH_CLAUDE_REDIS hget claude:limits updated_at
 kdash-pub endpoint          # where would this write, and can it connect?
 ```
 
-`--no-auth` on the claude line is not decoration: `rpidash2:6380` has **no
-password configured**, and sending AUTH to such a server is an error rather
-than a no-op. It comes off when CD-7 repoints that stem at central.
+`--no-auth` exists for a Redis with **no password configured**, where sending
+AUTH is an error rather than a no-op. Every home in the registry requires a
+password today, so nothing needs the flag — it earned its keep serving the CD-7
+dual-write window, which spanned an authenticated endpoint and an
+unauthenticated one from one publisher.
 
 Nothing above names a host, a port or a password. `ts` is stamped if the
 payload did not carry one, and an off-contract key is refused before a socket
@@ -39,12 +42,41 @@ This mode is what makes the CLI a real replacement for `claude-pub.sh`'s
 hand-rolled RESP: a hook that updates a session hash, re-arms its TTL and
 pushes a recent record does it in one connection, not three.
 
+### `hget` — the one read (CD-14)
+
+```sh
+kdash-pub --stem KDASH_CLAUDE_REDIS hget claude:limits updated_at
+```
+
+This is not the consumer API. `libkdash` is: the data model, the freshness
+ladder, the skip-a-bad-record discipline. `hget` returns one field's bytes and
+nothing else, and it exists for one job — a publisher guarding its own write
+against clobbering a fresher observation. `claude:limits` has writers on
+several hosts, and a poll writer reads `updated_at` back before publishing over
+it.
+
+It answers in the same three ways every other verb does, so a caller keeps one
+error convention:
+
+| result | stdout | exit |
+|---|---|---|
+| the field is there | the value, then a newline | 0 |
+| the field (or key) is absent | **nothing at all** | 0 |
+| Redis unreachable | nothing | 2, or 0 under `--best-effort` |
+
+An absent field is an *answer*, not a fault — which is what makes the
+degradation right: an empty read means "unknown", and a guard reading
+"unknown" publishes. `--best-effort` therefore turns an unreachable Redis into
+the same "unknown", exactly as it turns a failed write into a dropped one.
+An off-contract key is still exit 1, because the read goes through the same
+grammar choke point as every write.
+
 ### Exit codes, and why a hook wants `--best-effort`
 
 | code | means |
 |---|---|
 | 0 | published (or `--best-effort` swallowed a delivery failure) |
-| 1 | the command is wrong — bad key, bad payload, bad usage |
+| 1 | the command is wrong — bad key, bad payload, bad usage, or a read verb where a write belongs |
 | 2 | delivery failed — no endpoint, no auth, Redis unreachable |
 
 `--best-effort` turns 2 into 0 and **never** touches 1. A dead Redis must not
