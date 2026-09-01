@@ -128,3 +128,33 @@ label until the post-merge publish from `main` moves `latest` and
   requester. Nothing to do here until knarr ships Windows support.
 - The Python wheel still has no publish path (`pub-wheel` builds, nothing
   publishes). Out of scope: no consumer needs it from the store yet.
+
+## Deployed
+
+**2026-08-31, from merged `main` (`27bf527`).** `just publish` then
+`just deploy-all`, in that order and from that commit — so what the fleet runs
+names a commit that exists in history, which the pre-ship branch build
+(`0.1.0-ac2cd56`, published `--no-latest` to prove the path) deliberately did
+not.
+
+Store: `0.1.0-27bf527`, both artifacts under one `SHA256SUMS`, and `latest`
+moved to it — the first time this artifact has had a resolvable `latest` at
+all. The branch build stays in the store as an unreferenced version; that is
+the point of `--no-latest` rather than a leftover to clean up.
+
+Verified after the deploy by **naming** the hosts:
+
+| host | path | `--version` | `--app kdashdata endpoint` |
+|---|---|---|---|
+| kai | `/usr/local/bin/kdash-pub` | `0.1.0-27bf527 (2026-08-31)`, exit 0 | exit 0, `rpi53:6379` |
+| kubs0 | `/usr/local/bin/kdash-pub` | same label, exit 0 | exit 0, `rpi53:6379` |
+| cleo | `C:\tools\bin\kdash-pub.exe` | same label, exit 0 | exit 0, `rpi53:6379` |
+
+Three labels, one string, matching the store's `latest`. `endpoint` exiting 0
+on every host means khlenv resolution and the CD-12 auth route both work
+fleet-wide against the authenticated central Redis — not merely that a file
+landed.
+
+This is the resume signal for the CD-7 cutover (korg 1753): the binary the
+cutover assumed is now installed at its contracted path on every publisher
+host, and the distribution question that parked slice 2 is answered.
