@@ -84,6 +84,44 @@ Three smaller calls made here rather than in the doc:
 - `scripts/check.py` — the ASCII gate above.
 - `docs/architecture.md` CD-13, `publishers/README.md` Distribution.
 
+## Verified live — the branch build
+
+The recipes were exercised before the ship rather than after it, so the sprint
+lands with the whole path proven instead of merely written. `just publish` on
+the branch produced `0.1.0-ac2cd56`, both artifacts under one `kpkg` version
+and one `SHA256SUMS`, with `--no-latest` applied automatically off `main` and
+confirmed afterwards (`/artifacts/kdash-pub/latest` still 404). Windows
+cross-build: 6.8s, 623 KB PE32+. That pinned version was then installed on all
+three hosts and checked **by naming them**, never by iterating what the runner
+reached:
+
+| host | path | `--version` | `--app kdashdata endpoint` |
+|---|---|---|---|
+| kai | `/usr/local/bin/kdash-pub` | exit 0 | exit 0, `rpi53:6379` |
+| kubs0 | `/usr/local/bin/kdash-pub` | exit 0 | exit 0, `rpi53:6379` |
+| cleo | `C:\tools\bin\kdash-pub.exe` | exit 0 | exit 0, `rpi53:6379` |
+
+`endpoint` exiting 0 everywhere means khlenv resolution **and** the CD-12 auth
+route both work on every publisher host, against the authenticated central
+Redis — which is the per-host verification the CD-7 cutover needs and did not
+have.
+
+Two CD-12 findings fell out of that, recorded in full on korg 1762:
+
+- **The suspected kubs0 gap does not exist.** `~/.config/kpidash-client/redis-auth.env`
+  is present there at 0600 — CD-12's third candidate — and `REDISCLI_AUTH` is
+  unset in a non-interactive ssh, so the file route is what answered.
+- **cleo has no file fallback at all.** Its `REDISCLI_AUTH` is a *Machine*-scope
+  environment variable, inherited by every process including a hook context, so
+  the file chain is never reached — and neither candidate file exists there.
+  It works, and it is a single point of failure the Linux hosts do not have. Not
+  hardened here: minting a second copy of a secret against a hypothetical is the
+  wrong trade, and the choice is better recorded than made silently.
+
+Because the branch commit vanishes at squash-merge, the fleet runs a doomed
+label until the post-merge publish from `main` moves `latest` and
+`just deploy-all` re-installs it. That is the Deployed section below.
+
 ## Follow-ups
 
 - knarr WI 1763 retires `scripts/install-cleo.ps1`, and this repo is its second
