@@ -2,7 +2,9 @@
 
 The **write** side of the [feed contracts](../contracts/rules.md). The read
 side is `libkdash` ([`include/kdash/`](../include/kdash/)); nothing here
-renders, and nothing here reads.
+renders, and nothing here *consumes* — the Rust CLI has one point read
+(`hget`) for a publisher guarding its own write against a fresher observation,
+and that is the whole of it (CD-14).
 
 A publisher's whole job is small and nobody gets all of it right:
 
