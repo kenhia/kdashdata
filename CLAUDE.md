@@ -93,7 +93,8 @@ Conventions and constraints:
   `docs/` and `contracts/` once sprint 001 lands.
 - `just check` is four gates: `check-docs` (python3 stdlib only,
   `scripts/check.py` — every JSON file parses, every relative markdown link
-  resolves, every schema is listed in the registry), `check-python` (the
+  resolves, every schema is listed in the registry, every `.ps1` is pure
+  ASCII), `check-python` (the
   Python wrapper's pure core, stdlib only), `check-rust` (fmt, clippy, unit
   tests — a first build needs network and git access to the private khlenv
   repo), plus a CMake build of the C library and its ctest unit tests.

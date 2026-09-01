@@ -276,7 +276,7 @@ fn main() -> ExitCode {
             return ExitCode::SUCCESS;
         }
         Action::Version => {
-            println!("kdash-pub {}", env!("CARGO_PKG_VERSION"));
+            println!("kdash-pub {}", env!("KDASH_PUB_VERSION_FULL"));
             return ExitCode::SUCCESS;
         }
         _ => {}

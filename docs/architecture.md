@@ -302,6 +302,56 @@ Two properties that are load-bearing rather than tidy:
 Both wrappers implement this; a future non-wrapper publisher that needs the
 password in a hook context follows the same order or it is divergent.
 
+## CD-13 — `kdash-pub` ships through the package store, to fixed absolute paths
+
+Sprint 003 built the CLI and stopped there, so for one sprint `kdash-pub`
+existed only as `publishers/rust/target/release/kdash-pub` in this checkout on
+kai. That is not a distribution, and the CD-7 cutover (which needs the binary
+on **kai, kubs0 and cleo**) could not start. This decision closes it, and
+takes nothing new: the fleet settled binary distribution in kpolice sprint 003
+and the krcmd rollout — package store on kubsdb, `knarr` for Linux, a
+store-resolving PowerShell installer for cleo.
+
+**One version, two artifacts.** `just publish` builds the Linux binary and the
+`x86_64-pc-windows-gnu` cross-build from one checkout and publishes both under
+one `kpkg` version and one `SHA256SUMS`. Never two versions: a fleet that
+resolves `latest` differently per platform is a fleet that drifts. The
+cross-compile is available because `kdash-pub` is pure Rust — the lockfile
+carries no `-sys` crate, and `winreg`/`windows-sys` need the mingw linker and
+nothing else — so cleo builds nothing.
+
+**The stamp and the store label are one fact.** `build.rs` emits
+`0.1.0-<describe> (<date>)` and `--version` prints it verbatim; `just publish`
+re-reads the built binary and publishes under exactly that second field, and
+knarr's confirm step re-reads the *installed* binary the same way. A
+`0.1.0 (abc1234)` shape would fail that confirm on a perfectly good install.
+A `dirty` or `unknown` stamp is refused at publish: a published version must
+name a commit someone can check out. Off `main`, `--no-latest` — a branch
+commit vanishes at squash-merge, so a branch build may exist to prove a path
+but must never be what the fleet resolves.
+
+**The install paths are a contract, not a convenience:**
+
+| host | path | installed by |
+|---|---|---|
+| kai, kubs0 | `/usr/local/bin/kdash-pub` | `knarr deploy` (`just deploy`) |
+| cleo | `C:\tools\bin\kdash-pub.exe` | `scripts/install-cleo.ps1` (`just deploy-cleo`) |
+
+CD-12 is the reason. A Claude Code hook context inherits neither an
+interactive shell's environment nor its `PATH`, so the hook scripts that will
+call this binary exec it by absolute path — `/c/tools/bin/kdash-pub.exe` under
+Git Bash on cleo. Moving either path is a change to those hooks.
+
+A private per-user copy beside each hook script was considered and rejected
+during the CD-7 program: it would bypass the store, so a `just publish` +
+`just deploy` upgrade would never reach the hooks, recreating stale-binary
+drift in a per-user form invisible to knarr and kmuster.
+
+**Verify by naming the hosts.** `just deploy-all` covers all three, and the
+verification names kai, kubs0 and cleo explicitly rather than iterating
+whatever the runner reached — that is precisely how kpolice sprint 002 left
+cleo on a commit that no longer existed for a whole sprint.
+
 ## Open questions
 
 - **OQ-2 — Redis ACL writer/reader split** (see CD-2).

@@ -36,6 +36,30 @@ wrong — which is why the two test suites pin the same tables of accepted and
 refused inputs, and why those tables also match `kdash_keys.h` and
 `kdash_endpoint.c` on the reader side.
 
+## Distribution
+
+`kdash_pub` (Python) is a wheel; `kdash-pub` (Rust) is a binary the hook hosts
+exec by absolute path, so it ships as a package-store artifact — CD-13.
+
+```sh
+just version        # the store label this checkout would publish under
+just publish        # linux + windows cross-build, ONE version, from main
+just deploy         # knarr -> /usr/local/bin/kdash-pub on kai and kubs0
+just deploy-cleo    # store-resolving install -> C:\tools\bin\kdash-pub.exe
+just deploy-all     # all three publisher hosts, which is the point
+```
+
+`publish` refuses a dirty tree and refuses a stamp that names no commit, and
+off `main` it publishes without moving `latest`. The install paths are a
+contract: the CD-7 hook scripts exec them absolutely, because a hook context's
+`PATH` is not the interactive one.
+
+Verify a rollout by naming the hosts — `kdash-pub --version` on kai, kubs0
+**and** cleo — never by iterating the hosts the runner happened to reach.
+`kdash-pub --app kdashdata endpoint` is the stronger per-host check: it proves
+khlenv resolution and the CD-12 auth route work on that host, not just that a
+file landed.
+
 ## Gates
 
 ```sh
