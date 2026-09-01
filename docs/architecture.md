@@ -34,9 +34,9 @@ Nothing in this repo runs as a service.
   have that problem; the failure mode is "central Redis unreachable", and the
   answer is CD-6 (degrade, don't block), not more Redis.
 
-Exception today: the Claude-activity family lives on `rpidash2:6380`
-pending its migration to central (CD-7); the kvscf family stays off-central
-by design (CD-8).
+One exception remains, by design: the kvscf family stays off-central (CD-8).
+The Claude-activity family was the other and no longer is — it completed its
+move to the central Redis in sprint 005 (CD-7).
 
 ## CD-2 — Auth: one fleet password, `REDISCLI_AUTH` is the contract
 
@@ -77,12 +77,15 @@ kdashdata adopts that model fleet-wide:
 - **`KPIDASH_REDIS`** — legacy alias for the same endpoint (app
   `kpidash-client`); stays until its publishers migrate (CD-3).
 - **`KDASH_CLAUDE_REDIS`** — `host:port` of the `claude:*` family's home
-  (sprint 003). Answers `rpidash2:6380` today and the central Redis after the
-  CD-7 cutover; that flip is the whole reason the stem exists.
+  (sprint 003). Answers `rpi53:6379` since the CD-7 cutover. That flip was the
+  whole reason the stem exists, and it stays a *distinct* stem afterwards
+  rather than collapsing into `KDASH_CENTRAL_REDIS`: the family keeps its own
+  address, so it can move again without a publisher host being touched.
 - **Local Redis needs no discovery** — it is `127.0.0.1:6379` by definition;
   per-app env overrides (e.g. `KDESKDASH_REDIS_HOST`) stay as-is.
-- Feed families not on the central Redis (see OQ-1) keep their per-app env
-  configuration until their home is settled.
+- Feed families not on the central Redis keep their per-app env
+  configuration. `kvscf:*` is the only one left, and CD-8 settles it
+  permanently rather than pending anything.
 
 Resolution rules inherited from the kpidash-client implementation: resolve
 on **every** connect (a moved Redis is picked up within one loop interval);
@@ -141,14 +144,38 @@ proposed. Until that program completes, `rpidash2:6380` remains the family's
 sanctioned interim home, and the family's schemas land with the move (or
 sooner if a new consumer needs them).
 
-The program is korg:1755, and sprint 003 was its first slice: the publisher
-wrappers, the `KDASH_CLAUDE_REDIS` stem, and CD-12's auth route. What that
-buys is the shape of the cutover — the publishers stop being a fleet of
-hardcoded endpoints and become one khlenv store edit. Two facts measured in
-that sprint set the size of the remaining work: `claude-pub.sh` carries a
-hardcoded `192.168.1.144:6380` and sends **no AUTH at all**, and the central
-Redis requires it. Repointing without CD-12 in place would not degrade — it
-would silently publish nothing.
+The program was korg:1755 and it is **complete**. Four slices:
+
+| slice | what it did |
+|---|---|
+| kdashdata 003 | publisher wrappers, the `KDASH_CLAUDE_REDIS` stem, CD-12's auth route |
+| kdashdata 004 | `kdash-pub` distribution — store publish, fleet install (CD-13) |
+| kdeskdash 031 | publisher cutover to a dual-write window, both readers repointed |
+| kdashdata 005 | this close-out: old home retired, registry flipped, schemas landed |
+
+What slice 1 bought was the *shape* of the cutover — the publishers stopped
+being a fleet of hardcoded endpoints and became one khlenv store edit. Two
+facts measured there set the size of the rest: `claude-pub.sh` carried a
+hardcoded `192.168.1.144:6380` and sent **no AUTH at all**, and the central
+Redis requires it. Repointing without CD-12 in place would not have degraded —
+it would have silently published nothing.
+
+Three things the program learned that outlive it:
+
+- **A dual-write window is the cheap way to cut a feed over.** Publishers
+  wrote both homes while readers moved one at a time, so no step in the
+  sequence had a failure mode worse than "the new home is empty".
+- **Pinning host and port does not pin a credential.** Repointing `claude:*`
+  at an authenticated Redis gave kdeskdash's kvscf handle a password by
+  inheritance, and a Redis with no password configured answers AUTH with an
+  *error*. CD-8's warning could not have caught it: it said pin host and port,
+  and host and port were pinned. Fixed in kdeskdash `6817457`, and generalised
+  there as `a-fallback-outlives-the-sameness-that-justified-it.md`.
+- **A pinned-version recipe is a second place a cutover lives.** k-homelab
+  pins `kdeskdash_publisher_version` deliberately rather than following the
+  store's `latest`, so publishing was never enough — until the pin moved, the
+  next `bin/apply` would have reverted both managed hosts and silently stopped
+  the dual-write.
 
 ## CD-8 — `kvscf:*` stays with its workstation pair
 
@@ -351,6 +378,47 @@ drift in a per-user form invisible to knarr and kmuster.
 verification names kai, kubs0 and cleo explicitly rather than iterating
 whatever the runner reached — that is precisely how kpolice sprint 002 left
 cleo on a commit that no longer existed for a whole sprint.
+
+## CD-14 — `kdash-pub` has exactly one read verb, and it is a publisher's
+
+Sprint 003 drew the boundary as "no reading": the consumer side is `libkdash`,
+and that stays true for *consumption*. The data model, the freshness ladder and
+the skip-a-bad-record discipline live in the C library, and a second copy of
+them in Rust would be a second contract to keep in step.
+
+But a publisher has a read that is not consumption. `claude:limits` is one
+shared key with writers on several hosts, and a poll writer must not publish
+over a fresher observation — so it reads `updated_at` back before writing.
+kdeskdash sprint 031 left that as the last hand-rolled RESP request over
+`/dev/tcp`, aimed at the unauthenticated interim home because that was the only
+endpoint bash could reach without re-deriving CD-12's auth rules. Correct for
+the dual-write window, and wrong the moment the stem flipped to an
+authenticated Redis (korg:1769).
+
+The alternative was re-hand-rolling AUTH in bash, including the
+refuse-a-group-readable-file rule — precisely what CD-11 built the CLI to stop.
+So `kdash-pub` gained `hget <key> <field>`, on the binary that already has
+khlenv resolution, CD-12 auth, the key grammar and the connection code. The
+read was the small part.
+
+The boundary that replaces "no reading":
+
+- **One field, no model.** No decoding, no freshness verdict, no notion of a
+  record — it returns bytes.
+- **The same key grammar,** through the same choke point as every write. A key
+  no reader will parse is not one a publisher may ask about either.
+- **The same exit codes.** 0 with the value; 0 with *nothing* on stdout when
+  the field is absent, because a missing field is an answer and not a fault;
+  2 for delivery failure. `--best-effort` therefore degrades a read to
+  "unknown" exactly as it degrades a write to "dropped", and a caller keeps one
+  error convention across both.
+- **Not a consumer API.** Anything that wants a *feed* — sessions, a staleness
+  decision, anything rendered — uses `libkdash`. A second read verb needs a
+  reason of the same shape: a publisher that cannot write correctly without it.
+
+The Python wrapper does not have this and does not need it; it gains one when
+something it publishes needs a guard, on the same evidence-first footing as the
+rest of this repo's wrapper surface.
 
 ## Open questions
 

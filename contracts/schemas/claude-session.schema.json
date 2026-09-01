@@ -1,0 +1,42 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/kenhia/kdashdata/contracts/schemas/claude-session.schema.json",
+  "title": "claude session",
+  "description": "Record of claude:session:{host}:{sid} — one live Claude Code session, on the central Redis since the CD-7 relocation. Grandfathered shape (CD-3). This is a Redis HASH, not a JSON string: fields are described here as the DECODED record, and every value arrives off the wire as a string that the reader parses. Key is exactly 4 segments; {host} and {sid} both obey the host-token contract ([A-Za-z0-9._-], 1..63) and the key is authoritative for {host}. TTL 7200 s, re-armed on every lifecycle write, so an abandoned session disappears on its own. Written by the Claude Code hooks (SessionStart/UserPromptSubmit/Stop/SessionEnd, plus a throttled ts-only keepalive on every tool call); SessionEnd DELs the key. `status` and `ts` are the whole liveness contract and a record missing either is rejected outright — that is the resurrection-race guard: a statusline write landing after SessionEnd would otherwise raise a session from the dead. A keepalive refreshes `ts` alone and can never change what the record claims, so a partial hash carrying only `ts` is a legitimate transient (a session whose first full write has not landed yet) and correctly renders as nothing at all.",
+  "type": "object",
+  "required": ["status", "ts"],
+  "additionalProperties": true,
+  "properties": {
+    "host": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9._-]{1,63}$",
+      "description": "Echo of the key's host segment; the key is authoritative"
+    },
+    "project": {
+      "type": "string",
+      "description": "Basename of the session's cwd, POSIX or Windows style"
+    },
+    "cwd": { "type": "string", "description": "Session working directory, verbatim" },
+    "status": {
+      "type": "string",
+      "enum": ["working", "awaiting", "blocked"],
+      "description": "Published status. `blocked` means the agent is sitting on an AskUserQuestion and cannot proceed without the user. An unrecognised value distrusts the whole record rather than defaulting"
+    },
+    "ts": {
+      "type": "integer",
+      "description": "Unix seconds of the last lifecycle event or keepalive. Drives the reader's freshness ladder (fresh -> idle at 15 min -> stale at 40 min); a non-numeric value rejects the record"
+    },
+    "started_ts": {
+      "type": "integer",
+      "description": "Unix seconds of SessionStart. Absent for a session whose start predates its publisher, which renders as an unknown duration rather than a zero one"
+    },
+    "model": {
+      "type": "string",
+      "description": "Friendly model label, e.g. \"Opus 5\". Read from the transcript by the hooks, since the statusline never runs for headless or desktop sessions. Absent until one is known"
+    },
+    "title": {
+      "type": "string",
+      "description": "Claude's own session name. Lags by a few turns because Claude does not generate one immediately; an empty or absent title falls back to `project` in the view"
+    }
+  }
+}

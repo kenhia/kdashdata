@@ -14,16 +14,24 @@ stem answers today, and a move is an edit to the store, not to any consumer.
 | Home | khlenv stem | Value today | Auth | Holds |
 |---|---|---|---|---|
 | Central | `KDASH_CENTRAL_REDIS` (legacy alias `KPIDASH_REDIS`) | `rpi53:6379` | `REDISCLI_AUTH` (krot: rpi53-redis-password) | `kpidash:*`, `kdash:*` |
-| Claude interim (CD-7) | `KDASH_CLAUDE_REDIS` | `rpidash2:6380` | **none configured** — sending AUTH here is an error, so publishers need the explicit no-auth opt-out (CD-12); central requires AUTH, so the cutover reverses that | `claude:*` — until the migration program runs |
+| Claude feed (CD-7, relocated) | `KDASH_CLAUDE_REDIS` | `rpi53:6379` | `REDISCLI_AUTH` (krot: rpi53-redis-password) | `claude:*` |
 | Workstation pair (CD-8) | per-app env (no stem yet) | dev pair `rpidash2:6380`; work pair its own | per-app env | `kvscf:*` — stays with the pair by design |
 | Dashboard-local | none — `127.0.0.1:6379` by definition | `127.0.0.1:6379` on each dashboard host | none/local | `<dashboard>:*` |
 
-`KDASH_CLAUDE_REDIS` is the one the relocation program flips (CD-7): it names
-the interim home today and the central Redis after the cutover, which is what
-makes that cutover a store edit rather than a sweep of every publisher host.
-`kvscf:*` deliberately has **no** stem yet — kdeskdash currently defaults its
-kvscf endpoint to the claude one, and CD-8 requires that pin to be made
-explicit as part of the flip, in the kdeskdash slice that owns it.
+**Two stems, one endpoint, deliberately.** `KDASH_CLAUDE_REDIS` and
+`KDASH_CENTRAL_REDIS` both answer `rpi53:6379` now that the CD-7 relocation is
+complete (program korg:1755, sprint 005). Collapsing them into one name would
+spend the thing that made the move a single store edit: the claude family keeps
+its own address, so it can move again without a publisher host being touched.
+The relocation itself was that edit — one line in khlenv's store, plus one
+`KDD_LEGS` value in the publisher.
+
+`kvscf:*` deliberately has **no** stem, and no longer needs one to stay put:
+both panels pin `KDESKDASH_KVSCF_REDIS_HOST/PORT` explicitly since kdeskdash
+sprint 031, so CD-8 holds by its own configuration rather than by riding on
+wherever the claude endpoint happens to point. That pin is not a formality —
+the credential inherited across a differing endpoint is what actually broke
+during the repoint (see the claude family below).
 
 ## Family: kpidash (central, live)
 
@@ -76,39 +84,56 @@ proves that host's whole publish path — khlenv discovery, `REDISCLI_AUTH`, key
 grammar, schema-valid payload — and nothing renders the result. Key absence
 means nobody has run it there lately, which is not a fault.
 
-## Family: claude (rpidash2:6380 interim, live — migrating to central per CD-7)
+## Family: claude (central, live)
 
-Owner: the Claude-activity publisher (`publisher/claude-pub.sh` + Claude
-Code hooks/statusline; see kdeskdash sprint 007). Read by kdeskdash
-(rpidash2 + rpidash3). Will move to the central Redis via a korg program
-(CD-7 — blast radius: every fleet host's hooks, both kdeskdash devices,
-AUTH coverage, cutover freshness). Not yet schema'd — schemas land with the
-move program, or sooner if a new consumer (kstudiodash) needs them first.
+Owner: the Claude-activity publisher (`publisher/claude-pub.sh` + Claude Code
+hooks/statusline; see kdeskdash sprint 007). Written from every fleet host that
+runs Claude Code (kai, kubs0, cleo); read by kdeskdash (rpidash2 + rpidash3).
+Shapes are grandfathered (CD-3) but schema'd as of the relocation — CD-7 said
+the schemas land with the move, and they did.
 
-Endpoint: `KDASH_CLAUDE_REDIS`, seeded in sprint 003 and answering
-`rpidash2:6380`. Today's publisher does not use it — `claude-pub.sh` carries a
-hardcoded `192.168.1.144:6380` and speaks RESP over `/dev/tcp` with no AUTH —
-and replacing that with `kdash-pub` is the cutover the program's kdeskdash
-slice performs.
+Endpoint: `KDASH_CLAUDE_REDIS`, answering `rpi53:6379`. The publisher reaches it
+through `kdash-pub` (CD-11/CD-13) — khlenv discovery, CD-12 auth and the key
+grammar, with no hardcoded address anywhere on the write path.
 
-| Key | Type / pattern | Notes |
-|---|---|---|
-| `claude:session:{host}:{sid}` | HASH | host/project/cwd/status/ts/started_ts + model/title; `status` ∈ working/awaiting/blocked; records missing `status` or numeric `ts` are rejected (resurrection-race guard) |
-| `claude:limits` | HASH | five_hour/seven_day pcts + resets; writers publish their own cadence (`expected_refresh_s`); model-scoped window carries its own stamp |
-| `claude:recent` | capped LIST of JSON | `{host, project, title, ended_ts, dur_s}` |
+| Key | Type / pattern | Schema | Notes |
+|---|---|---|---|
+| `claude:session:{host}:{sid}` | HASH, TTL 7200 s | [session](schemas/claude-session.schema.json) | host/project/cwd/status/ts/started_ts + model/title; `status` ∈ working/awaiting/blocked; records missing `status` or numeric `ts` are rejected (resurrection-race guard) |
+| `claude:limits` | HASH, no TTL | [limits](schemas/claude-limits.schema.json) | five_hour/seven_day pcts + resets; writers publish their own cadence (`expected_refresh_s`); the model-scoped window carries its own independent stamp |
+| `claude:recent` | event log, capped: LPUSH + LTRIM 0 19 | [recent](schemas/claude-recent.schema.json) | `{host, project, title, ended_ts, dur_s}` |
+
+The two HASH feeds are the only records in this registry that are **not** JSON
+documents. Their schemas describe the decoded record; every value arrives off
+the wire as a string.
 
 Freshness ladder (reader-derived, the CD-6 model): published status trusted
 while fresh; no event for 15 min → idle; 40 min → stale.
+
+`claude:limits` is one shared key with several writers on several hosts, so
+`updated_at` is the *observation* time and a writer must not publish over a
+fresher one. That guard is a read, which is why the publisher CLI has exactly
+one read verb (CD-14).
+
+**Relocated from `rpidash2:6380`** by program korg:1755, in four slices:
+publisher wrappers and the stem (sprint 003), `kdash-pub` distribution
+(sprint 004), the kdeskdash cutover and reader repoint through a dual-write
+window (kdeskdash sprint 031), and this close-out (sprint 005). The old home
+still serves `kvscf:*` for the dev pair and always will (CD-8) — this family
+retired a *feed* from that instance, not the instance.
 
 ## Family: kvscf (workstation-pair Redis, live — stays put per CD-8)
 
 Owner: kvscf (Windows publisher on the pair's workstation: cleo for the dev
 pair, kwork for the work pair). Read/commanded by the desk dashboard in
 front of that keyboard — a direct data + control exchange within one pair,
-which is why this family never moves to central (CD-8). kdeskdash defaults
-this endpoint to the claude endpoint today (dev pair `rpidash2:6380`);
-rpidash3 points at the work-side instance. Once `claude:*` migrates (CD-7),
-kvscf keeps the pair endpoint — the shared default decouples then.
+which is why this family never moves to central (CD-8). Both panels now pin
+`KDESKDASH_KVSCF_REDIS_HOST/PORT` explicitly (rpidash2 at its own
+`127.0.0.1:6380`, rpidash3 at its own second instance); the endpoint used to
+default to the claude one, and the auth still inherits — but only when the two
+resolve to the same `host:port`, because sending a password to a Redis that has
+none configured is an error rather than a shrug. Now that `claude:*` has moved
+(CD-7),
+kvscf keeps the pair endpoint — the shared default decoupled at that flip.
 
 | Key / channel | Type / pattern | Notes |
 |---|---|---|

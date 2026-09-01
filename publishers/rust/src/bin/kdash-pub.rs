@@ -15,6 +15,7 @@
 //! kdash-pub setex kdash:demo:health 5 '{"alive":true}'
 //! kdash-pub --stem KDASH_CLAUDE_REDIS hset claude:session:kai:abc status working
 //! kdash-pub endpoint
+//! kdash-pub --stem KDASH_CLAUDE_REDIS hget claude:limits updated_at
 //! printf 'hset\tclaude:session:kai:abc\tstatus\tworking\nexpire\tclaude:session:kai:abc\t7200\n' \
 //!   | kdash-pub --best-effort batch
 //! ```
@@ -31,10 +32,17 @@
 //! fail a hook; a key that violates the grammar is a bug that should be
 //! noticed, and quietly exiting 0 on it is how a publisher goes off-contract
 //! for a month without anyone finding out.
+//!
+//! `hget` (CD-14) shares those codes exactly, which is what lets a caller keep
+//! one error convention across its reads and its writes: **0 with the value on
+//! stdout, 0 with nothing on stdout when the field is absent** — a missing
+//! field is an answer, not a fault — and 2 when Redis could not be reached, so
+//! `--best-effort` degrades a read to "unknown" the same way it degrades a
+//! write to "dropped".
 
 use kdash_pub::endpoint::{self, Resolved, Stem};
-use kdash_pub::{command, Command, Publisher};
-use std::io::Read;
+use kdash_pub::{command, Command, Publisher, Query};
+use std::io::{Read, Write};
 use std::process::ExitCode;
 
 const EXIT_USAGE: u8 = 1;
@@ -58,6 +66,8 @@ enum Action {
     Publish(Vec<String>),
     /// Tab-separated commands from stdin, all in one round trip.
     Batch,
+    /// One read from argv (CD-14): `hget <key> <field>`.
+    Read(Vec<String>),
     /// Print where this invocation would write, and connect to prove it.
     Endpoint,
     Help,
@@ -143,6 +153,9 @@ fn parse_args(argv: &[String]) -> Result<Invocation, ArgError> {
         Some("batch") => Action::Batch,
         Some("endpoint") => Action::Endpoint,
         Some("help") => Action::Help,
+        // The table decides, not a literal here: a second read verb should
+        // reach the read path by being added to READ_USAGE and nowhere else.
+        Some(verb) if command::is_read_verb(verb) => Action::Read(rest),
         Some(_) => Action::Publish(rest),
     };
     Ok(invocation)
@@ -165,6 +178,7 @@ fn batch_line(line: &str) -> Option<Vec<String>> {
 fn help() -> String {
     let verbs = command::USAGE
         .iter()
+        .chain(command::READ_USAGE)
         .map(|(_, usage)| format!("  kdash-pub [options] {usage}"))
         .collect::<Vec<_>>()
         .join("\n");
@@ -188,7 +202,10 @@ fn help() -> String {
          \n\
          The password comes from $REDISCLI_AUTH, or from a 0600 env file when it\n\
          is unset (CD-12): $KDASH_AUTH_FILE, ~/.config/kdash/redis-auth.env,\n\
-         ~/.config/kpidash-client/redis-auth.env.\n",
+         ~/.config/kpidash-client/redis-auth.env.\n\
+         \n\
+         hget prints the value and a newline, or nothing at all when the field\n\
+         is absent — an absent field is an answer, not an error.\n",
         central = endpoint::CENTRAL_STEM,
         claude = endpoint::CLAUDE_STEM,
     )
@@ -217,6 +234,17 @@ fn build_commands(action: &Action) -> Result<Vec<Command>, String> {
     }
 }
 
+/// The read half of [`build_commands`]. Both run before anything connects, so
+/// a malformed read is reported as a usage error even with Redis down.
+fn build_query(action: &Action) -> Result<Option<Query>, String> {
+    match action {
+        Action::Read(words) => Ok(Some(
+            command::parse_query(words).map_err(|e| e.to_string())?,
+        )),
+        _ => Ok(None),
+    }
+}
+
 fn publisher(invocation: &Invocation) -> Result<Publisher, String> {
     let mut publisher = Publisher::new(&invocation.app, invocation.stem.clone());
     if invocation.no_auth {
@@ -234,6 +262,7 @@ fn run(invocation: Invocation) -> Result<(), (u8, String)> {
     // Everything that can be decided without a socket is decided first, so a
     // contract error is reported as one even when Redis is down.
     let commands = build_commands(&invocation.action).map_err(|e| (EXIT_USAGE, e))?;
+    let query = build_query(&invocation.action).map_err(|e| (EXIT_USAGE, e))?;
     let publisher = publisher(&invocation).map_err(|e| (EXIT_USAGE, e))?;
 
     if matches!(invocation.action, Action::Endpoint) {
@@ -255,6 +284,21 @@ fn run(invocation: Invocation) -> Result<(), (u8, String)> {
     if invocation.verbose || matches!(invocation.action, Action::Endpoint) {
         eprintln!("kdash-pub: {}", connection.endpoint());
     }
+    if let Some(query) = &query {
+        // Nothing printed for an absent field — the caller's empty read is the
+        // "unknown" its guard is written to expect.
+        if let Some(value) = connection
+            .read_field(query)
+            .map_err(|e| (EXIT_DELIVERY, e.to_string()))?
+        {
+            let mut out = std::io::stdout().lock();
+            out.write_all(&value)
+                .and_then(|()| out.write_all(b"\n"))
+                .map_err(|e| (EXIT_DELIVERY, format!("writing stdout: {e}")))?;
+        }
+        return Ok(());
+    }
+
     connection
         .pipeline(&commands)
         .map_err(|e| (EXIT_DELIVERY, e.to_string()))
@@ -370,6 +414,42 @@ mod tests {
     }
 
     #[test]
+    fn hget_reaches_the_read_path_and_never_the_publish_one() {
+        let invocation = args(&[
+            "--stem",
+            "KDASH_CLAUDE_REDIS",
+            "hget",
+            "claude:limits",
+            "updated_at",
+        ])
+        .unwrap();
+        assert_eq!(
+            invocation.action,
+            Action::Read(vec![
+                "hget".into(),
+                "claude:limits".into(),
+                "updated_at".into()
+            ])
+        );
+        assert_eq!(invocation.stem, Stem::CLAUDE);
+        // A read builds no commands and a write builds no query — the two
+        // paths never both fire for one invocation.
+        assert!(build_commands(&invocation.action).unwrap().is_empty());
+        assert_eq!(
+            build_query(&invocation.action).unwrap(),
+            Some(Query::HGet {
+                key: "claude:limits".into(),
+                field: "updated_at".into()
+            })
+        );
+        assert!(
+            build_query(&args(&["del", "claude:limits"]).unwrap().action)
+                .unwrap()
+                .is_none()
+        );
+    }
+
+    #[test]
     fn batch_and_endpoint_are_actions_not_keys() {
         assert_eq!(args(&["batch"]).unwrap().action, Action::Batch);
         assert_eq!(args(&["endpoint"]).unwrap().action, Action::Endpoint);
@@ -405,7 +485,7 @@ mod tests {
     #[test]
     fn help_lists_every_verb_the_parser_accepts() {
         let text = help();
-        for (verb, _) in command::USAGE {
+        for (verb, _) in command::USAGE.iter().chain(command::READ_USAGE) {
             assert!(text.contains(&format!(" {verb} ")), "help omits {verb}");
         }
         assert!(text.contains(endpoint::CLAUDE_STEM));
