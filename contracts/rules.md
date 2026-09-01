@@ -75,6 +75,34 @@ staleness means something, loose enough that one missed write isn't a flap.
 - The contract itself is versioned by this repo's git history; the registry
   records per-family status (`live`, `migrating`, `retired`).
 
+## Publisher conduct
+
+A publisher's obligations are the mirror of the consumer's, and they are
+implemented once each in the wrappers ([`publishers/`](../publishers/)) so no
+publisher has to re-derive them:
+
+- **Resolve the endpoint, never hardcode it** (CD-4), and resolve it on
+  **every** connect. The stem is the address; the value behind it is the
+  homelab's business. Each home's stem is named in the
+  [registry](registry.md#homes).
+- **The password is `REDISCLI_AUTH`** (CD-2), and khlenv never holds it. Where
+  that variable cannot reach — a Claude Code hook, a statusline — it is
+  delivered by a 0600 env file holding the same variable (CD-12), not by a
+  second mechanism.
+- **Validate the key before writing it.** Same grammar, same charset, same
+  fixed-segment discipline the reader parses with. A writer that can emit a key
+  no reader will parse has published nothing.
+- **Stamp `ts`** if the record does not carry one, and never overwrite one it
+  does — a publisher replaying an observation knows its age better than the
+  wall clock does.
+- **Own your cadence and your cap.** The wrapper will not retry for you, will
+  not schedule you, and will not cap an event log you did not give a cap: an
+  uncapped list is how a homelab Redis quietly fills up.
+- **A publish that cannot be routed is dropped, not guessed.** For a reader, a
+  stale-but-plausible default beats a blank panel; for a writer it does not. A
+  misdirected write is a convincing record in the wrong Redis, and it looks
+  like success from both ends.
+
 ## Consumer conduct
 
 Read-only (CD-5); degrade-don't-block (CD-6); trust published state only

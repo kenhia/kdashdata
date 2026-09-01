@@ -1,7 +1,7 @@
 # kdashdata
 
-> **Early days** — contract v0 (docs + schemas) and the shared C consumer
-> library are here; the publisher wrappers are not yet.
+> **Early days** — contract v0 (docs + schemas), the shared C consumer
+> library and the publisher wrappers are here.
 
 kdashdata owns data movement for my homelab's LVGL dashboards: documented
 Redis feed contracts (JSON schema files as the machine-readable source of
@@ -20,8 +20,8 @@ kstudiodash — live in their own repos and consume this one.
 - [`src/`](src/) — its implementation; [`tests/`](tests/) — the host unit tests
 - [`examples/kdash_dump.c`](examples/kdash_dump.c) — a toy consumer that reads
   every schema'd family and prints it
-- the Rust/Python publisher wrappers arrive in a later sprint; their
-  directories are created when they carry code, not before
+- [`publishers/`](publishers/) — the publisher wrappers: a
+  [Rust crate and CLI](publishers/rust/) and a [Python package](publishers/python/)
 
 ## The consumer library
 
@@ -49,21 +49,49 @@ The endpoint comes from khlenv (CD-4) and the password from `REDISCLI_AUTH`
 aarch64 with `just build-aarch64`. Dependencies are hiredis (system) and a
 vendored cJSON, and no more — CD-9.
 
+## The publisher wrappers
+
+`publishers/` is the write side: find the Redis through khlenv, authenticate,
+check the key against the grammar, stamp `ts`, pick a publish pattern. Two
+implementations because the publishers are two shapes — a native
+[CLI](publishers/rust/) for shell publishers on a hot path (Claude Code hooks:
+18 ms per publish) and a [Python package](publishers/python/) for daemons
+(102 ms, amortised over a process lifetime). CD-11 has the reasoning.
+
+```sh
+kdash-pub setex kdash:selftest:kai 300 '{"host":"kai","publisher":"rust"}'
+just pub-endpoint    # where would this host publish, and can it?
+```
+
+```python
+from kdash_pub import Publisher
+Publisher("apt-temps").publish_latest("kpidash:apttemps:office", {"temp_c": 22.4})
+```
+
 ## Development
 
 Uses the [kprojects](https://github.com/kenhia/kprojects) minimal harness:
 `just` lists recipes, `just check` runs the gates.
 
-`just check` is two gates. `check-docs` needs only python3 — every JSON file
-parses, every relative markdown link resolves — so it runs on a host with no
-compiler. The rest builds the library and runs the unit tests, which cover the
-pure core (key grammar, freshness, payload parsing) with no Redis and no
-network. The socket code is verified live instead: `just dump` reads the real
-central Redis, and needs `REDISCLI_AUTH` set.
+`just check` is four gates, in increasing order of what they need installed:
 
-Building needs `libhiredis-dev`; the aarch64 cross build additionally needs
-`gcc-aarch64-linux-gnu` and a Pi sysroot at `~/pi-sysroot` (kdeskdash's
-`just sync-sysroot` populates one, and the same sysroot serves both repos).
+- `check-docs` — python3 only: every JSON file parses, every relative markdown
+  link resolves, every schema is listed in the registry.
+- `check-python` — python3 only: the Python wrapper's pure core, which imports
+  nothing but the stdlib precisely so this gate needs nothing installed.
+- `check-rust` — cargo: fmt, clippy, and the Rust wrapper's unit tests. A first
+  build also needs network and git access to the private khlenv repo (CD-11).
+- the C library build plus ctest — the pure core (key grammar, freshness,
+  payload parsing) with no Redis and no network.
+
+None of the four opens a socket. The socket code is verified live instead:
+`just dump` reads the real central Redis (needs `REDISCLI_AUTH`), and
+`just pub-endpoint` plus the publisher self-test prove the write path.
+
+Building the C library needs `libhiredis-dev`; the aarch64 cross build
+additionally needs `gcc-aarch64-linux-gnu` and a Pi sysroot at `~/pi-sysroot`
+(kdeskdash's `just sync-sysroot` populates one, and the same sysroot serves
+both repos).
 
 ## License
 

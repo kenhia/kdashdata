@@ -1,0 +1,28 @@
+[project]
+name = "kdash-pub"
+version = "0.1.0"
+description = "Publisher wrapper for the kdashdata Redis feed contracts (khlenv discovery, REDISCLI_AUTH, key grammar, publish patterns)"
+readme = "README.md"
+license = "MIT"
+requires-python = ">=3.11"
+dependencies = [
+    "khlenv>=0.1.0",
+    "redis>=5",
+]
+
+[project.urls]
+Homepage = "https://github.com/kenhia/kdashdata"
+
+# khlenv is published to the homelab package store, not PyPI — the same index
+# kpidash-client uses. Kept identical on purpose: a consumer that installs both
+# should need one extra index, not two.
+[[tool.uv.index]]
+name = "homelab"
+url = "https://kubsdb.encke-wahoo.ts.net:4880/simple/"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/kdash_pub"]

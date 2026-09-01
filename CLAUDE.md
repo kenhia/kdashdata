@@ -71,11 +71,13 @@ The dashboards and their publisher daemons live in their own repos and
 consume this one — nothing here runs as a service.
 
 Status: contract v0 landed (sprint 001, korg:1733); the shared C consumer
-library landed (sprint 002, korg:1751). See `docs/architecture.md`
-(decisions CD-1…CD-10, open questions OQ-n), `contracts/rules.md`,
-`contracts/registry.md`, and `include/kdash/kdash.h` for the library's API.
-Next: the Rust/Python publisher wrappers, or kstudiodash's first
-consumption of the library (korg:1728).
+library landed (sprint 002, korg:1751); the publisher wrappers landed
+(sprint 003, korg:1752 — slice 1 of the CD-7 relocation program korg:1755).
+See `docs/architecture.md` (decisions CD-1…CD-12, open questions OQ-n),
+`contracts/rules.md`, `contracts/registry.md`, `include/kdash/kdash.h` for
+the consumer API, and `publishers/README.md` for the publish side. Next: the
+kdeskdash cutover + repoint (korg:1753), or kstudiodash's first consumption
+of the library (korg:1728).
 
 Conventions and constraints:
 
@@ -89,8 +91,12 @@ Conventions and constraints:
   real consumer exists.
 - korg project: kdashdata. Read first: `sprints/planning/roadmap.md`, then
   `docs/` and `contracts/` once sprint 001 lands.
-- `just check` is two gates: `check-docs` (python3 stdlib only,
+- `just check` is four gates: `check-docs` (python3 stdlib only,
   `scripts/check.py` — every JSON file parses, every relative markdown link
-  resolves) plus a CMake build of the C library and its ctest unit tests.
-  The unit tests cover only the pure core (no Redis, no network); the socket
-  paths are verified live with `just dump`, which needs `REDISCLI_AUTH`.
+  resolves, every schema is listed in the registry), `check-python` (the
+  Python wrapper's pure core, stdlib only), `check-rust` (fmt, clippy, unit
+  tests — a first build needs network and git access to the private khlenv
+  repo), plus a CMake build of the C library and its ctest unit tests.
+  Every gate covers pure code only (no Redis, no network); the socket paths
+  are verified live with `just dump` and `just pub-endpoint`, which need
+  `REDISCLI_AUTH` or the CD-12 env file.

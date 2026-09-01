@@ -7,12 +7,23 @@
 
 ## Homes
 
-| Home | Endpoint | Auth | Holds |
-|---|---|---|---|
-| Central | `rpi53:6379` | `REDISCLI_AUTH` (krot: rpi53-redis-password) | `kpidash:*` |
-| Claude interim (CD-7) | `rpidash2:6380` | per-app env | `claude:*` — until the migration program runs |
-| Workstation pair (CD-8) | dev pair `rpidash2:6380`; work pair its own | per-app env | `kvscf:*` — stays with the pair by design |
-| Dashboard-local | `127.0.0.1:6379` on each dashboard host | none/local | `<dashboard>:*` |
+Endpoints are **resolved, never hardcoded** (CD-4): the khlenv stem is the
+address a publisher or consumer actually knows. The value column is what the
+stem answers today, and a move is an edit to the store, not to any consumer.
+
+| Home | khlenv stem | Value today | Auth | Holds |
+|---|---|---|---|---|
+| Central | `KDASH_CENTRAL_REDIS` (legacy alias `KPIDASH_REDIS`) | `rpi53:6379` | `REDISCLI_AUTH` (krot: rpi53-redis-password) | `kpidash:*`, `kdash:*` |
+| Claude interim (CD-7) | `KDASH_CLAUDE_REDIS` | `rpidash2:6380` | **none configured** — sending AUTH here is an error, so publishers need the explicit no-auth opt-out (CD-12); central requires AUTH, so the cutover reverses that | `claude:*` — until the migration program runs |
+| Workstation pair (CD-8) | per-app env (no stem yet) | dev pair `rpidash2:6380`; work pair its own | per-app env | `kvscf:*` — stays with the pair by design |
+| Dashboard-local | none — `127.0.0.1:6379` by definition | `127.0.0.1:6379` on each dashboard host | none/local | `<dashboard>:*` |
+
+`KDASH_CLAUDE_REDIS` is the one the relocation program flips (CD-7): it names
+the interim home today and the central Redis after the cutover, which is what
+makes that cutover a store edit rather than a sweep of every publisher host.
+`kvscf:*` deliberately has **no** stem yet — kdeskdash currently defaults its
+kvscf endpoint to the claude one, and CD-8 requires that pin to be made
+explicit as part of the flip, in the kdeskdash slice that owns it.
 
 ## Family: kpidash (central, live)
 
@@ -51,6 +62,20 @@ publishing", not "that host is down" — check the publisher.
 | `kpidash:screenshot` | one-shot command (GETDEL) | device self-screenshot |
 | `kpidash:system:*` | diagnostics | logpath/version plain strings; mem:current + mem:ring (LPUSH, trim 1500) |
 
+## Family: kdash (central, live)
+
+Owner: kdashdata. The namespace new shared feeds land in (rules.md); the
+first key arrived with the publisher wrappers in sprint 003.
+
+| Key | Type / pattern | Writer (cadence) | TTL | Schema |
+|---|---|---|---|---|
+| `kdash:selftest:{host}` | latest-value, expiring | either publisher wrapper, on demand | 300 s | [selftest](schemas/kdash-selftest.schema.json) |
+
+`selftest` is a publish canary, not a dashboard feed: running it from a host
+proves that host's whole publish path — khlenv discovery, `REDISCLI_AUTH`, key
+grammar, schema-valid payload — and nothing renders the result. Key absence
+means nobody has run it there lately, which is not a fault.
+
 ## Family: claude (rpidash2:6380 interim, live — migrating to central per CD-7)
 
 Owner: the Claude-activity publisher (`publisher/claude-pub.sh` + Claude
@@ -59,6 +84,12 @@ Code hooks/statusline; see kdeskdash sprint 007). Read by kdeskdash
 (CD-7 — blast radius: every fleet host's hooks, both kdeskdash devices,
 AUTH coverage, cutover freshness). Not yet schema'd — schemas land with the
 move program, or sooner if a new consumer (kstudiodash) needs them first.
+
+Endpoint: `KDASH_CLAUDE_REDIS`, seeded in sprint 003 and answering
+`rpidash2:6380`. Today's publisher does not use it — `claude-pub.sh` carries a
+hardcoded `192.168.1.144:6380` and speaks RESP over `/dev/tcp` with no AUTH —
+and replacing that with `kdash-pub` is the cutover the program's kdeskdash
+slice performs.
 
 | Key | Type / pattern | Notes |
 |---|---|---|
@@ -94,5 +125,5 @@ kvscf keeps the pair endpoint — the shared default decouples then.
 
 ## Reserved
 
-- `kdash:*` — the namespace for new shared feeds (rules.md). No keys exist
-  yet; the first will land with the first post-v0 feed.
+- `kdash:<family>:<…>` — the namespace for new shared feeds (rules.md).
+  `selftest` is the only family in it so far.
