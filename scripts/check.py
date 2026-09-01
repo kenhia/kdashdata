@@ -1,9 +1,11 @@
 #!/usr/bin/env python3
-"""Repo gate: JSON parses, markdown links resolve, every schema is registered.
+"""Repo gate: JSON parses, markdown links resolve, every schema is
+registered, every PowerShell script is pure ASCII.
 
 Stdlib only, by design — this repo carries contracts and docs, and its
-failure modes are a schema that doesn't parse, a stale cross-reference, and a
-feed whose schema landed without anyone telling the registry about it.
+failure modes are a schema that doesn't parse, a stale cross-reference, a
+feed whose schema landed without anyone telling the registry about it, and
+(since sprint 004) a non-ASCII byte in the deploy script cleo runs.
 
 The code gates live elsewhere: `just check-python`, `just check-rust`, and the
 CMake build plus ctest.
@@ -23,6 +25,9 @@ SKIP_PREFIXES = (".venv",)
 LINK_RE = re.compile(r"\[[^\]]*\]\(([^)\s]+)\)")
 SCHEMA_DIR = ROOT / "contracts" / "schemas"
 REGISTRY = ROOT / "contracts" / "registry.md"
+#: Tab, newline, and printable ASCII. Anything else is a parse failure on
+#: cleo — see the check below.
+ASCII_OK = {0x09, 0x0A, 0x0D} | set(range(0x20, 0x7F))
 
 
 def skipped(rel: Path) -> bool:
@@ -69,12 +74,34 @@ def main() -> int:
                 "every schema names a feed the registry must list"
             )
 
+    # scripts/install-cleo.ps1 runs under Windows PowerShell 5.1, which reads a
+    # BOM-less .ps1 as the system ANSI codepage rather than UTF-8. A UTF-8
+    # em-dash then arrives as mojibake, and one sitting inside a double-quoted
+    # string terminates that string early — so the file fails to parse with
+    # errors pointing dozens of lines away from the actual character. The rest
+    # of this repo uses em-dashes freely, which is exactly why an editor (or an
+    # agent) will eventually put one here. Cheaper to catch at `just check`
+    # than on cleo.
+    for path in repo_files(".ps1"):
+        raw = path.read_bytes()
+        for lineno, line in enumerate(raw.split(b"\n"), start=1):
+            bad = sorted({b for b in line if b not in ASCII_OK})
+            if bad:
+                shown = ", ".join(f"0x{b:02x}" for b in bad)
+                errors.append(
+                    f"{path.relative_to(ROOT)}:{lineno}: non-ASCII byte(s) {shown} — "
+                    "a .ps1 cleo runs must be pure ASCII (see the file's .NOTES)"
+                )
+
     if errors:
         print("\n".join(errors))
         print(f"check: {len(errors)} problem(s)")
         return 1
 
-    print("check: all JSON parses, all markdown links resolve, all schemas registered")
+    print(
+        "check: all JSON parses, all markdown links resolve, "
+        "all schemas registered, all .ps1 pure ASCII"
+    )
     return 0
 
 
