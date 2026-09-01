@@ -1,0 +1,20 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/kenhia/kdashdata/contracts/schemas/kdash-selftest.schema.json",
+  "title": "kdash publisher self-test",
+  "description": "Payload of kdash:selftest:{host} — latest-value, expiring (TTL 300 s). Written by a publisher wrapper to prove its whole path end to end from one host: khlenv endpoint discovery, REDISCLI_AUTH, key grammar, and a schema-valid payload. Nothing renders it; key absence simply means nobody has run the self-test from that host lately. Key is exactly 3 segments.",
+  "type": "object",
+  "required": ["ts", "host", "publisher"],
+  "additionalProperties": true,
+  "properties": {
+    "ts": { "type": "number", "description": "Unix seconds (float) the wrapper stamped" },
+    "host": { "type": "string", "description": "Echo of the key's host segment, display only; the key is authoritative" },
+    "publisher": {
+      "type": "string",
+      "description": "Which wrapper wrote it",
+      "enum": ["rust", "python"]
+    },
+    "version": { "type": "string", "description": "Version of the wrapper that wrote it" },
+    "note": { "type": "string", "description": "Free text; what the run was checking" }
+  }
+}

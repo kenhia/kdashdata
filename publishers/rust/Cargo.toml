@@ -1,0 +1,33 @@
+[package]
+name = "kdash-pub"
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.82"
+description = "Publisher wrapper for the kdashdata Redis feed contracts: a crate for Rust publishers and a fast-startup CLI for hook contexts"
+license = "MIT"
+repository = "https://github.com/kenhia/kdashdata"
+
+[lib]
+name = "kdash_pub"
+path = "src/lib.rs"
+
+[[bin]]
+name = "kdash-pub"
+path = "src/bin/kdash-pub.rs"
+
+[dependencies]
+# CD-11: the khlenv client is taken, not re-derived. It pins the endpoint
+# precedence and the cache-file failover as a CROSS-CLIENT contract with the
+# Python client; a second implementation of that is a second answer.
+khlenv-client = { git = "https://github.com/kenhia/khlenv", tag = "khlenv-client-v0.1.0" }
+redis = { version = "0.27", default-features = false }
+serde_json = "1"
+
+[profile.release]
+# The CLI is exec'd from Claude Code hooks on every tool call (CD-12), so the
+# binary is optimised for size and startup, not for throughput it never has.
+opt-level = "s"
+lto = true
+codegen-units = 1
+panic = "abort"
+strip = true

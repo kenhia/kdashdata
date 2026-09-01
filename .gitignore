@@ -3,3 +3,7 @@
 .korg-sprint-proposal
 build/
 build-aarch64/
+publishers/rust/target/
+publishers/python/.venv*/
+publishers/python/dist/
+publishers/python/**/__pycache__/
