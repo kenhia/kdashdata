@@ -1,6 +1,6 @@
 /**
  * @file kdash_endpoint.c
- * khlenv protocol + CD-4 central-endpoint resolution.
+ * khlenv protocol + CD-4 endpoint resolution, for any stem.
  *
  * The parsing half (host:port, endpoint URL, HTTP response) is pure and
  * host-tested. The socket half is one bounded-timeout plain-HTTP GET: no TLS,
@@ -346,54 +346,64 @@ kdash_khlenv_status_t kdash_khlenv_resolve(const char *app, const char *key,
     return st;
 }
 
-kdash_endpoint_status_t kdash_resolve_central(const char *app, char *host,
-                                              size_t hostsz, int *port) {
-    if (!host || !port || hostsz == 0)
+const kdash_stem_t KDASH_STEM_CENTRAL = {
+    .key = KDASH_CENTRAL_STEM,
+    .legacy = KDASH_CENTRAL_STEM_LEGACY,
+    .fallback = KDASH_CENTRAL_DEFAULT,
+};
+
+const kdash_stem_t KDASH_STEM_CLAUDE = {
+    .key = KDASH_CLAUDE_STEM,
+    .legacy = NULL,
+    .fallback = NULL,
+};
+
+/* Turn one khlenv value into a host/port, or say why it could not be. */
+static kdash_endpoint_status_t take_value(const char *value, char *host,
+                                          size_t hostsz, int *port) {
+    return kdash_parse_hostport(value, KDASH_REDIS_PORT_DEFAULT, host, hostsz,
+                                port)
+               ? KDASH_EP_OK
+               : KDASH_EP_INVALID;
+}
+
+kdash_endpoint_status_t kdash_resolve_endpoint(const kdash_stem_t *stem,
+                                               const char *app, char *host,
+                                               size_t hostsz, int *port) {
+    if (!stem || !stem->key || !host || !port || hostsz == 0)
         return KDASH_EP_INVALID;
 
     /* 1. An explicit environment override wins outright. */
-    const char *env = getenv(KDASH_CENTRAL_STEM);
-    if (env && env[0]) {
-        return kdash_parse_hostport(env, KDASH_REDIS_PORT_DEFAULT, host, hostsz,
-                                    port)
-                   ? KDASH_EP_OK
-                   : KDASH_EP_INVALID;
-    }
+    const char *env = getenv(stem->key);
+    if (env && env[0])
+        return take_value(env, host, hostsz, port);
 
     const char *use_app = (app && app[0]) ? app : "kdash";
     char value[KDASH_ENDPOINT_MAX];
 
-    /* 2. The current stem. */
-    kdash_khlenv_status_t st =
-        kdash_khlenv_resolve(use_app, KDASH_CENTRAL_STEM, value, sizeof(value));
-    if (st == KDASH_KHLENV_NULL)
-        return KDASH_EP_NONE; /* deliberate: do not fall back to anything */
-    if (st == KDASH_KHLENV_OK)
-        return kdash_parse_hostport(value, KDASH_REDIS_PORT_DEFAULT, host,
-                                    hostsz, port)
-                   ? KDASH_EP_OK
-                   : KDASH_EP_INVALID;
-
-    /* 3. The legacy alias, on a miss only. The new stem is not in the store on
-     *    every host yet (CD-3: migrate opportunistically), and both name the
-     *    same endpoint. */
-    if (st == KDASH_KHLENV_MISS) {
-        st = kdash_khlenv_resolve(use_app, KDASH_CENTRAL_STEM_LEGACY, value,
-                                  sizeof(value));
+    /* 2. The stem itself, then 3. its legacy alias — on a MISS only. The
+     *    alias lives in the same store on the same service, so an unreachable
+     *    khlenv is not a reason to ask it twice. */
+    const char *keys[2] = {stem->key, stem->legacy};
+    for (int i = 0; i < 2 && keys[i]; i++) {
+        kdash_khlenv_status_t st =
+            kdash_khlenv_resolve(use_app, keys[i], value, sizeof(value));
         if (st == KDASH_KHLENV_NULL)
-            return KDASH_EP_NONE;
+            return KDASH_EP_NONE; /* deliberate: do not fall back to anything */
         if (st == KDASH_KHLENV_OK)
-            return kdash_parse_hostport(value, KDASH_REDIS_PORT_DEFAULT, host,
-                                        hostsz, port)
-                       ? KDASH_EP_OK
-                       : KDASH_EP_INVALID;
+            return take_value(value, host, hostsz, port);
+        if (st != KDASH_KHLENV_MISS)
+            break; /* unreachable — stop walking the store */
     }
 
-    /* 4. khlenv itself is unreachable (or holds nothing anywhere). The central
-     *    Redis has lived at the default since kpidash 001; using it cannot be
-     *    worse than having no resolver at all. */
-    return kdash_parse_hostport(KDASH_CENTRAL_DEFAULT, KDASH_REDIS_PORT_DEFAULT,
-                                host, hostsz, port)
-               ? KDASH_EP_OK
-               : KDASH_EP_INVALID;
+    /* 4. The compiled-in fallback, if this stem has one. A stem without one
+     *    resolves to nothing rather than to a guess. */
+    if (!stem->fallback)
+        return KDASH_EP_UNRESOLVED;
+    return take_value(stem->fallback, host, hostsz, port);
+}
+
+kdash_endpoint_status_t kdash_resolve_central(const char *app, char *host,
+                                              size_t hostsz, int *port) {
+    return kdash_resolve_endpoint(&KDASH_STEM_CENTRAL, app, host, hostsz, port);
 }

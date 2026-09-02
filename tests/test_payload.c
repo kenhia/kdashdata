@@ -1,9 +1,15 @@
 /**
  * @file test_payload.c
- * The five payload parsers against their schema files: what each one requires,
- * what it tolerates, and the additive-evolution rule that a reader which
- * rejects unknown fields is the broken half.
+ * The payload parsers against their schema files: what each one requires, what
+ * it tolerates, and the additive-evolution rule that a reader which rejects
+ * unknown fields is the broken half.
+ *
+ * The claude half also covers the derived model — the display ladder, the
+ * attention-first ordering and the per-gauge limits staleness — because those
+ * are the parts of this family that two dashboards would otherwise each get
+ * subtly differently.
  */
+#include <stdio.h>
 #include <string.h>
 
 #include "check.h"
@@ -233,6 +239,379 @@ int main(void) {
         CHECK(PARSE(kdash_parse_apttemps,
                     "{\"temp_f\":-4,\"humidity_pct\":38,\"ts\":1}", &a),
               "negative temperature is legal");
+    }
+
+    /* ---- claude:session (HASH field/value pairs) ---- */
+    {
+        kdash_claude_session_t s;
+        const char *f[] = {"host",  "project", "cwd",    "status",
+                           "ts",    "started_ts", "model", "title"};
+        const char *v[] = {"kai",   "kdashdata", "/home/ken/src/tools/kdashdata",
+                           "working", "1756600000", "1756599000", "Opus 5",
+                           "the claude readers"};
+        CHECK(kdash_parse_claude_session("kai", "abc123", f, v, 8, &s),
+              "full session hash");
+        CHECK(strcmp(s.host, "kai") == 0 && strcmp(s.sid, "abc123") == 0,
+              "identity comes from the key, not the payload echo");
+        CHECK(s.status == KDASH_CLAUDE_WORKING, "status");
+        CHECK(s.ts == 1756600000.0, "ts");
+        CHECK(s.started_ts == 1756599000.0, "started_ts");
+        CHECK(strcmp(s.project, "kdashdata") == 0, "project");
+        CHECK(strcmp(s.model, "Opus 5") == 0, "model");
+        CHECK(strcmp(s.title, "the claude readers") == 0, "title");
+
+        /* status + ts are the whole liveness contract. */
+        const char *only_ts_f[] = {"ts"};
+        const char *only_ts_v[] = {"1756600000"};
+        CHECK(!kdash_parse_claude_session("kai", "abc", only_ts_f, only_ts_v, 1,
+                                          &s),
+              "a keepalive-only hash is not a session (resurrection guard)");
+        const char *no_ts_f[] = {"status", "project"};
+        const char *no_ts_v[] = {"working", "kdashdata"};
+        CHECK(!kdash_parse_claude_session("kai", "abc", no_ts_f, no_ts_v, 2, &s),
+              "no ts, no record");
+
+        /* The status enum is closed: an unknown word distrusts the record. */
+        const char *bad_f[] = {"status", "ts"};
+        const char *bad_v[] = {"thinking", "1756600000"};
+        CHECK(!kdash_parse_claude_session("kai", "abc", bad_f, bad_v, 2, &s),
+              "unrecognised status rejects the whole record");
+        CHECK(s.ts == 0 && s.host[0] == '\0',
+              "a rejected record leaves *out zeroed, not half-filled");
+
+        /* ts arrives as a STRING off the wire and is parsed strictly: not a
+         * number, not a record. Zero and negatives are not stamps either. */
+        for (int i = 0; i < 4; i++) {
+            const char *bad_ts[] = {"", "later", "0", "-5"};
+            const char *tf[] = {"status", "ts"};
+            const char *tv[] = {"awaiting", bad_ts[i]};
+            CHECK(!kdash_parse_claude_session("kai", "abc", tf, tv, 2, &s),
+                  "ts \"%s\" must reject", bad_ts[i]);
+        }
+        {
+            const char *tf[] = {"status", "ts"};
+            const char *tv[] = {"blocked", "1756600000junk"};
+            CHECK(!kdash_parse_claude_session("kai", "abc", tf, tv, 2, &s),
+                  "trailing junk on ts must reject");
+        }
+
+        /* Minimal, and the optional fields stay empty rather than invented. */
+        const char *min_f[] = {"status", "ts"};
+        const char *min_v[] = {"blocked", "1756600000"};
+        CHECK(kdash_parse_claude_session("kubs0", "s1", min_f, min_v, 2, &s),
+              "status + ts is enough");
+        CHECK(s.status == KDASH_CLAUDE_BLOCKED, "blocked");
+        CHECK(s.project[0] == '\0',
+              "an absent project stays empty — a \"?\" placeholder is the "
+              "panel's business (CD-10)");
+        CHECK(s.started_ts == 0, "absent started_ts is 0, i.e. unknown");
+
+        /* Additive evolution: a field nobody has heard of is ignored. */
+        const char *new_f[] = {"status", "ts", "invented_next_sprint"};
+        const char *new_v[] = {"awaiting", "1756600000", "whatever"};
+        CHECK(kdash_parse_claude_session("kai", "abc", new_f, new_v, 3, &s),
+              "unknown fields must be ignored, never rejected");
+
+        /* A key segment that fails the token contract has no record either. */
+        CHECK(!kdash_parse_claude_session("kai:evil", "abc", min_f, min_v, 2, &s),
+              "host revalidated at the parse boundary");
+        CHECK(!kdash_parse_claude_session("kai", "", min_f, min_v, 2, &s),
+              "empty sid");
+
+        /* A NULL field or value skips that pair rather than crashing. */
+        const char *hole_f[] = {NULL, "status", "ts"};
+        const char *hole_v[] = {"x", "working", "1756600000"};
+        CHECK(kdash_parse_claude_session("kai", "abc", hole_f, hole_v, 3, &s),
+              "a NULL field pointer skips the pair");
+    }
+
+    /* ---- claude display ladder ---- */
+    {
+        const long long idle = KDASH_CLAUDE_IDLE_S, stale = KDASH_CLAUDE_STALE_S;
+
+        CHECK(kdash_claude_display(KDASH_CLAUDE_WORKING, 0, idle, stale) ==
+                  KDASH_CLAUDE_DISP_WORKING,
+              "fresh working");
+        CHECK(kdash_claude_display(KDASH_CLAUDE_WORKING, idle - 1, idle, stale) ==
+                  KDASH_CLAUDE_DISP_WORKING,
+              "one second before idle is still working");
+        CHECK(kdash_claude_display(KDASH_CLAUDE_WORKING, idle, idle, stale) ==
+                  KDASH_CLAUDE_DISP_IDLE,
+              "idle begins at idle_s, inclusive");
+        CHECK(kdash_claude_display(KDASH_CLAUDE_WORKING, stale, idle, stale) ==
+                  KDASH_CLAUDE_DISP_STALE,
+              "stale begins at stale_s, inclusive");
+
+        /* Only `working` degrades to idle: a turn does not stop being yours
+         * because you took twenty minutes over it. */
+        CHECK(kdash_claude_display(KDASH_CLAUDE_BLOCKED, idle + 60, idle, stale) ==
+                  KDASH_CLAUDE_DISP_BLOCKED,
+              "blocked stays prominent through the idle band");
+        CHECK(kdash_claude_display(KDASH_CLAUDE_AWAITING, idle + 60, idle,
+                                   stale) == KDASH_CLAUDE_DISP_AWAITING,
+              "awaiting stays prominent through the idle band");
+
+        /* ...but age has the last say, because the hooks cannot report a
+         * killed process. */
+        CHECK(kdash_claude_display(KDASH_CLAUDE_BLOCKED, stale, idle, stale) ==
+                  KDASH_CLAUDE_DISP_STALE,
+              "stale outranks even blocked");
+        CHECK(kdash_claude_display(KDASH_CLAUDE_AWAITING, stale + 9999, idle,
+                                   stale) == KDASH_CLAUDE_DISP_STALE,
+              "stale outranks awaiting");
+
+        /* Thresholds are parameters, not policy baked into the derivation. */
+        CHECK(kdash_claude_display(KDASH_CLAUDE_WORKING, 10, 5, 20) ==
+                  KDASH_CLAUDE_DISP_IDLE,
+              "a caller's own thresholds are honoured");
+
+        CHECK(strcmp(kdash_claude_disp_str(KDASH_CLAUDE_DISP_BLOCKED),
+                     "blocked") == 0,
+              "disp label is the enum's own word, not a display string");
+        CHECK(strcmp(kdash_claude_disp_str(KDASH_CLAUDE_DISP_STALE), "stale") == 0,
+              "stale label");
+        CHECK(strcmp(kdash_claude_status_str(KDASH_CLAUDE_AWAITING),
+                     "awaiting") == 0,
+              "status round-trips to the schema's own word");
+        kdash_claude_status_t st;
+        CHECK(kdash_claude_status_from_str("blocked", &st) &&
+                  st == KDASH_CLAUDE_BLOCKED,
+              "status parses from the schema's word");
+        CHECK(!kdash_claude_status_from_str("Working", &st),
+              "the enum is case-sensitive and closed");
+    }
+
+    /* ---- attention-first ordering ---- */
+    {
+        const long long now = 1756600000;
+        kdash_claude_session_t a[5];
+        memset(a, 0, sizeof(a));
+
+        /* Deliberately out of order, with a tie to settle. */
+        snprintf(a[0].host, sizeof(a[0].host), "kai");
+        snprintf(a[0].sid, sizeof(a[0].sid), "old-working");
+        a[0].status = KDASH_CLAUDE_WORKING;
+        a[0].ts = (double)(now - KDASH_CLAUDE_STALE_S - 10); /* stale */
+
+        snprintf(a[1].host, sizeof(a[1].host), "kubs0");
+        snprintf(a[1].sid, sizeof(a[1].sid), "working");
+        a[1].status = KDASH_CLAUDE_WORKING;
+        a[1].ts = (double)(now - 5);
+
+        snprintf(a[2].host, sizeof(a[2].host), "cleo");
+        snprintf(a[2].sid, sizeof(a[2].sid), "blocked");
+        a[2].status = KDASH_CLAUDE_BLOCKED;
+        a[2].ts = (double)(now - 30);
+
+        snprintf(a[3].host, sizeof(a[3].host), "kai");
+        snprintf(a[3].sid, sizeof(a[3].sid), "awaiting-b");
+        a[3].status = KDASH_CLAUDE_AWAITING;
+        a[3].ts = (double)(now - 60);
+
+        snprintf(a[4].host, sizeof(a[4].host), "kai");
+        snprintf(a[4].sid, sizeof(a[4].sid), "awaiting-a");
+        a[4].status = KDASH_CLAUDE_AWAITING;
+        a[4].ts = (double)(now - 60); /* ties a[3] on rank AND ts */
+
+        kdash_claude_sessions_refresh(a, 5, now, KDASH_CLAUDE_IDLE_S,
+                                      KDASH_CLAUDE_STALE_S);
+
+        CHECK(strcmp(a[0].sid, "blocked") == 0, "blocked first, got \"%s\"",
+              a[0].sid);
+        CHECK(a[1].disp == KDASH_CLAUDE_DISP_AWAITING &&
+                  a[2].disp == KDASH_CLAUDE_DISP_AWAITING,
+              "both awaiting rows next");
+        /* Same rank, same ts: host then sid, so the order is stable across
+         * renders rather than whatever the SCAN happened to return. */
+        CHECK(strcmp(a[1].sid, "awaiting-a") == 0 &&
+                  strcmp(a[2].sid, "awaiting-b") == 0,
+              "a rank+ts tie breaks on host/sid, not on arrival order");
+        CHECK(strcmp(a[3].sid, "working") == 0, "fresh working above stale");
+        CHECK(a[4].disp == KDASH_CLAUDE_DISP_STALE, "stale last");
+
+        /* Skew is not a huge age: a ts in the future reads as fresh. */
+        kdash_claude_session_t one = {0};
+        one.status = KDASH_CLAUDE_WORKING;
+        one.ts = (double)(now + 3600);
+        kdash_claude_sessions_refresh(&one, 1, now, KDASH_CLAUDE_IDLE_S,
+                                      KDASH_CLAUDE_STALE_S);
+        CHECK(one.disp == KDASH_CLAUDE_DISP_WORKING,
+              "writer-clock skew counts as fresh, never as stale");
+
+        kdash_claude_sessions_refresh(NULL, 3, now, 1, 2); /* must not crash */
+        kdash_claude_sessions_refresh(a, 0, now, 1, 2);
+    }
+
+    /* ---- claude:limits ---- */
+    {
+        kdash_claude_limits_t l;
+        const char *f[] = {"five_hour_pct",   "seven_day_pct",
+                           "five_hour_resets_at", "seven_day_resets_at",
+                           "updated_at",      "expected_refresh_s",
+                           "host",            "source",
+                           "scoped_model",    "scoped_pct",
+                           "scoped_resets_at", "scoped_active",
+                           "scoped_updated_at", "scoped_expected_refresh_s"};
+        const char *v[] = {"41.5",       "77",         "1756610000", "1757000000",
+                           "1756600000", "60",         "kai",        "statusline",
+                           "Fable",      "12.5",       "1757100000", "1",
+                           "1756599000", "300"};
+        CHECK(kdash_parse_claude_limits(f, v, 14, &l), "full limits hash");
+        CHECK(l.valid && l.five_hour_pct == 41.5 && l.seven_day_pct == 77.0,
+              "headline percentages");
+        CHECK(l.five_hour_resets_at == 1756610000.0, "five-hour reset");
+        CHECK(l.updated_at == 1756600000.0 && l.expected_refresh_s == 60.0,
+              "observation stamp and cadence");
+        CHECK(l.scoped_valid && strcmp(l.scoped_model, "Fable") == 0 &&
+                  l.scoped_pct == 12.5,
+              "scoped set");
+        CHECK(l.scoped_active, "scoped_active");
+        CHECK(l.scoped_updated_at == 1756599000.0 &&
+                  l.scoped_expected_refresh_s == 300.0,
+              "the scoped set carries its OWN stamp and cadence");
+
+        /* Both percentages are required, and clamped. */
+        const char *min_f[] = {"five_hour_pct", "seven_day_pct"};
+        const char *min_v[] = {"-3", "140"};
+        CHECK(kdash_parse_claude_limits(min_f, min_v, 2, &l), "minimal limits");
+        CHECK(l.five_hour_pct == 0.0 && l.seven_day_pct == 100.0,
+              "percentages clamp to [0,100]");
+        CHECK(!l.scoped_valid, "no scoped set");
+
+        const char *half_f[] = {"five_hour_pct"};
+        const char *half_v[] = {"41"};
+        CHECK(!kdash_parse_claude_limits(half_f, half_v, 1, &l),
+              "one percentage is not a snapshot");
+        CHECK(!l.valid, "a rejected snapshot is zeroed");
+
+        const char *nan_f[] = {"five_hour_pct", "seven_day_pct"};
+        const char *nan_v[] = {"nan", "77"};
+        CHECK(!kdash_parse_claude_limits(nan_f, nan_v, 2, &l),
+              "a non-finite percentage rejects");
+        const char *junk_v[] = {"41%", "77"};
+        CHECK(!kdash_parse_claude_limits(nan_f, junk_v, 2, &l),
+              "trailing junk on a percentage rejects");
+
+        /* Half a scoped set renders as no scoped set at all. */
+        const char *sc_f[] = {"five_hour_pct", "seven_day_pct", "scoped_pct"};
+        const char *sc_v[] = {"41", "77", "12"};
+        CHECK(kdash_parse_claude_limits(sc_f, sc_v, 3, &l), "pct without label");
+        CHECK(!l.scoped_valid,
+              "a scoped percentage with no label is no gauge, not an "
+              "unlabelled one");
+        const char *sl_f[] = {"five_hour_pct", "seven_day_pct", "scoped_model"};
+        const char *sl_v[] = {"41", "77", "Fable"};
+        CHECK(kdash_parse_claude_limits(sl_f, sl_v, 3, &l), "label without pct");
+        CHECK(!l.scoped_valid, "and the reverse is no gauge either");
+    }
+
+    /* ---- claude:limits staleness, per gauge ---- */
+    {
+        const long long grace = KDASH_CLAUDE_LIMITS_GRACE_S;
+        const long long legacy = KDASH_CLAUDE_LIMITS_STALE_S;
+        const long long now = 1756600000;
+
+        kdash_claude_limits_t l;
+        memset(&l, 0, sizeof(l));
+        l.valid = true;
+        l.expected_refresh_s = 60;
+        l.updated_at = (double)(now - 100); /* < 60 + 60 */
+        CHECK(!kdash_claude_limits_stale(&l, now, grace, legacy),
+              "within cadence + grace");
+        l.updated_at = (double)(now - 200); /* > 60 + 60 */
+        CHECK(kdash_claude_limits_stale(&l, now, grace, legacy),
+              "past cadence + grace");
+
+        /* A pre-cadence writer published no cadence; it gets the legacy window
+         * rather than being treated as instantly stale. */
+        l.expected_refresh_s = 0;
+        l.updated_at = (double)(now - 200);
+        CHECK(!kdash_claude_limits_stale(&l, now, grace, legacy),
+              "no cadence falls back to the legacy fixed window");
+        l.updated_at = (double)(now - legacy - 1);
+        CHECK(kdash_claude_limits_stale(&l, now, grace, legacy),
+              "and past that window it is stale");
+
+        /* An invalid snapshot is not stale, it is nothing. */
+        memset(&l, 0, sizeof(l));
+        CHECK(!kdash_claude_limits_stale(&l, now, grace, legacy),
+              "an invalid snapshot has no staleness to report");
+        CHECK(!kdash_claude_limits_scoped_stale(&l, now, grace, legacy),
+              "nor does an absent scoped set");
+
+        /* The scoped set is judged against ITS OWN stamp, never the
+         * headline's — a statusline write cannot touch these numbers, so
+         * letting them borrow its freshness would freeze the gauge invisibly. */
+        memset(&l, 0, sizeof(l));
+        l.valid = true;
+        l.scoped_valid = true;
+        l.expected_refresh_s = 60;
+        l.updated_at = (double)now; /* headline just refreshed */
+        l.scoped_expected_refresh_s = 300;
+        l.scoped_updated_at = (double)(now - 4000);
+        CHECK(!kdash_claude_limits_stale(&l, now, grace, legacy),
+              "headline is fresh");
+        CHECK(kdash_claude_limits_scoped_stale(&l, now, grace, legacy),
+              "and the scoped gauge is stale anyway — its own stamp says so");
+
+        /* Stampless means always stale, never "as fresh as the headline". The
+         * second case is the one that actually pins the rule: at a `now` small
+         * enough that "age since stamp 0" falls INSIDE the window, the
+         * arithmetic alone would call a stampless gauge fresh. */
+        l.scoped_updated_at = 0;
+        CHECK(kdash_claude_limits_scoped_stale(&l, now, grace, legacy),
+              "a stampless scoped set never borrows headline freshness");
+        {
+            kdash_claude_limits_t z;
+            memset(&z, 0, sizeof(z));
+            z.valid = true;
+            z.scoped_valid = true;
+            z.scoped_updated_at = 0; /* stampless */
+            CHECK(kdash_claude_limits_scoped_stale(&z, 500, grace, legacy),
+                  "stampless is stale by rule, not by epoch arithmetic");
+        }
+
+        /* Skew is never stale. */
+        l.scoped_updated_at = (double)(now + 500);
+        CHECK(!kdash_claude_limits_scoped_stale(&l, now, grace, legacy),
+              "a stamp in the future is not stale");
+    }
+
+    /* ---- claude:recent ---- */
+    {
+        kdash_claude_recent_t r;
+        CHECK(PARSE(kdash_parse_claude_recent,
+                    "{\"host\":\"kai\",\"project\":\"kdashdata\","
+                    "\"title\":\"the claude readers\",\"ended_ts\":1756600000,"
+                    "\"dur_s\":900,\"ts\":1756600000.5}",
+                    &r),
+              "full recent record");
+        CHECK(strcmp(r.host, "kai") == 0, "host");
+        CHECK(strcmp(r.project, "kdashdata") == 0, "project");
+        CHECK(strcmp(r.title, "the claude readers") == 0, "title");
+        CHECK(r.ended_ts == 1756600000.0 && r.dur_s == 900.0, "stamps");
+
+        CHECK(PARSE(kdash_parse_claude_recent,
+                    "{\"host\":\"kai\",\"project\":\"kdashdata\"}", &r),
+              "title, ended_ts and dur_s are all optional");
+        CHECK(r.title[0] == '\0', "a session Claude never named has no title");
+        CHECK(r.dur_s == 0, "unknown duration is 0");
+
+        CHECK(!PARSE(kdash_parse_claude_recent, "{\"project\":\"kdashdata\"}", &r),
+              "no host, no record");
+        CHECK(!PARSE(kdash_parse_claude_recent,
+                     "{\"host\":\"kai\",\"project\":\"\"}", &r),
+              "an empty project skips the record");
+        CHECK(!PARSE(kdash_parse_claude_recent,
+                     "{\"host\":\"kai/evil\",\"project\":\"p\"}", &r),
+              "a host failing the token contract skips the record");
+        CHECK(r.project[0] == '\0', "a rejected record is zeroed");
+        CHECK(!PARSE(kdash_parse_claude_recent, "[1,2,3]", &r),
+              "not an object");
+
+        CHECK(PARSE(kdash_parse_claude_recent,
+                    "{\"host\":\"kai\",\"project\":\"p\",\"invented\":true}", &r),
+              "unknown fields must be ignored, never rejected");
     }
 
     /* Buffers are counted, not NUL-terminated: SCAN and GET both hand back

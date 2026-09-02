@@ -1,9 +1,10 @@
 /**
  * @file kdash_feed.h
- * Typed readers for the five schema'd kpidash feeds. A consumer using these
- * needs no knowledge of key grammar, SCAN, hiredis reply types, or the
- * difference between the two freshness models — which is the whole point of
- * the library existing once instead of three times.
+ * Typed readers for the schema'd feeds — the five kpidash ones and the three
+ * claude ones. A consumer using these needs no knowledge of key grammar, SCAN,
+ * HGETALL, hiredis reply types, or the difference between the two freshness
+ * models — which is the whole point of the library existing once instead of
+ * three times.
  *
  * Every reader:
  *   - connects lazily through the handle and honours its backoff (CD-6);
@@ -71,5 +72,45 @@ int kdash_services(kdash_conn_t *c, kdash_service_t *out, int max, int *skipped)
 /* SCAN kpidash:apttemps:* — same contract, KDASH_APTTEMPS_WINDOW_S window. */
 int kdash_apttemps(kdash_conn_t *c, kdash_apttemps_t *out, int max,
                    int *skipped);
+
+/* ---- the claude family --------------------------------------------------
+ *
+ * These live at their OWN endpoint (CD-7), so they need a handle opened on
+ * `&KDASH_STEM_CLAUDE` — not the one the kpidash readers run on, even though
+ * both stems answer the same host:port today:
+ *
+ *   kdash_conn_t *cc = kdash_conn_new(&(kdash_conn_opts_t){
+ *       .app = "kstudiodash", .stem = &KDASH_STEM_CLAUDE});
+ *
+ * Handles are independent by design (kdash_conn.h), so a claude endpoint that
+ * is down never costs the kpidash panel a thing.
+ *
+ * All three are ts-owned: nothing is filtered by age here. Derive display
+ * state with kdash_claude_sessions_refresh() and judge the limits gauges with
+ * kdash_claude_limits_stale() — both in kdash_payload.h, both pure.
+ */
+
+/* SCAN claude:session:*, then HGETALL each key that survives the grammar.
+ * Returns the count written, or -1 when the endpoint was unreachable; 0 means
+ * "reachable, nobody has Claude open", which is a different thing to say.
+ * `skipped` counts keys the grammar rejected plus hashes their schema did —
+ * a session whose hash carries no `status` is the common one, and it is a
+ * legitimate transient rather than a fault (see kdash_parse_claude_session).
+ *
+ * `disp` is left zeroed; call kdash_claude_sessions_refresh() to derive it and
+ * order the rows. */
+int kdash_claude_sessions(kdash_conn_t *c, kdash_claude_session_t *out, int max,
+                          int *skipped);
+
+/* HGETALL claude:limits — one shared key, no TTL. KDASH_ABSENT covers "nobody
+ * has published usage" and "the hash is there but not schema-valid" alike. */
+kdash_status_t kdash_claude_limits(kdash_conn_t *c, kdash_claude_limits_t *out);
+
+/* LRANGE claude:recent 0 max-1 — newest first, as the writer's LPUSH leaves
+ * it. Returns the count written, or -1 when unreachable; `skipped` counts
+ * elements their schema rejected. The writer owns the cap (rules.md): this
+ * reader never trims the list. */
+int kdash_claude_recent(kdash_conn_t *c, kdash_claude_recent_t *out, int max,
+                        int *skipped);
 
 #endif /* KDASH_FEED_H */

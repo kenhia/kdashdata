@@ -1,16 +1,23 @@
 /**
  * @file kdash_payload.c
- * Pure payload parsers for the five schema'd kpidash feeds (cJSON only — no
- * Redis, no sockets). Host-testable.
+ * Pure payload parsers — no Redis, no sockets. Host-testable.
  *
  * Every parser follows the same shape, which is the rules.md contract:
  * zero the output, parse, take the required fields (rejecting the record
  * whole if any is missing/mistyped/out of range), then take the optional
  * fields best-effort. Unknown fields are never looked at, which is exactly
  * how a reader stays additive-evolution-safe.
+ *
+ * Two shapes of input, one set of rules. The kpidash feeds and claude:recent
+ * are JSON documents and go through cJSON; claude:session and claude:limits
+ * are Redis HASHes and arrive as an HGETALL field/value list of strings, which
+ * is why the second half of this file has its own small field helpers.
  */
 #include "kdash/kdash_payload.h"
 
+#include <math.h>
+#include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 
 #include "cJSON.h"
@@ -318,6 +325,333 @@ bool kdash_parse_apttemps(const char *json, size_t len, kdash_apttemps_t *out) {
         (void)copy_str(root, "zone", out->label, sizeof(out->label));
     else
         out->temp_f = out->humidity_pct = out->ts = 0;
+
+    cJSON_Delete(root);
+    return ok;
+}
+
+/* ---- claude: HASH field/value helpers ---------------------------------- */
+
+/* Every value in a Redis HASH arrives as a string, so the whole "is this a
+ * number" question that cJSON answers for the JSON feeds has to be asked here
+ * instead — strictly, because a value that is not a number must reject rather
+ * than read as zero. */
+
+/* Strict positive integer. Rejects empty, non-numeric, trailing junk, zero and
+ * negatives — every stamp in this family is a unix time, and 0 is the family's
+ * own spelling of "unknown". */
+static bool field_ts(const char *s, double *out) {
+    if (!s || s[0] == '\0')
+        return false;
+    char *end = NULL;
+    long long v = strtoll(s, &end, 10);
+    if (end == s || *end != '\0' || v <= 0)
+        return false;
+    *out = (double)v;
+    return true;
+}
+
+/* Percentage: numeric and finite, clamped to [0,100] as the schemas say
+ * readers do. Garbage, NaN and inf reject. */
+static bool field_pct(const char *s, double *out) {
+    if (!s || s[0] == '\0')
+        return false;
+    char *end = NULL;
+    double v = strtod(s, &end);
+    if (end == s || *end != '\0' || !isfinite(v))
+        return false;
+    if (v < 0.0)
+        v = 0.0;
+    if (v > 100.0)
+        v = 100.0;
+    *out = v;
+    return true;
+}
+
+/* Display string into a fixed buffer, truncating to fit. Truncation is right
+ * here for exactly the reason copy_str() gives above: these are labels, not
+ * identity. */
+static void field_str(char *dst, size_t dstsz, const char *src) {
+    snprintf(dst, dstsz, "%s", src ? src : "");
+}
+
+/* ---- claude:session ------------------------------------------------------ */
+
+static const struct {
+    const char *word;
+    kdash_claude_status_t status;
+} CLAUDE_STATES[] = {
+    {"working", KDASH_CLAUDE_WORKING},
+    {"awaiting", KDASH_CLAUDE_AWAITING},
+    {"blocked", KDASH_CLAUDE_BLOCKED},
+};
+
+bool kdash_claude_status_from_str(const char *s, kdash_claude_status_t *out) {
+    if (!s || !out)
+        return false;
+    for (size_t i = 0; i < sizeof(CLAUDE_STATES) / sizeof(CLAUDE_STATES[0]); i++) {
+        if (strcmp(s, CLAUDE_STATES[i].word) == 0) {
+            *out = CLAUDE_STATES[i].status;
+            return true;
+        }
+    }
+    return false;
+}
+
+const char *kdash_claude_status_str(kdash_claude_status_t s) {
+    for (size_t i = 0; i < sizeof(CLAUDE_STATES) / sizeof(CLAUDE_STATES[0]); i++)
+        if (CLAUDE_STATES[i].status == s)
+            return CLAUDE_STATES[i].word;
+    return "working";
+}
+
+const char *kdash_claude_disp_str(kdash_claude_disp_t d) {
+    switch (d) {
+    case KDASH_CLAUDE_DISP_BLOCKED:
+        return "blocked";
+    case KDASH_CLAUDE_DISP_AWAITING:
+        return "awaiting";
+    case KDASH_CLAUDE_DISP_IDLE:
+        return "idle";
+    case KDASH_CLAUDE_DISP_STALE:
+        return "stale";
+    case KDASH_CLAUDE_DISP_WORKING:
+    default:
+        return "working";
+    }
+}
+
+bool kdash_parse_claude_session(const char *host, const char *sid,
+                                const char *const *fields,
+                                const char *const *values, int nfields,
+                                kdash_claude_session_t *out) {
+    if (!out)
+        return false;
+    memset(out, 0, sizeof(*out));
+    if (!host || !sid || !fields || !values || nfields <= 0)
+        return false;
+    /* The key was validated at discovery, but this is the parse boundary and a
+     * caller may be handing back segments that took a detour through config. */
+    if (!kdash_token_ok(host, strlen(host)) || !kdash_token_ok(sid, strlen(sid)))
+        return false;
+
+    kdash_claude_session_t s;
+    memset(&s, 0, sizeof(s));
+    field_str(s.host, sizeof(s.host), host);
+    field_str(s.sid, sizeof(s.sid), sid);
+
+    bool have_status = false, have_ts = false;
+    for (int i = 0; i < nfields; i++) {
+        const char *f = fields[i];
+        const char *v = values[i];
+        if (!f || !v)
+            continue;
+        if (strcmp(f, "status") == 0) {
+            /* The schema's enum is closed: a word nobody publishes distrusts
+             * the whole record rather than defaulting to `working`. */
+            if (!kdash_claude_status_from_str(v, &s.status))
+                return false;
+            have_status = true;
+        } else if (strcmp(f, "ts") == 0) {
+            have_ts = field_ts(v, &s.ts);
+        } else if (strcmp(f, "started_ts") == 0) {
+            (void)field_ts(v, &s.started_ts);
+        } else if (strcmp(f, "project") == 0) {
+            field_str(s.project, sizeof(s.project), v);
+        } else if (strcmp(f, "title") == 0) {
+            field_str(s.title, sizeof(s.title), v);
+        } else if (strcmp(f, "model") == 0) {
+            field_str(s.model, sizeof(s.model), v);
+        }
+        /* cwd, host and every unknown field: ignored. */
+    }
+
+    /* status + ts are the liveness contract. A hash without both is either a
+     * statusline resurrecting a session after SessionEnd, or a keepalive that
+     * landed before the first full write — and neither is a session to show. */
+    if (!have_status || !have_ts)
+        return false;
+
+    *out = s;
+    return true;
+}
+
+/* ---- claude: derived display state --------------------------------------- */
+
+kdash_claude_disp_t kdash_claude_display(kdash_claude_status_t status,
+                                         long long age_s, long long idle_s,
+                                         long long stale_s) {
+    switch (kdash_ladder(age_s, idle_s, stale_s)) {
+    case KDASH_STALE:
+        /* Age has the last say: the hooks cannot report a killed process, so a
+         * record still claiming `working` an hour on is claiming it about a
+         * process that may not exist. */
+        return KDASH_CLAUDE_DISP_STALE;
+    case KDASH_IDLE:
+        /* Only `working` degrades to idle. A turn does not stop being yours
+         * because you took twenty minutes over it. */
+        if (status == KDASH_CLAUDE_BLOCKED)
+            return KDASH_CLAUDE_DISP_BLOCKED;
+        if (status == KDASH_CLAUDE_AWAITING)
+            return KDASH_CLAUDE_DISP_AWAITING;
+        return KDASH_CLAUDE_DISP_IDLE;
+    case KDASH_FRESH:
+    default:
+        break;
+    }
+
+    switch (status) {
+    case KDASH_CLAUDE_BLOCKED:
+        return KDASH_CLAUDE_DISP_BLOCKED;
+    case KDASH_CLAUDE_AWAITING:
+        return KDASH_CLAUDE_DISP_AWAITING;
+    case KDASH_CLAUDE_WORKING:
+    default:
+        return KDASH_CLAUDE_DISP_WORKING;
+    }
+}
+
+static int claude_session_cmp(const void *pa, const void *pb) {
+    const kdash_claude_session_t *a = pa, *b = pb;
+    if (a->disp != b->disp)
+        return (a->disp < b->disp) ? -1 : 1;
+    if (a->ts != b->ts)
+        return (a->ts > b->ts) ? -1 : 1; /* most recent first */
+    int h = strcmp(a->host, b->host);
+    if (h != 0)
+        return h;
+    return strcmp(a->sid, b->sid);
+}
+
+void kdash_claude_sessions_refresh(kdash_claude_session_t *arr, int n,
+                                   long long now, long long idle_s,
+                                   long long stale_s) {
+    if (!arr || n <= 0)
+        return;
+    for (int i = 0; i < n; i++)
+        arr[i].disp = kdash_claude_display(arr[i].status,
+                                           kdash_age_s(arr[i].ts, now), idle_s,
+                                           stale_s);
+    qsort(arr, (size_t)n, sizeof(arr[0]), claude_session_cmp);
+}
+
+/* ---- claude:limits ------------------------------------------------------- */
+
+bool kdash_parse_claude_limits(const char *const *fields,
+                               const char *const *values, int nfields,
+                               kdash_claude_limits_t *out) {
+    if (!out)
+        return false;
+    memset(out, 0, sizeof(*out));
+    if (!fields || !values || nfields <= 0)
+        return false;
+
+    kdash_claude_limits_t l;
+    memset(&l, 0, sizeof(l));
+    bool have_five = false, have_seven = false, have_scoped = false;
+
+    for (int i = 0; i < nfields; i++) {
+        const char *f = fields[i];
+        const char *v = values[i];
+        if (!f || !v)
+            continue;
+        if (strcmp(f, "five_hour_pct") == 0)
+            have_five = field_pct(v, &l.five_hour_pct);
+        else if (strcmp(f, "seven_day_pct") == 0)
+            have_seven = field_pct(v, &l.seven_day_pct);
+        else if (strcmp(f, "five_hour_resets_at") == 0)
+            (void)field_ts(v, &l.five_hour_resets_at);
+        else if (strcmp(f, "seven_day_resets_at") == 0)
+            (void)field_ts(v, &l.seven_day_resets_at);
+        else if (strcmp(f, "updated_at") == 0)
+            (void)field_ts(v, &l.updated_at);
+        else if (strcmp(f, "expected_refresh_s") == 0)
+            (void)field_ts(v, &l.expected_refresh_s);
+        else if (strcmp(f, "scoped_model") == 0)
+            field_str(l.scoped_model, sizeof(l.scoped_model), v);
+        else if (strcmp(f, "scoped_pct") == 0)
+            have_scoped = field_pct(v, &l.scoped_pct);
+        else if (strcmp(f, "scoped_resets_at") == 0)
+            (void)field_ts(v, &l.scoped_resets_at);
+        else if (strcmp(f, "scoped_active") == 0) {
+            double active = 0;
+            l.scoped_active = field_ts(v, &active) && active != 0;
+        } else if (strcmp(f, "scoped_updated_at") == 0)
+            (void)field_ts(v, &l.scoped_updated_at);
+        else if (strcmp(f, "scoped_expected_refresh_s") == 0)
+            (void)field_ts(v, &l.scoped_expected_refresh_s);
+    }
+
+    if (!have_five || !have_seven)
+        return false;
+
+    /* Half a scoped set renders as no scoped set at all, rather than as an
+     * unlabelled gauge or a label with no number behind it. */
+    l.scoped_valid = have_scoped && l.scoped_model[0] != '\0';
+    l.valid = true;
+    *out = l;
+    return true;
+}
+
+/* Stale once a stamp is older than its own writer's cadence plus grace; a hash
+ * from a pre-cadence writer published no cadence, and falls back to the fixed
+ * legacy window. Skew (a stamp in the future) is never stale — same rule as
+ * kdash_age_s(). */
+static bool stamp_stale(double stamp, double expect_s, long long now,
+                        long long grace_s, long long legacy_window_s) {
+    long long window =
+        (expect_s > 0) ? (long long)expect_s + grace_s : legacy_window_s;
+    return kdash_age_s(stamp, now) > window;
+}
+
+bool kdash_claude_limits_stale(const kdash_claude_limits_t *l, long long now,
+                               long long grace_s, long long legacy_window_s) {
+    if (!l || !l->valid)
+        return false;
+    return stamp_stale(l->updated_at, l->expected_refresh_s, now, grace_s,
+                       legacy_window_s);
+}
+
+bool kdash_claude_limits_scoped_stale(const kdash_claude_limits_t *l,
+                                      long long now, long long grace_s,
+                                      long long legacy_window_s) {
+    if (!l || !l->scoped_valid)
+        return false;
+    /* A scoped set with no stamp of its own must never borrow the headline's
+     * freshness — only an oauth poll can refresh these numbers, and a
+     * statusline write that cannot touch them must not make them look live. */
+    if (l->scoped_updated_at <= 0)
+        return true;
+    return stamp_stale(l->scoped_updated_at, l->scoped_expected_refresh_s, now,
+                       grace_s, legacy_window_s);
+}
+
+/* ---- claude:recent ------------------------------------------------------- */
+
+bool kdash_parse_claude_recent(const char *json, size_t len,
+                               kdash_claude_recent_t *out) {
+    if (!out)
+        return false;
+    memset(out, 0, sizeof(*out));
+
+    cJSON *root = parse_object(json, len);
+    if (!root)
+        return false;
+
+    /* host is identity and rides the token contract; project is required
+     * non-empty, because a recent entry with neither a project nor a title has
+     * nothing to say. */
+    bool ok = req_token(root, "host", out->host, sizeof(out->host)) &&
+              copy_str(root, "project", out->project, sizeof(out->project)) &&
+              out->project[0] != '\0';
+
+    if (ok) {
+        (void)copy_str(root, "title", out->title, sizeof(out->title));
+        (void)opt_num(root, "ended_ts", 1.0, &out->ended_ts);
+        (void)opt_num(root, "dur_s", 1.0, &out->dur_s);
+    } else {
+        memset(out, 0, sizeof(*out));
+    }
 
     cJSON_Delete(root);
     return ok;

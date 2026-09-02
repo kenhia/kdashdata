@@ -1,7 +1,14 @@
 /**
  * @file kdash_payload.h
- * Pure parsers for the five schema'd kpidash payloads. No Redis, no sockets.
- * Host-testable — every parser takes a buffer and a length.
+ * Pure parsers for the schema'd payloads — the five kpidash feeds and the
+ * three claude ones. No Redis, no sockets. Host-testable.
+ *
+ * **Two payload shapes, two parser signatures.** Every kpidash feed is a JSON
+ * document under one key, so those parsers take a buffer and a length. The
+ * claude family is the registry's first HASH-shaped one: `claude:session:*`
+ * and `claude:limits` arrive as an HGETALL field/value list, so their parsers
+ * take that list instead. The rules below are the same for both; only the way
+ * the bytes arrive differs.
  *
  * The JSON Schema files in contracts/schemas/ are the source of truth; these
  * structs and parsers are their C projection, and the rules below are
@@ -27,6 +34,7 @@
 #include <stdbool.h>
 #include <stddef.h>
 
+#include "kdash/kdash_freshness.h"
 #include "kdash/kdash_keys.h"
 
 #define KDASH_OS_NAME_MAX  64
@@ -34,6 +42,12 @@
 #define KDASH_TEXT_MAX     128
 #define KDASH_LABEL_MAX    32
 #define KDASH_DISK_TYPE_MAX 8
+
+/* claude-family display strings. Sized from kdeskdash's panel, which has
+ * rendered them at these widths since its sprint 007. */
+#define KDASH_PROJECT_MAX  48
+#define KDASH_TITLE_MAX    96
+#define KDASH_MODEL_MAX    32
 
 /* Disks are a short list on a dashboard card; a longer one is truncated, not
  * an error (`disks_truncated` says so). */
@@ -150,5 +164,170 @@ typedef struct {
 
 /* Parses only the payload half; `out->zone` is left untouched (see above). */
 bool kdash_parse_apttemps(const char *json, size_t len, kdash_apttemps_t *out);
+
+/* ---- claude:session:<host>:<sid> (HASH) ---- */
+
+/* Published status, written by the Claude Code hooks. `blocked` means the
+ * agent is sitting on an AskUserQuestion and cannot proceed without the user.
+ * The schema's enum is closed: an unrecognised word distrusts the whole
+ * record rather than defaulting to anything. */
+typedef enum {
+    KDASH_CLAUDE_WORKING = 0,
+    KDASH_CLAUDE_AWAITING,
+    KDASH_CLAUDE_BLOCKED,
+} kdash_claude_status_t;
+
+/* Derived display state — published status tempered by age. The enum order IS
+ * the attention-first sort rank, which is what kdash_claude_sessions_refresh()
+ * sorts on. */
+typedef enum {
+    KDASH_CLAUDE_DISP_BLOCKED = 0, /* fresh `blocked` — hard-blocked on you  */
+    KDASH_CLAUDE_DISP_AWAITING,    /* fresh `awaiting` — your turn           */
+    KDASH_CLAUDE_DISP_WORKING,     /* fresh `working`                        */
+    KDASH_CLAUDE_DISP_IDLE,        /* no event for idle_s — probably parked  */
+    KDASH_CLAUDE_DISP_STALE,       /* no event for stale_s — probably gone   */
+} kdash_claude_disp_t;
+
+typedef struct {
+    /* Identity comes from the KEY (schema note), so the reader fills these
+     * from kdash_claude_session_key_parse() and the parser copies them in. */
+    char host[KDASH_TOKEN_MAX];
+    char sid[KDASH_TOKEN_MAX];
+
+    /* Optional display fields; "" when absent. The library supplies no
+     * placeholder for an absent project — a panel's "?" is rendering, and
+     * CD-10 keeps that on the panel's side. */
+    char project[KDASH_PROJECT_MAX];
+    char title[KDASH_TITLE_MAX];
+    char model[KDASH_MODEL_MAX];
+
+    double ts;         /* required, positive: last lifecycle event or keepalive */
+    double started_ts; /* optional; 0 when unknown                              */
+
+    kdash_claude_status_t status; /* required                                  */
+    kdash_claude_disp_t disp;     /* derived — see sessions_refresh()          */
+} kdash_claude_session_t;
+
+/* Build a session record from an HGETALL field/value list. `host` and `sid`
+ * come from the already-validated key and are revalidated here.
+ *
+ * `status` and a positive numeric `ts` are the whole liveness contract, and a
+ * record missing either is rejected outright. That is the resurrection-race
+ * guard, not fussiness: a statusline write landing after SessionEnd leaves a
+ * hash with no status, and a reader that filled in a default would raise a
+ * finished session from the dead. A keepalive refreshes `ts` alone, so a hash
+ * carrying only `ts` is a legitimate transient that correctly renders as
+ * nothing at all.
+ *
+ * Unknown fields are ignored (additive evolution). `cwd` is deliberately among
+ * them: `project` is already its basename, and no dashboard renders the path.
+ *
+ * Every value arrives off the wire as a string; `fields[i]`/`values[i]` must be
+ * NUL-terminated and neither may be NULL for the pair to be read. */
+bool kdash_parse_claude_session(const char *host, const char *sid,
+                                const char *const *fields,
+                                const char *const *values, int nfields,
+                                kdash_claude_session_t *out);
+
+/* Map a `status` string to the enum, and back to the schema's own word. */
+bool kdash_claude_status_from_str(const char *s, kdash_claude_status_t *out);
+const char *kdash_claude_status_str(kdash_claude_status_t s);
+
+/* Fixed lowercase label for a display state ("blocked", "awaiting",
+ * "working", "idle", "stale"). This is the enum's NAME, in the schema's own
+ * vocabulary — the same thing kdash_service_state_str() hands back, and not a
+ * display string: a panel that wants "BLOCKED ON YOU" writes that itself. */
+const char *kdash_claude_disp_str(kdash_claude_disp_t d);
+
+/* Derive the display state for a published status at `age_s` seconds old.
+ *
+ * Composed on kdash_ladder(), which owns the time bands: stale is stale
+ * whatever the record claims, and only `working` degrades to idle — `blocked`
+ * and `awaiting` both mean "your turn", and a turn does not stop being yours
+ * because you took twenty minutes over it, so they stay prominent until the
+ * ladder says stale.
+ *
+ * Thresholds are parameters, with KDASH_CLAUDE_IDLE_S / KDASH_CLAUDE_STALE_S
+ * as the family's defaults. */
+kdash_claude_disp_t kdash_claude_display(kdash_claude_status_t status,
+                                         long long age_s, long long idle_s,
+                                         long long stale_s);
+
+/* Derive every record's `disp` for `now` and sort attention-first: rank
+ * ascending, then most-recent `ts` first, then host/sid lexicographic so the
+ * order is stable across renders. Ordering is part of the data model — "which
+ * of these needs me most" has one right answer, and deriving it twice is how
+ * two dashboards drift. */
+void kdash_claude_sessions_refresh(kdash_claude_session_t *arr, int n,
+                                   long long now, long long idle_s,
+                                   long long stale_s);
+
+/* ---- claude:limits (HASH) ---- */
+
+typedef struct {
+    bool valid; /* false unless both required percentages parsed */
+
+    double five_hour_pct;       /* required, clamped to [0,100]           */
+    double seven_day_pct;       /* required, clamped to [0,100]           */
+    double five_hour_resets_at; /* optional; 0 = unknown                  */
+    double seven_day_resets_at; /* optional; 0 = unknown                  */
+
+    /* The OBSERVATION time behind the headline fields, not the publish time:
+     * several writers on several hosts share this one key, and a writer must
+     * not publish over a fresher one. */
+    double updated_at;
+    double expected_refresh_s; /* writer's cadence; 0 = none published */
+
+    /* The model-scoped weekly window, with its OWN stamp and cadence. Only an
+     * oauth poll can supply these, so a shared stamp would let a statusline
+     * write make a frozen scoped gauge look fresh. */
+    bool scoped_valid; /* label and percentage both present */
+    char scoped_model[KDASH_MODEL_MAX]; /* display string — render, never match */
+    double scoped_pct;
+    double scoped_resets_at;
+    bool scoped_active; /* this window is the binding constraint */
+    double scoped_updated_at;        /* 0 = stampless, i.e. always stale */
+    double scoped_expected_refresh_s;
+} kdash_claude_limits_t;
+
+/* Parse the claude:limits hash from an HGETALL field/value list. Both
+ * `*_pct` fields are required, numeric and clamped to [0,100]; anything else
+ * rejects the record whole and leaves `*out` zeroed. Half a scoped set (a
+ * percentage with no label, or the reverse) yields `scoped_valid == false`
+ * rather than an unlabelled gauge. */
+bool kdash_parse_claude_limits(const char *const *fields,
+                               const char *const *values, int nfields,
+                               kdash_claude_limits_t *out);
+
+/* True when the headline snapshot is valid but its own stamp is older than the
+ * writer's cadence plus `grace_s` — or than `legacy_window_s` when the writer
+ * published no cadence at all. Defaults: KDASH_CLAUDE_LIMITS_GRACE_S and
+ * KDASH_CLAUDE_LIMITS_STALE_S. */
+bool kdash_claude_limits_stale(const kdash_claude_limits_t *l, long long now,
+                               long long grace_s, long long legacy_window_s);
+
+/* The same rule for the scoped set against ITS stamp and ITS cadence. A scoped
+ * set with no stamp at all is ALWAYS stale: it must never borrow the
+ * headline's freshness. False when there is no scoped set to judge. */
+bool kdash_claude_limits_scoped_stale(const kdash_claude_limits_t *l,
+                                      long long now, long long grace_s,
+                                      long long legacy_window_s);
+
+/* ---- claude:recent (list of JSON documents) ---- */
+
+typedef struct {
+    char host[KDASH_TOKEN_MAX];      /* required; token contract enforced  */
+    char project[KDASH_PROJECT_MAX]; /* required, non-empty                */
+    char title[KDASH_TITLE_MAX];     /* optional; "" when never generated  */
+    double ended_ts;                 /* unix s the session ended           */
+    double dur_s;                    /* 0 = unknown                        */
+} kdash_claude_recent_t;
+
+/* Parse one claude:recent element. Unlike its two siblings this really is a
+ * JSON document, so it takes a buffer and a length like every kpidash parser.
+ * `host` and a non-empty `project` are required; a record failing either is
+ * rejected whole. */
+bool kdash_parse_claude_recent(const char *json, size_t len,
+                               kdash_claude_recent_t *out);
 
 #endif /* KDASH_PAYLOAD_H */

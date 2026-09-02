@@ -46,6 +46,15 @@
  * never be worse than having no khlenv at all (the kpidash-client rule). */
 #define KDASH_CENTRAL_DEFAULT "rpi53:6379"
 
+/* CD-7: the `claude:*` family's own home. It answers `rpi53:6379` today —
+ * the SAME endpoint the central stem answers — and that is exactly why it must
+ * never be resolved through the central stem as a shortcut: the family keeps
+ * its own address so it can move again with one khlenv store edit and no
+ * publisher or dashboard host being touched. A reader that quietly used the
+ * central stem would pass every test today and be wrong on the day of the
+ * move, which is the failure the two stems exist to prevent. */
+#define KDASH_CLAUDE_STEM "KDASH_CLAUDE_REDIS"
+
 #define KDASH_REDIS_PORT_DEFAULT 6379
 #define KDASH_AUTH_ENV "REDISCLI_AUTH"
 
@@ -63,7 +72,51 @@ typedef enum {
     KDASH_EP_OK = 0,   /* host/port resolved and usable                     */
     KDASH_EP_NONE,     /* khlenv holds an explicit null — nothing to connect to */
     KDASH_EP_INVALID,  /* a value was found but is not a usable host[:port] */
+    /* Nothing answered anywhere and this stem has no compiled-in fallback:
+     * khlenv was unreachable, or the store holds no value at any level. Only
+     * a stem WITHOUT a fallback can return this — see kdash_stem_t. */
+    KDASH_EP_UNRESOLVED,
 } kdash_endpoint_status_t;
+
+/**
+ * One stem and the walk that belongs to it.
+ *
+ * The walk itself is CD-4's and never varies: environment override, then
+ * khlenv's stem, then its legacy alias on a MISS only, then the compiled-in
+ * fallback when khlenv could not be reached at all. What varies per family is
+ * whether the last two steps exist — so they are DATA here rather than
+ * branches, and this struct is the C spelling of the `Stem` the Rust and
+ * Python publishers already carry (endpoint.rs, endpoint.py). Three
+ * implementations of one walk agreeing is worth more than three that each
+ * hardcode their own.
+ *
+ * `fallback` is named for what it does rather than mirroring the wrappers'
+ * `default`, which is a keyword here.
+ */
+typedef struct {
+    /* The environment variable AND the khlenv key — one name, because an
+     * override that did not spell the stem would be a second thing to know. */
+    const char *key;
+    /* Tried only on a MISS. NULL when this family has no alias. */
+    const char *legacy;
+    /* `host[:port]` to stand in when khlenv itself cannot be reached. NULL
+     * when this family would rather resolve nothing than guess. */
+    const char *fallback;
+} kdash_stem_t;
+
+/* The central Redis: legacy alias, and the historical default. */
+extern const kdash_stem_t KDASH_STEM_CENTRAL;
+
+/* The claude family's home — no alias, and **no fallback on purpose.**
+ *
+ * CD-4's fallback exists because the central Redis has always been at
+ * rpi53:6379, so for a reader a stale-but-right guess beats nothing. The
+ * claude stem is the one that MOVES (CD-7 moved it once already), so a
+ * compiled-in guess is wrong on one side of a cutover or the other — and a
+ * dashboard rendering a confident panel out of the Redis nobody is writing to
+ * is a worse answer than one rendering "unavailable". A stem nobody has
+ * decided a fallback for does not get one invented at the call site. */
+extern const kdash_stem_t KDASH_STEM_CLAUDE;
 
 /* ---- pure (host-testable) ---- */
 
@@ -117,5 +170,25 @@ kdash_khlenv_status_t kdash_khlenv_resolve(const char *app, const char *key,
  */
 kdash_endpoint_status_t kdash_resolve_central(const char *app, char *host,
                                               size_t hostsz, int *port);
+
+/**
+ * Resolve any stem, in CD-4 order:
+ *
+ *   1. `$<stem->key>` in the environment — an explicit override wins
+ *      outright, so an install can always pin an endpoint.
+ *   2. khlenv `<stem->key>`. An explicit null here returns KDASH_EP_NONE and
+ *      stops: "deliberately no endpoint" is an answer.
+ *   3. khlenv `<stem->legacy>`, on a MISS only — and never after an
+ *      unreachable khlenv, because the alias lives in the same store on the
+ *      same service, so asking twice is a second timeout, not a second chance.
+ *   4. `<stem->fallback>`, when there is one.
+ *
+ * Returns KDASH_EP_UNRESOLVED when the walk ran out and the stem has no
+ * fallback. kdash_resolve_central() is this with KDASH_STEM_CENTRAL, kept as
+ * its own name because it is what every kpidash reader already calls.
+ */
+kdash_endpoint_status_t kdash_resolve_endpoint(const kdash_stem_t *stem,
+                                               const char *app, char *host,
+                                               size_t hostsz, int *port);
 
 #endif /* KDASH_ENDPOINT_H */

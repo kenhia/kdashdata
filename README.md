@@ -44,10 +44,32 @@ for (int i = 0; i < n; i++) {
 }
 ```
 
+The `claude:*` family lives at its **own** khlenv stem (CD-7), so it gets its
+own handle — and its readers hand back a derived display state and an
+attention-first order, not just parsed rows (CD-16):
+
+```c
+kdash_conn_t *cc = kdash_conn_new(&(kdash_conn_opts_t){
+    .app = "kstudiodash", .stem = &KDASH_STEM_CLAUDE});
+
+kdash_claude_session_t s[16];
+int n = kdash_claude_sessions(cc, s, 16, NULL);
+kdash_claude_sessions_refresh(s, n, time(NULL), KDASH_CLAUDE_IDLE_S,
+                              KDASH_CLAUDE_STALE_S);
+/* s[0] is whatever most wants your attention; s[i].disp says why */
+```
+
 The endpoint comes from khlenv (CD-4) and the password from `REDISCLI_AUTH`
 (CD-2), so a consumer hardcodes neither. Builds for x86_64 natively and for
 aarch64 with `just build-aarch64`. Dependencies are hiredis (system) and a
 vendored cJSON, and no more — CD-9.
+
+**Consuming it as a submodule.** `add_subdirectory()` on this repo gives you
+the `kdash` target and nothing else: `kdash_dump` and the unit tests build only
+when this is the top-level project (`KDASH_BUILD_EXAMPLES` /
+`KDASH_BUILD_TESTS`), so your `ctest` stays yours. Pass
+`-DKDASH_HIREDIS_STATIC=ON` for a binary that needs no `libhiredis` on the host
+it is copied to.
 
 ## The publisher wrappers
 

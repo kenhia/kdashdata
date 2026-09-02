@@ -141,6 +141,64 @@ bool kdash_service_key_parse(const char *key, size_t keylen,
     return true;
 }
 
+bool kdash_claude_session_key(char *out, size_t outsz, const char *host,
+                              const char *sid) {
+    if (!out || !host || !sid)
+        return false;
+    size_t hlen = strlen(host), slen = strlen(sid);
+    if (!kdash_token_ok(host, hlen) || !kdash_token_ok(sid, slen))
+        return false;
+
+    const char *pfx = KDASH_KEY_CLAUDE_SESSION_PFX;
+    size_t plen = strlen(pfx);
+    /* prefix + host + ':' + sid + NUL */
+    if (plen + hlen + 1 + slen + 1 > outsz)
+        return false;
+
+    memcpy(out, pfx, plen);
+    memcpy(out + plen, host, hlen);
+    out[plen + hlen] = ':';
+    memcpy(out + plen + hlen + 1, sid, slen);
+    out[plen + hlen + 1 + slen] = '\0';
+    return true;
+}
+
+bool kdash_claude_session_key_parse(const char *key, size_t keylen,
+                                    char *host, size_t hostsz,
+                                    char *sid, size_t sidsz) {
+    if (!key || !host || !sid || hostsz == 0 || sidsz == 0)
+        return false;
+
+    const char *pfx = KDASH_KEY_CLAUDE_SESSION_PFX;
+    size_t plen = strlen(pfx);
+    if (keylen <= plen || memcmp(key, pfx, plen) != 0)
+        return false;
+
+    const char *rest = key + plen;
+    size_t restlen = keylen - plen;
+    const char *sep = memchr(rest, ':', restlen);
+    if (!sep)
+        return false;
+
+    size_t hlen = (size_t)(sep - rest);
+    const char *s = sep + 1;
+    size_t slen = restlen - hlen - 1;
+
+    /* Both tokens against the contract. That is also what refuses a fifth
+     * segment: a ':' inside the sid is not in the token charset, so the sid
+     * fails rather than being silently truncated at the second colon. */
+    if (!kdash_token_ok(rest, hlen) || !kdash_token_ok(s, slen))
+        return false;
+
+    if (!copy_segment(host, hostsz, rest, hlen))
+        return false;
+    if (!copy_segment(sid, sidsz, s, slen)) {
+        host[0] = '\0'; /* all-or-nothing: never hand back half a key */
+        return false;
+    }
+    return true;
+}
+
 bool kdash_apttemps_key_parse(const char *key, size_t keylen,
                               char *zone, size_t zonesz) {
     if (!key || !zone || zonesz == 0)

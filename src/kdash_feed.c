@@ -321,3 +321,208 @@ int kdash_apttemps(kdash_conn_t *c, kdash_apttemps_t *out, int max,
         *skipped = ks.skipped;
     return n;
 }
+
+/* ---- the claude family (HGETALL + LRANGE) -------------------------------- */
+
+/* A session hash is a handful of short fields; the limits hash is the widest
+ * in the family at 16 documented ones. The cap is set above that on purpose:
+ * `additionalProperties` is true for both schemas, and a cap sitting exactly
+ * on today's field count would start silently dropping REQUIRED fields — and
+ * so rejecting valid records — the day a writer adds a seventeenth. */
+#define CLAUDE_FIELD_MAX  32
+#define CLAUDE_VALUE_MAX  512
+#define CLAUDE_RECORD_MAX 1024 /* one claude:recent JSON element */
+
+/* Flatten an HGETALL reply (2N bulk strings) into bounded field/value pointer
+ * arrays borrowed from the reply — so they live exactly as long as it does.
+ * An oversized value is skipped rather than truncated-and-trusted. */
+static int reply_to_pairs(const redisReply *r, const char *fields[],
+                          const char *values[], int max) {
+    if (!r || r->type != REDIS_REPLY_ARRAY || r->elements < 2)
+        return 0;
+    int n = 0;
+    for (size_t i = 0; i + 1 < r->elements && n < max; i += 2) {
+        const redisReply *f = r->element[i];
+        const redisReply *v = r->element[i + 1];
+        if (!f || !v || f->type != REDIS_REPLY_STRING ||
+            v->type != REDIS_REPLY_STRING)
+            continue;
+        if (f->len == 0 || (size_t)v->len > CLAUDE_VALUE_MAX)
+            continue;
+        fields[n] = f->str;
+        values[n] = v->str;
+        n++;
+    }
+    return n;
+}
+
+/* HGETALL one key. KDASH_OK hands back a borrowed reply the caller must free;
+ * a missing hash is an empty array, i.e. KDASH_ABSENT. */
+static kdash_status_t get_hash(kdash_conn_t *c, const char *key,
+                               redisReply **out) {
+    *out = NULL;
+    if (!kdash_conn_ensure(c))
+        return KDASH_UNAVAIL;
+
+    redisReply *r = redisCommand(c->ctx, "HGETALL %s", key);
+    if (!r) {
+        kdash_conn_fail(c);
+        return KDASH_UNAVAIL;
+    }
+    if (r->type != REDIS_REPLY_ARRAY || r->elements < 2) {
+        freeReplyObject(r);
+        return KDASH_ABSENT; /* missing, expired, or the wrong type */
+    }
+    *out = r;
+    return KDASH_OK;
+}
+
+/* Discovery state for one claude:session:* SCAN. Unlike the kpidash SCAN
+ * readers this keeps no buffer of raw keys: each key is parsed at the choke
+ * point as it arrives and only its two validated segments are kept, straight
+ * into the caller's output array. That is a KDASH_CLAUDE_KEY_MAX-sized buffer
+ * per row the reader never has to own — and it is why KDASH_KEY_MAX did not
+ * have to grow for a family the kpidash readers never see. */
+typedef struct {
+    kdash_claude_session_t *out;
+    int n;
+    int max;
+    int skipped;
+} claude_keys_t;
+
+static bool collect_session_key(const char *key, size_t keylen, void *vctx) {
+    claude_keys_t *ks = (claude_keys_t *)vctx;
+    if (ks->n >= ks->max)
+        return false;
+
+    kdash_claude_session_t *s = &ks->out[ks->n];
+    memset(s, 0, sizeof(*s));
+    /* The choke point: a key that is not exactly `claude:session:<host>:<sid>`
+     * with both tokens clean is skipped here and never reaches an HGETALL. */
+    if (!kdash_claude_session_key_parse(key, keylen, s->host, sizeof(s->host),
+                                        s->sid, sizeof(s->sid))) {
+        ks->skipped++;
+        return true;
+    }
+    ks->n++;
+    return true;
+}
+
+int kdash_claude_sessions(kdash_conn_t *c, kdash_claude_session_t *out, int max,
+                          int *skipped) {
+    if (skipped)
+        *skipped = 0;
+    if (!c || !out || max <= 0)
+        return 0;
+
+    /* One-shot under KDASH_SCAN_BATCHES, deliberately: kdeskdash paces this
+     * same discovery as a resumable step machine because an LVGL timer drives
+     * it there. The commands port; the pacing does not. */
+    claude_keys_t ks = {.out = out, .max = max};
+    if (!scan_keys(c, KDASH_KEY_CLAUDE_SESSION_PFX "*", collect_session_key, &ks))
+        return -1;
+
+    int discovered = ks.n;
+    int n = 0;
+    for (int i = 0; i < discovered; i++) {
+        /* Copied out first: the parse below zeroes its target, and once
+         * compaction starts (n < i) that target is a row still to be read. */
+        char host[KDASH_TOKEN_MAX], sid[KDASH_TOKEN_MAX];
+        memcpy(host, out[i].host, sizeof(host));
+        memcpy(sid, out[i].sid, sizeof(sid));
+
+        char key[KDASH_CLAUDE_KEY_MAX];
+        if (!kdash_claude_session_key(key, sizeof(key), host, sid)) {
+            ks.skipped++;
+            continue;
+        }
+
+        redisReply *r = NULL;
+        kdash_status_t st = get_hash(c, key, &r);
+        if (st == KDASH_UNAVAIL)
+            return n > 0 ? n : -1;
+        if (st != KDASH_OK) {
+            ks.skipped++;
+            continue; /* raced with the 7200 s TTL, or with SessionEnd's DEL */
+        }
+
+        const char *fields[CLAUDE_FIELD_MAX];
+        const char *values[CLAUDE_FIELD_MAX];
+        int pairs = reply_to_pairs(r, fields, values, CLAUDE_FIELD_MAX);
+        bool ok = pairs > 0 && kdash_parse_claude_session(host, sid, fields,
+                                                          values, pairs, &out[n]);
+        freeReplyObject(r);
+        if (ok)
+            n++;
+        else
+            ks.skipped++;
+    }
+
+    /* Rows the loop never reached (compaction left them holding a stale
+     * host/sid pair) are not results. */
+    for (int i = n; i < discovered; i++)
+        memset(&out[i], 0, sizeof(out[i]));
+
+    if (skipped)
+        *skipped = ks.skipped;
+    return n;
+}
+
+kdash_status_t kdash_claude_limits(kdash_conn_t *c, kdash_claude_limits_t *out) {
+    if (out)
+        memset(out, 0, sizeof(*out));
+    if (!c || !out)
+        return KDASH_ABSENT;
+
+    redisReply *r = NULL;
+    kdash_status_t st = get_hash(c, KDASH_KEY_CLAUDE_LIMITS, &r);
+    if (st != KDASH_OK)
+        return st;
+
+    const char *fields[CLAUDE_FIELD_MAX];
+    const char *values[CLAUDE_FIELD_MAX];
+    int pairs = reply_to_pairs(r, fields, values, CLAUDE_FIELD_MAX);
+    bool ok = pairs > 0 && kdash_parse_claude_limits(fields, values, pairs, out);
+    freeReplyObject(r);
+    return ok ? KDASH_OK : KDASH_ABSENT;
+}
+
+int kdash_claude_recent(kdash_conn_t *c, kdash_claude_recent_t *out, int max,
+                        int *skipped) {
+    if (skipped)
+        *skipped = 0;
+    if (!c || !out || max <= 0)
+        return 0;
+    if (!kdash_conn_ensure(c))
+        return -1;
+
+    redisReply *r =
+        redisCommand(c->ctx, "LRANGE %s 0 %d", KDASH_KEY_CLAUDE_RECENT, max - 1);
+    if (!r) {
+        kdash_conn_fail(c);
+        return -1;
+    }
+    if (r->type != REDIS_REPLY_ARRAY) {
+        freeReplyObject(r);
+        return 0; /* absent list: reachable, nothing has ended lately */
+    }
+
+    int n = 0, bad = 0;
+    for (size_t i = 0; i < r->elements && n < max; i++) {
+        const redisReply *e = r->element[i];
+        if (!e || e->type != REDIS_REPLY_STRING || e->len == 0 ||
+            (size_t)e->len > CLAUDE_RECORD_MAX) {
+            bad++;
+            continue;
+        }
+        if (kdash_parse_claude_recent(e->str, (size_t)e->len, &out[n]))
+            n++;
+        else
+            bad++;
+    }
+    freeReplyObject(r);
+
+    if (skipped)
+        *skipped = bad;
+    return n;
+}
