@@ -14,18 +14,28 @@
 - Sprint 003 (korg:1752): the publisher wrappers (Rust crate + CLI, Python
   wheel), the `KDASH_CLAUDE_REDIS` stem, and CD-12's hook-context auth route —
   slice 1 of the relocation program.
+- Sprint 004 (korg:1756): `kdash-pub` distribution — the package store, the
+  fixed absolute path, and the three publisher hosts (CD-13).
+- Sprint 005 (korg:1754): relocation close-out — `claude:*` live on the
+  central Redis, the old home retired, registry flip, claude schemas. **CD-7
+  is done**; program korg:1755 closed.
+- Sprint 006 (korg:1784): the `claude:*` C readers libkdash was missing — key
+  grammar, the HASH field/value parser shape (CD-15), the derived display model
+  (CD-16), a stem-parameterized connection handle, and the CMake options that
+  let a dashboard consume this repo as a submodule. Slice 1 of program
+  korg:1785.
 
 ## Now
 
-- The `claude:*` → central-Redis move (CD-7): **program korg:1755**. Slice 1
-  (korg:1752) has landed; next is the kdeskdash cutover + reader repoint
-  (korg:1753), then close-out — retire old keys, registry flip, claude schemas
-  (korg:1754). Wants a dedicated block of time; several moving parts.
+- kstudiodash 005 (korg:1728) consumes kdashdata — slice 2 of program
+  korg:1785, and the live verification that contract + library match what a
+  real dashboard needs. Unblocked by sprint 006.
 
 ## Next
 
-- kstudiodash 005 (korg:1728) consumes kdashdata — the live verification
-  that contract + library match what a real dashboard needs.
+- kdeskdash adopts these readers (kdeskdash korg:1783), retiring the duplicate
+  claude logic sprint 006 knowingly left in place. Not urgent: migrating a
+  panel people look at daily is a different risk from adding a reader.
 
 ## Later / Ideas
 

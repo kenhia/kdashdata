@@ -26,6 +26,12 @@ its own address, so it can move again without a publisher host being touched.
 The relocation itself was that edit — one line in khlenv's store, plus one
 `KDD_LEGS` value in the publisher.
 
+The C consumer library honours the split rather than inheriting it on paper:
+`kdash_conn_opts_t.stem` names which stem a handle resolves, and the claude
+readers require a handle opened on `&KDASH_STEM_CLAUDE`. Reading `claude:*`
+through the central stem would work today and break at the next move — which is
+the whole point of keeping two names for one address.
+
 `kvscf:*` deliberately has **no** stem, and no longer needs one to stay put:
 both panels pin `KDESKDASH_KVSCF_REDIS_HOST/PORT` explicitly since kdeskdash
 sprint 031, so CD-8 holds by its own configuration rather than by riding on
@@ -106,8 +112,18 @@ The two HASH feeds are the only records in this registry that are **not** JSON
 documents. Their schemas describe the decoded record; every value arrives off
 the wire as a string.
 
+**C readers** (sprint 006, [architecture](../docs/architecture.md) CD-15/CD-16):
+`kdash_claude_sessions()`, `kdash_claude_limits()` and `kdash_claude_recent()`
+in `include/kdash/kdash_feed.h` — SCAN + HGETALL, HGETALL, and LRANGE
+respectively, on a handle opened at `&KDASH_STEM_CLAUDE`. The HASH pair parses
+from an HGETALL field/value list rather than a buffer (CD-15), which is the one
+parser shape the pure core did not already have. The schemas above stay the
+source of truth; the C structs are their projection.
+
 Freshness ladder (reader-derived, the CD-6 model): published status trusted
-while fresh; no event for 15 min → idle; 40 min → stale.
+while fresh; no event for 15 min → idle; 40 min → stale. Derived in the library
+(`kdash_claude_sessions_refresh()`), which also orders sessions attention-first;
+labels and time formatting stay with the panel (CD-16).
 
 `claude:limits` is one shared key with several writers on several hosts, so
 `updated_at` is the *observation* time and a writer must not publish over a

@@ -104,8 +104,24 @@ added in sprint 002, after that sprint measured it missing and every consumer
 reaching the endpoint through the legacy alias. **If the central Redis moves,
 both entries move together**, and the legacy one retires only when
 kpidash-client's publishers have migrated (CD-3). `KDASH_CLAUDE_REDIS` was
-seeded in sprint 003 at `rpidash2:6380`, with no consumer yet — it is inert
-until the cutover slice points the publishers at it.
+seeded in sprint 003 at `rpidash2:6380` and flipped to `rpi53:6379` by the CD-7
+cutover; sprint 006 gave it its first C consumer, so it is no longer a stem
+with only writers.
+
+**One walk, parameterized by stem** (sprint 006). The library resolves any
+stem through `kdash_resolve_endpoint(&stem, ...)`, where a `kdash_stem_t`
+carries the walk's two optional steps — the legacy alias and the compiled-in
+fallback — as *data* rather than as branches. `kdash_resolve_central()` is that
+call with `KDASH_STEM_CENTRAL` and keeps its name because every kpidash reader
+already uses it. This is the C spelling of the `Stem` the Rust and Python
+publishers have carried since sprint 003, and three implementations of one walk
+agreeing is worth more than three that each hardcode their own.
+
+A connection handle names its stem (`kdash_conn_opts_t.stem`, NULL meaning
+central), so `claude:*` is read on a handle opened at `&KDASH_STEM_CLAUDE`.
+**Both stems answer `rpi53:6379` today and are still resolved separately**: a
+reader that took the shortcut would pass every test now and be wrong on the day
+the family moves, which is the one thing the two stems exist to prevent.
 
 **A compiled-in default is a reader's privilege, not a writer's.** The
 `rpi53:6379` fallback exists because a dashboard with a stale-but-plausible
@@ -115,6 +131,13 @@ Redis nobody is reading, and it looks like success from both ends. So the
 central stem keeps its default for everyone, and `KDASH_CLAUDE_REDIS` — the
 stem whose value is *changing* — has none: a publisher that cannot resolve it
 drops the write and says so.
+
+That asymmetry outlived the cutover, and it now applies to readers too. The
+claude stem's `fallback` is NULL, so a resolve that finds nothing returns
+`KDASH_EP_UNRESOLVED` rather than a guess: a panel rendering confident rows out
+of the Redis nobody is writing to is a worse answer than one rendering
+"unavailable" (CD-6). The central stem keeps its default, because "the central
+Redis has always been at `rpi53:6379`" is still true and still useful.
 
 ## CD-5 — Consumers are read-only
 
@@ -419,6 +442,87 @@ The boundary that replaces "no reading":
 The Python wrapper does not have this and does not need it; it gains one when
 something it publishes needs a guard, on the same evidence-first footing as the
 rest of this repo's wrapper surface.
+
+## CD-15 — HASH-shaped feeds parse from a field/value list, not a buffer
+
+Every kpidash feed is a JSON document under one key, so `kdash_payload.c` was
+entirely cJSON-over-a-buffer. `claude:session:*` and `claude:limits` are Redis
+**HASHes** — the registry's first — and their schemas describe the *decoded*
+record, with every value arriving off the wire as a string.
+
+The parser signature follows the shape of the data rather than being forced
+into the existing one:
+
+```c
+bool kdash_parse_claude_session(const char *host, const char *sid,
+                                const char *const *fields,
+                                const char *const *values, int nfields,
+                                kdash_claude_session_t *out);
+```
+
+The I/O shell flattens an HGETALL reply into two borrowed pointer arrays and
+hands them over; the pure core does the rest and stays testable with no Redis.
+`claude:recent` really is JSON per list element, so it takes a buffer like
+every other parser — one family, two shapes, and the shape is the schema's, not
+a convention imposed on it.
+
+**Every rule from [rules.md](../contracts/rules.md) survives the change of
+shape**: a required field missing or malformed rejects the record whole, a
+malformed optional is treated as absent, unknown fields are ignored, `*out` is
+zeroed before the parse. What is genuinely new is that the "is this a number"
+question cJSON answered for free must now be asked explicitly, and strictly — a
+hash value of `"later"` must reject rather than read as zero.
+
+Two consequences worth stating for the next HASH family:
+
+- **The field cap is set above today's field count on purpose.** Both schemas
+  are `additionalProperties: true`, and a cap sitting exactly on the known
+  fields would start silently dropping *required* ones — and so rejecting valid
+  records — the day a writer adds another. The reference implementation's cap
+  of 16 sat exactly on `claude:limits`' 16 documented fields; this one is 32.
+- **A partial hash can be a legitimate transient.** A `claude:session` carrying
+  only `ts` is a keepalive that landed before the first full write, and
+  rejecting it whole is correct — it is also the resurrection-race guard, since
+  a statusline write after SessionEnd leaves exactly that shape.
+
+## CD-16 — The claude derived model: derivation and ordering in, formatting out
+
+kdeskdash's pure core does more than parse: it derives a 5-state display status
+from published status × age, sorts sessions attention-first, and formats ages
+and reset times. Sprint 006 split that at a deliberate line.
+
+**In the library**, because they are the data model and two dashboards
+answering them differently is drift:
+
+- the 5-state derivation (`kdash_claude_display`) and the attention-first sort
+  (`kdash_claude_sessions_refresh`);
+- the **thresholds** — 15 min idle, 40 min stale, and the limits rule of "own
+  stamp + writer cadence + grace, legacy fixed window when no cadence was
+  published, scoped set never borrowing headline freshness". "When is a session
+  probably killed" has one right answer for the fleet, not one per panel;
+- lowercase enum words (`kdash_claude_disp_str`), which are the schema's own
+  vocabulary — the same thing `kdash_service_state_str` returns.
+
+**In the panel**, because CD-10 says the library has no rendering of any kind:
+`cf_disp_label`'s uppercase strings ("BLOCKED ON YOU"), `cf_fmt_age` ("3m"),
+`cf_fmt_reset` ("Tue 07:00"), and any placeholder for an absent `project`.
+
+Two rules that make this reusable rather than one family's special case:
+
+1. **The derivation composes on `kdash_ladder()` rather than beside it.** CD-6's
+   3-state ladder owns the time bands; the published status only decides what a
+   non-stale band renders as. The next HASH-shaped feed reuses the ladder
+   instead of writing a sixth state machine.
+2. **Thresholds are parameters, with the constants as defaults** — the shape
+   `kdash_ladder(age_s, idle_s, stale_s)` already had. Policy that cannot be
+   named at the call site is policy nobody can see.
+
+One deliberate divergence from kdeskdash's `cf_display_status`, kept because it
+is a behaviour and not an accident: **only `working` degrades to idle.**
+`blocked` and `awaiting` both mean "your turn", and a turn does not stop being
+yours because you took twenty minutes over it, so they stay prominent until the
+ladder says stale. Age still has the last say at the stale boundary, because
+the hooks cannot report a killed process.
 
 ## Open questions
 

@@ -38,6 +38,17 @@ typedef struct {
      * KEY.<host>.<app>. NULL or "" means "kdash". */
     const char *app;
 
+    /* Which stem this handle resolves. NULL means &KDASH_STEM_CENTRAL, which
+     * is what every kpidash reader wants and what this field defaulted to
+     * before it existed.
+     *
+     * A feed family that lives at its own address needs its own handle with
+     * its own stem — `&KDASH_STEM_CLAUDE` for `claude:*`. Two stems answering
+     * the same host:port today is not a reason to share one: that is precisely
+     * the coincidence a stem exists to survive. The stem is copied into the
+     * handle, so a stack-allocated one is fine. */
+    const kdash_stem_t *stem;
+
     /* Explicit endpoint override. When set, khlenv is never consulted: this is
      * the config-beats-discovery rule CD-4 inherits from kpidash-client, and it
      * is what lets an install pin an endpoint permanently. */

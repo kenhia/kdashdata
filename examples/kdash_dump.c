@@ -1,12 +1,20 @@
 /**
  * @file kdash_dump.c
  * The toy consumer from WI #1743's acceptance criterion: render every schema'd
- * family from the central Redis, knowing no key grammar, no SCAN, and no
- * hiredis. It is also the only exercise the khlenv socket path and the
- * connection handle get outside a live homelab — run it on any fleet host:
+ * family from its own home, knowing no key grammar, no SCAN, and no hiredis.
+ * It is also the only exercise the khlenv socket path and the connection
+ * handle get outside a live homelab — run it on any fleet host:
  *
- *   ./build/kdash_dump                       # discover the endpoint via khlenv
- *   KDASH_CENTRAL_REDIS=rpi53:6379 ./build/kdash_dump    # pin it
+ *   ./build/kdash_dump                       # discover the endpoints via khlenv
+ *   KDASH_CENTRAL_REDIS=rpi53:6379 ./build/kdash_dump    # pin the central one
+ *   KDASH_CLAUDE_REDIS=rpi53:6379 ./build/kdash_dump     # pin the claude one
+ *
+ * TWO handles, two stems (CD-4/CD-7): the kpidash families resolve
+ * KDASH_CENTRAL_REDIS and the claude family resolves KDASH_CLAUDE_REDIS. They
+ * answer the same host:port today and are still kept apart here on purpose —
+ * a dump that quietly read `claude:*` through the central stem would look
+ * right and prove nothing. An argv[1] endpoint override applies to the central
+ * handle only, for the same reason; pin the claude one through its own stem.
  *
  * REDISCLI_AUTH supplies the password (CD-2). Read-only throughout (CD-5).
  */
@@ -19,8 +27,10 @@
 #define MAX_HOSTS    32
 #define MAX_SERVICES 64
 #define MAX_ZONES    16
+#define MAX_SESSIONS 32
+#define MAX_RECENT   20
 
-static void print_endpoint(kdash_conn_t *c) {
+static void print_endpoint(kdash_conn_t *c, const char *stem) {
     char host[KDASH_ENDPOINT_MAX] = "";
     int port = 0;
     /* Force a resolve+connect so the endpoint below is the one actually in
@@ -30,13 +40,20 @@ static void print_endpoint(kdash_conn_t *c) {
 
     switch (st) {
     case KDASH_EP_NONE:
-        printf("endpoint: khlenv holds an explicit null — deliberately none\n");
+        printf("%-20s khlenv holds an explicit null — deliberately none\n", stem);
         return;
     case KDASH_EP_INVALID:
-        printf("endpoint: resolved to something unusable\n");
+        printf("%-20s resolved to something unusable\n", stem);
+        return;
+    case KDASH_EP_UNRESOLVED:
+        /* This stem has no compiled-in default, so it would rather resolve
+         * nothing than send a dashboard to a guess (CD-4). */
+        printf("%-20s unresolved — khlenv answered nothing and this stem has "
+               "no default\n",
+               stem);
         return;
     case KDASH_EP_OK:
-        printf("endpoint: %s:%d (%s)\n", host, port,
+        printf("%-20s %s:%d (%s)\n", stem, host, port,
                up ? "connected" : "unreachable");
         return;
     }
@@ -131,26 +148,118 @@ static void dump_apttemps(kdash_conn_t *c, long long now) {
     printf("  %d zone(s), %d skipped\n", n, skipped);
 }
 
+/* The claude family, on its own handle at its own stem. Three feeds, two of
+ * them Redis HASHes rather than JSON documents — which the consumer never has
+ * to know, because the readers hand back the same kind of struct either way. */
+static void dump_claude(kdash_conn_t *c, long long now) {
+    kdash_claude_session_t sessions[MAX_SESSIONS];
+    int skipped = 0;
+    int n = kdash_claude_sessions(c, sessions, MAX_SESSIONS, &skipped);
+
+    printf("\n== claude sessions (claude:session:*) ==\n");
+    if (n < 0) {
+        printf("  unavailable\n");
+    } else {
+        /* Derive display state and order the rows. The library answers "which
+         * of these needs me most"; what that looks like on a screen is the
+         * panel's business (CD-16). */
+        kdash_claude_sessions_refresh(sessions, n, now, KDASH_CLAUDE_IDLE_S,
+                                      KDASH_CLAUDE_STALE_S);
+        for (int i = 0; i < n; i++) {
+            const kdash_claude_session_t *s = &sessions[i];
+            printf("  %-9s %-12s %-16s %llds ago", kdash_claude_disp_str(s->disp),
+                   s->host, s->project[0] ? s->project : "(none)",
+                   kdash_age_s(s->ts, now));
+            if (s->model[0])
+                printf("  %s", s->model);
+            if (s->title[0])
+                printf("  \"%s\"", s->title);
+            printf("\n");
+        }
+        printf("  %d session(s), %d skipped\n", n, skipped);
+    }
+
+    printf("\n== claude usage limits (claude:limits) ==\n");
+    kdash_claude_limits_t l;
+    switch (kdash_claude_limits(c, &l)) {
+    case KDASH_UNAVAIL:
+        printf("  unavailable\n");
+        break;
+    case KDASH_ABSENT:
+        printf("  nobody has published usage\n");
+        break;
+    case KDASH_OK: {
+        /* Each gauge is judged against its OWN stamp — the whole point of the
+         * scoped set carrying one. */
+        bool stale = kdash_claude_limits_stale(&l, now, KDASH_CLAUDE_LIMITS_GRACE_S,
+                                               KDASH_CLAUDE_LIMITS_STALE_S);
+        printf("  five-hour %5.1f%%   seven-day %5.1f%%   (observed %llds ago%s)\n",
+               l.five_hour_pct, l.seven_day_pct,
+               kdash_age_s(l.updated_at, now), stale ? ", STALE" : "");
+        if (l.scoped_valid) {
+            bool sstale = kdash_claude_limits_scoped_stale(
+                &l, now, KDASH_CLAUDE_LIMITS_GRACE_S, KDASH_CLAUDE_LIMITS_STALE_S);
+            printf("  scoped %-8s %5.1f%%%s   (observed %llds ago%s)\n",
+                   l.scoped_model, l.scoped_pct, l.scoped_active ? " *" : "  ",
+                   kdash_age_s(l.scoped_updated_at, now), sstale ? ", STALE" : "");
+        } else {
+            printf("  no model-scoped window published\n");
+        }
+        break;
+    }
+    }
+
+    kdash_claude_recent_t recent[MAX_RECENT];
+    skipped = 0;
+    n = kdash_claude_recent(c, recent, MAX_RECENT, &skipped);
+
+    printf("\n== claude recent (claude:recent) ==\n");
+    if (n < 0) {
+        printf("  unavailable\n");
+        return;
+    }
+    for (int i = 0; i < n; i++) {
+        printf("  %-12s %-16s %llds ago", recent[i].host, recent[i].project,
+               kdash_age_s(recent[i].ended_ts, now));
+        if (recent[i].dur_s > 0)
+            printf("  ran %llds", (long long)recent[i].dur_s);
+        if (recent[i].title[0])
+            printf("  \"%s\"", recent[i].title);
+        printf("\n");
+    }
+    printf("  %d entry(s), %d skipped\n", n, skipped);
+}
+
 int main(int argc, char **argv) {
-    kdash_conn_opts_t opts = {.app = "kdash-dump"};
+    kdash_conn_opts_t opts = {.app = "kdash-dump"}; /* .stem NULL -> central */
     if (argc > 1)
         opts.host = argv[1]; /* explicit endpoint override, for a quick probe */
 
     kdash_conn_t *c = kdash_conn_new(&opts);
-    if (!c) {
+    /* The claude family's own handle. Independent by construction, so a claude
+     * endpoint that is down costs the kpidash half of this dump nothing. */
+    kdash_conn_opts_t claude_opts = {.app = "kdash-dump",
+                                     .stem = &KDASH_STEM_CLAUDE};
+    kdash_conn_t *cc = kdash_conn_new(&claude_opts);
+    if (!c || !cc) {
         fprintf(stderr, "kdash_conn_new failed\n");
+        kdash_conn_free(c);
+        kdash_conn_free(cc);
         return 1;
     }
 
     long long now = (long long)time(NULL);
-    print_endpoint(c);
+    print_endpoint(c, KDASH_CENTRAL_STEM);
+    print_endpoint(cc, KDASH_CLAUDE_STEM);
     dump_clients(c, now);
     dump_services(c, now);
     dump_apttemps(c, now);
+    dump_claude(cc, now);
 
     /* A dashboard would render "unavailable" here and carry on; a CLI can be
      * blunter about it. Either way nothing crashed and nothing blocked. */
-    int rc = kdash_conn_reachable(c) ? 0 : 2;
+    int rc = (kdash_conn_reachable(c) && kdash_conn_reachable(cc)) ? 0 : 2;
     kdash_conn_free(c);
+    kdash_conn_free(cc);
     return rc;
 }

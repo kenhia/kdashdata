@@ -37,6 +37,27 @@
 #define KDASH_TELEMETRY_TTL_S      15
 #define KDASH_DEV_TELEMETRY_TTL_S  5
 
+/* The claude family's ladder thresholds (registry.md): a published session
+ * status is trusted while fresh, idle at 15 min, stale at 40 min. The hooks
+ * cannot report a killed process, which is why age — not the published word —
+ * gets the last say.
+ *
+ * These are DEFAULTS, not policy baked into the derivation: every claude
+ * helper in kdash_payload.h takes its thresholds by parameter, the way
+ * kdash_ladder() already does. They live here rather than beside the parsers
+ * because "when is a feed too old" is one question this header answers for
+ * every family, and two dashboards disagreeing about it is the drift the
+ * shared library exists to prevent. */
+#define KDASH_CLAUDE_IDLE_S  (15 * 60)
+#define KDASH_CLAUDE_STALE_S (40 * 60)
+
+/* claude:limits is greyed per GAUGE, against that gauge's OWN stamp: stale
+ * once the stamp is older than the writer's published cadence plus this grace.
+ * A hash from a pre-cadence writer published no cadence at all, and falls back
+ * to the fixed legacy window. */
+#define KDASH_CLAUDE_LIMITS_GRACE_S 60
+#define KDASH_CLAUDE_LIMITS_STALE_S (60 * 60)
+
 typedef enum {
     KDASH_FRESH = 0, /* published state is current — trust it            */
     KDASH_IDLE,      /* no news for idle_s — probably parked             */

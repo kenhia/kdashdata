@@ -39,6 +39,19 @@ kdash_conn_t *kdash_conn_new(const kdash_conn_opts_t *opts) {
         auth = getenv(KDASH_AUTH_ENV);
     copy_bounded(c->auth, sizeof(c->auth), auth);
 
+    /* NULL stem means the central Redis — what every kpidash reader resolves,
+     * and what this handle did before the field existed. */
+    const kdash_stem_t *stem = (opts && opts->stem) ? opts->stem : &KDASH_STEM_CENTRAL;
+    copy_bounded(c->stem_key, sizeof(c->stem_key), stem->key);
+    copy_bounded(c->stem_legacy, sizeof(c->stem_legacy), stem->legacy);
+    copy_bounded(c->stem_fallback, sizeof(c->stem_fallback), stem->fallback);
+    if (!c->stem_key[0]) {
+        /* A stem with no name resolves nothing; refusing here beats sending
+         * khlenv an empty key on every reconnect for the life of the handle. */
+        free(c);
+        return NULL;
+    }
+
     copy_bounded(c->cfg_host, sizeof(c->cfg_host), opts ? opts->host : NULL);
     c->cfg_port = (opts && opts->port > 0) ? opts->port : KDASH_REDIS_PORT_DEFAULT;
 
@@ -109,8 +122,15 @@ static bool resolve_endpoint(kdash_conn_t *c) {
         c->ep_status = KDASH_EP_OK;
         return true;
     }
+    /* Rebuilt per resolve from the handle's own copies, so the walk sees this
+     * family's stem and never the central one by accident. */
+    const kdash_stem_t stem = {
+        .key = c->stem_key,
+        .legacy = c->stem_legacy[0] ? c->stem_legacy : NULL,
+        .fallback = c->stem_fallback[0] ? c->stem_fallback : NULL,
+    };
     c->ep_status =
-        kdash_resolve_central(c->app, c->host, sizeof(c->host), &c->port);
+        kdash_resolve_endpoint(&stem, c->app, c->host, sizeof(c->host), &c->port);
     return c->ep_status == KDASH_EP_OK;
 }
 
@@ -135,9 +155,10 @@ bool kdash_conn_ensure(kdash_conn_t *c) {
         return false;
 
     if (!resolve_endpoint(c)) {
-        /* Includes KDASH_EP_NONE — a deliberate "no endpoint". Back off like
-         * any other failure so a null in the store costs one resolve per
-         * interval rather than one per read. */
+        /* Includes KDASH_EP_NONE (a deliberate "no endpoint") and
+         * KDASH_EP_UNRESOLVED (nothing anywhere, and this stem would rather
+         * resolve nothing than guess). Back off like any other failure so
+         * either costs one resolve per interval rather than one per read. */
         c->reachable = false;
         c->next_attempt = now + c->reconnect_backoff_s;
         return false;

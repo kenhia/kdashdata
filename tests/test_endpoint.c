@@ -2,10 +2,16 @@
  * @file test_endpoint.c
  * The pure half of endpoint discovery: host:port parsing, the khlenv endpoint
  * file, the request it builds, and the three status codes its protocol
- * actually uses. No socket is opened here — the I/O half is verified live
- * against the running khlenv, and a unit test that needed a server would not
+ * actually uses. No khlenv is contacted here — the live half is verified
+ * against the running service, and a unit test that needed a server would not
  * be one `just check` could run.
+ *
+ * The stem walk IS exercised, at both ends where it needs no service: an
+ * environment override (which short-circuits khlenv by design) and a khlenv
+ * pointed at a closed loopback port (which is the "unreachable" branch, and
+ * costs one refused connect rather than a timeout).
  */
+#include <stdlib.h>
 #include <string.h>
 
 #include "check.h"
@@ -189,11 +195,95 @@ int main(void) {
               "value too long for the buffer");
     }
 
+    /* ---- the two stems are two addresses ---- */
+    {
+        /* This is the whole point of the sprint's first trap: both stems
+         * answer rpi53:6379 today, so a claude handle that quietly resolved
+         * the central stem would pass every live test and be wrong on the day
+         * the family moves. Give them DIFFERENT values and check each stem
+         * reads its own. */
+        setenv(KDASH_CENTRAL_STEM, "central-host:1111", 1);
+        setenv(KDASH_CLAUDE_STEM, "claude-host:2222", 1);
+
+        char host[KDASH_ENDPOINT_MAX];
+        int port = 0;
+
+        CHECK(kdash_resolve_endpoint(&KDASH_STEM_CENTRAL, "kdash", host,
+                                     sizeof(host), &port) == KDASH_EP_OK,
+              "central stem resolves from its own env var");
+        CHECK(strcmp(host, "central-host") == 0 && port == 1111,
+              "central -> %s:%d", host, port);
+
+        CHECK(kdash_resolve_endpoint(&KDASH_STEM_CLAUDE, "kdash", host,
+                                     sizeof(host), &port) == KDASH_EP_OK,
+              "claude stem resolves from ITS own env var");
+        CHECK(strcmp(host, "claude-host") == 0 && port == 2222,
+              "claude -> %s:%d — never the central endpoint", host, port);
+
+        /* kdash_resolve_central() is the same walk under its old name. */
+        CHECK(kdash_resolve_central("kdash", host, sizeof(host), &port) ==
+                  KDASH_EP_OK,
+              "resolve_central still works");
+        CHECK(strcmp(host, "central-host") == 0, "and still means central");
+
+        /* A value that is not an endpoint is an error, not a fallback. */
+        setenv(KDASH_CLAUDE_STEM, "rpi53:not-a-port", 1);
+        CHECK(kdash_resolve_endpoint(&KDASH_STEM_CLAUDE, "kdash", host,
+                                     sizeof(host), &port) == KDASH_EP_INVALID,
+              "a malformed override is INVALID, never quietly the default");
+
+        /* An empty override is not an override. With khlenv unreachable the
+         * central stem still lands on its compiled-in default... */
+        unsetenv(KDASH_CENTRAL_STEM);
+        unsetenv(KDASH_CLAUDE_STEM);
+        setenv(KDASH_KHLENV_ENDPOINT_ENV, "http://127.0.0.1:1", 1);
+
+        CHECK(kdash_resolve_endpoint(&KDASH_STEM_CENTRAL, "kdash", host,
+                                     sizeof(host), &port) == KDASH_EP_OK,
+              "an unreachable khlenv falls back to the central default");
+        CHECK(strcmp(host, "rpi53") == 0 && port == 6379,
+              "central default is %s (%s:%d)", KDASH_CENTRAL_DEFAULT, host, port);
+
+        /* ...and the claude stem refuses to guess, which is the difference the
+         * policy exists to express. */
+        CHECK(kdash_resolve_endpoint(&KDASH_STEM_CLAUDE, "kdash", host,
+                                     sizeof(host), &port) == KDASH_EP_UNRESOLVED,
+              "the claude stem has no fallback and says so");
+
+        /* A stem with no name resolves nothing rather than asking khlenv for
+         * "". */
+        const kdash_stem_t nameless = {0};
+        CHECK(kdash_resolve_endpoint(&nameless, "kdash", host, sizeof(host),
+                                     &port) == KDASH_EP_INVALID,
+              "a nameless stem");
+        CHECK(kdash_resolve_endpoint(NULL, "kdash", host, sizeof(host), &port) ==
+                  KDASH_EP_INVALID,
+              "a NULL stem");
+
+        unsetenv(KDASH_KHLENV_ENDPOINT_ENV);
+    }
+
     /* The contract's constants, pinned so a change has to come through here. */
     CHECK(strcmp(KDASH_CENTRAL_STEM, "KDASH_CENTRAL_REDIS") == 0, "CD-4 stem");
     CHECK(strcmp(KDASH_CENTRAL_STEM_LEGACY, "KPIDASH_REDIS") == 0, "legacy alias");
+    CHECK(strcmp(KDASH_CLAUDE_STEM, "KDASH_CLAUDE_REDIS") == 0, "CD-7 claude stem");
     CHECK(strcmp(KDASH_AUTH_ENV, "REDISCLI_AUTH") == 0, "CD-2 auth variable");
     CHECK(KDASH_REDIS_PORT_DEFAULT == 6379, "default Redis port");
+
+    /* The stems' walks, as data. A fallback appearing on the claude stem is a
+     * policy change and has to come through this line. */
+    CHECK(strcmp(KDASH_STEM_CENTRAL.key, KDASH_CENTRAL_STEM) == 0, "central key");
+    CHECK(KDASH_STEM_CENTRAL.legacy &&
+              strcmp(KDASH_STEM_CENTRAL.legacy, KDASH_CENTRAL_STEM_LEGACY) == 0,
+          "central keeps its legacy alias");
+    CHECK(KDASH_STEM_CENTRAL.fallback &&
+              strcmp(KDASH_STEM_CENTRAL.fallback, KDASH_CENTRAL_DEFAULT) == 0,
+          "central keeps its compiled-in default");
+    CHECK(strcmp(KDASH_STEM_CLAUDE.key, KDASH_CLAUDE_STEM) == 0, "claude key");
+    CHECK(KDASH_STEM_CLAUDE.legacy == NULL, "claude has no legacy alias");
+    CHECK(KDASH_STEM_CLAUDE.fallback == NULL,
+          "claude has NO compiled-in default — a stem that moves must not be "
+          "guessed at (CD-4)");
 
     return TEST_RESULT();
 }

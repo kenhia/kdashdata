@@ -4,6 +4,7 @@
  * as important — that a refusal never leaves a half-filled buffer behind for
  * a caller to use by accident.
  */
+#include <stdio.h>
 #include <string.h>
 
 #include "check.h"
@@ -49,6 +50,33 @@ static void service_reject(const char *key) {
     bool got = kdash_service_key_parse(key, strlen(key), name, sizeof(name),
                                        host, sizeof(host));
     CHECK(!got, "expected reject: %s", key);
+}
+
+static void claude_ok(const char *key, const char *want_host,
+                      const char *want_sid) {
+    char host[KDASH_TOKEN_MAX], sid[KDASH_TOKEN_MAX];
+    bool got = kdash_claude_session_key_parse(key, strlen(key), host,
+                                              sizeof(host), sid, sizeof(sid));
+    CHECK(got, "expected accept: %s", key);
+    if (got) {
+        CHECK(strcmp(host, want_host) == 0, "%s -> host \"%s\", want \"%s\"", key,
+              host, want_host);
+        CHECK(strcmp(sid, want_sid) == 0, "%s -> sid \"%s\", want \"%s\"", key, sid,
+              want_sid);
+    }
+}
+
+/* A key must be refused, and NEITHER output may be touched — a half-filled
+ * host is exactly what a caller would go on to build a key from. */
+static void claude_reject(const char *key) {
+    char host[KDASH_TOKEN_MAX], sid[KDASH_TOKEN_MAX];
+    memcpy(host, "SENTINEL", 9);
+    memcpy(sid, "SENTINEL", 9);
+    bool got = kdash_claude_session_key_parse(key, strlen(key), host,
+                                              sizeof(host), sid, sizeof(sid));
+    CHECK(!got, "expected reject: %s", key);
+    CHECK(memcmp(host, "SENTINEL", 9) == 0, "%s: rejected but clobbered host", key);
+    CHECK(memcmp(sid, "SENTINEL", 9) == 0, "%s: rejected but clobbered sid", key);
 }
 
 int main(void) {
@@ -162,6 +190,91 @@ int main(void) {
                                      sizeof(host)),
               "length-bounded parse ignores trailing bytes");
         CHECK(strcmp(host, "kai") == 0, "host \"%s\"", host);
+    }
+
+    /* ---- claude:session:<host>:<sid> ---- */
+    {
+        claude_ok("claude:session:kai:abc123", "kai", "abc123");
+        claude_ok("claude:session:rpi-5_3.local:0f3c.d-9", "rpi-5_3.local",
+                  "0f3c.d-9");
+        claude_ok("claude:session:a:b", "a", "b");
+
+        claude_reject("claude:session:");           /* prefix only          */
+        claude_reject("claude:session:kai");        /* no sid segment       */
+        claude_reject("claude:session::abc123");    /* empty host           */
+        claude_reject("claude:session:kai:");       /* empty sid            */
+        claude_reject("claude:session:kai:a:b");    /* a 5th segment        */
+        claude_reject("claude:sessions:kai:abc");   /* corrupted prefix     */
+        claude_reject("kpidash:session:kai:abc");   /* another family       */
+        claude_reject("claude:limits");             /* not this family      */
+        claude_reject("claude:session:k ai:abc");   /* space is not a token */
+        claude_reject("claude:session:kai:ab/c");   /* nor is a slash       */
+
+        /* 64 chars in either token is one over the contract. */
+        {
+            char big[160];
+            char tok[65];
+            memset(tok, 'x', 64);
+            tok[64] = '\0';
+            snprintf(big, sizeof(big), "claude:session:%s:abc", tok);
+            claude_reject(big);
+            snprintf(big, sizeof(big), "claude:session:kai:%s", tok);
+            claude_reject(big);
+        }
+
+        /* SCAN hands back counted strings, not NUL-terminated ones. */
+        {
+            const char buf[] = "claude:session:kai:abc123GARBAGE";
+            char host[KDASH_TOKEN_MAX], sid[KDASH_TOKEN_MAX];
+            CHECK(kdash_claude_session_key_parse(buf, 25, host, sizeof(host), sid,
+                                                 sizeof(sid)),
+                  "length-bounded parse ignores trailing bytes");
+            CHECK(strcmp(host, "kai") == 0 && strcmp(sid, "abc123") == 0,
+                  "host \"%s\" sid \"%s\"", host, sid);
+        }
+
+        /* An output buffer too small refuses rather than truncating. */
+        {
+            char host[4], sid[KDASH_TOKEN_MAX];
+            CHECK(!kdash_claude_session_key_parse("claude:session:kubs0:abc", 24,
+                                                  host, sizeof(host), sid,
+                                                  sizeof(sid)),
+                  "host buffer too small must refuse");
+        }
+    }
+
+    /* ---- claude:session key construction ---- */
+    {
+        char key[KDASH_CLAUDE_KEY_MAX];
+        CHECK(kdash_claude_session_key(key, sizeof(key), "kai", "abc123"),
+              "build a session key");
+        CHECK(strcmp(key, "claude:session:kai:abc123") == 0, "built \"%s\"", key);
+
+        /* Construction is a choke point too: the segments may have come back
+         * off a SCAN or out of a config file. */
+        CHECK(!kdash_claude_session_key(key, sizeof(key), "kai:evil", "abc"),
+              "a host carrying ':' must not construct a key");
+        CHECK(!kdash_claude_session_key(key, sizeof(key), "", "abc"),
+              "empty host");
+        CHECK(!kdash_claude_session_key(key, sizeof(key), "kai", ""),
+              "empty sid");
+
+        char small[16];
+        CHECK(!kdash_claude_session_key(small, sizeof(small), "kai", "abc123"),
+              "buffer too small must refuse");
+
+        /* KDASH_CLAUDE_KEY_MAX must hold the widest legal key. */
+        {
+            char tok[KDASH_TOKEN_MAX];
+            memset(tok, 'x', KDASH_TOKEN_MAX - 1);
+            tok[KDASH_TOKEN_MAX - 1] = '\0';
+            CHECK(kdash_claude_session_key(key, sizeof(key), tok, tok),
+                  "two 63-char tokens must fit KDASH_CLAUDE_KEY_MAX");
+            char host[KDASH_TOKEN_MAX], sid[KDASH_TOKEN_MAX];
+            CHECK(kdash_claude_session_key_parse(key, strlen(key), host,
+                                                 sizeof(host), sid, sizeof(sid)),
+                  "and must parse back");
+        }
     }
 
     return TEST_RESULT();
