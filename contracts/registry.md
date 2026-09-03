@@ -84,11 +84,36 @@ first key arrived with the publisher wrappers in sprint 003.
 | Key | Type / pattern | Writer (cadence) | TTL | Schema |
 |---|---|---|---|---|
 | `kdash:selftest:{host}` | latest-value, expiring | either publisher wrapper, on demand | 300 s | [selftest](schemas/kdash-selftest.schema.json) |
+| `kdash:panel:{host}` | latest-value, ts-owned | kdeskdash, on demand (a button press) | none | [panel](schemas/kdash-panel.schema.json) |
 
 `selftest` is a publish canary, not a dashboard feed: running it from a host
 proves that host's whole publish path — khlenv discovery, `REDISCLI_AUTH`, key
 grammar, schema-valid payload — and nothing renders the result. Key absence
 means nobody has run it there lately, which is not a fault.
+
+`panel` is the family's first **control** feed (CD-17): it tells the dashboard
+running on `{host}` which screen to show — `dash` or `desktop` — and
+kstudiodash acts on it by switching VT. Deliberately *state* rather than the
+`GETDEL` one-shot command pattern [rules.md](rules.md) also offers, for two
+reasons that both point the same way. Consuming a one-shot is a **write**, and
+the consumer library has no write path by design (CD-5). And the consumer must
+act on `ts` **advancing**, never on the current value: that makes a republish
+idempotent, and it stops a `want` sitting unchanged in Redis yanking a panel
+back after someone switched screens by hand. A command older than the reader's
+window (60 s, `KDASH_PANEL_WINDOW_S`) is not replayed at all, so a panel that
+was off for an hour comes back to its own screen rather than to whatever it was
+told while it was away.
+
+**C reader**: `kdash_panel()` in `include/kdash/kdash_feed.h` — one GET on an
+ordinary central-stem handle, with the edge detection in
+`kdash_panel_actionable()` (`kdash_payload.h`), so two panels cannot disagree
+about what "a new command" means. **Writer**: no new publisher code. The key is
+in the `kdash` namespace the wrappers already accept and `ts` is stamped for
+free ([rules.md](rules.md) payload rules), so the whole write is:
+
+```sh
+kdash-pub set kdash:panel:kstudio '{"want":"desktop"}'
+```
 
 ## Family: claude (central, live)
 
@@ -162,9 +187,9 @@ kvscf keeps the pair endpoint — the shared default decoupled at that flip.
 | Namespace | Host | Keys today |
 |---|---|---|
 | `kdeskdash:*` | each kdeskdash device | `active_mode`, `screenshot`, `gol:settings`, `golz:{wins,human_wins,zombie_wins,ties,gens_to_win,settings}`, `dev:left`, `dev:right` |
-| `kstudiodash:*` | kstudio | reserved — nothing yet |
+| `kstudiodash:*` | kstudio | reserved — still nothing. kstudio runs no local Redis, which is why the panel-control feed is `kdash:panel:kstudio` on **central** and not a local key here |
 
 ## Reserved
 
 - `kdash:<family>:<…>` — the namespace for new shared feeds (rules.md).
-  `selftest` is the only family in it so far.
+  `selftest` and `panel` are the families in it so far.

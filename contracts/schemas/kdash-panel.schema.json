@@ -1,0 +1,21 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/kenhia/kdashdata/contracts/schemas/kdash-panel.schema.json",
+  "title": "kdash panel control",
+  "description": "Payload of kdash:panel:{host} - latest-value, ts-owned, no TTL. Tells the dashboard running on {host} which screen it should be showing. The key is exactly 3 segments and {host} is authoritative; the payload carries no echo of it. The consumer acts on a CHANGE of ts, never on the current value: a republish with an unchanged ts is the same command, and a command older than the reader's window (60 s in libkdash) is never replayed at all. That is what keeps a remote command from fighting a human at the keyboard, and what lets the read side stay read-only - no GETDEL, no consumed-means-handled.",
+  "type": "object",
+  "required": ["want", "ts"],
+  "additionalProperties": true,
+  "properties": {
+    "want": {
+      "type": "string",
+      "description": "Which screen the panel should show. The enum is closed: an unrecognised word rejects the record rather than being guessed at.",
+      "enum": ["dash", "desktop"]
+    },
+    "ts": {
+      "type": "number",
+      "exclusiveMinimum": 0,
+      "description": "Unix seconds (float): the COMMAND's time, not the writer's heartbeat. Advancing it is what issues a new command, so it is required and positive - a stamp a consumer cannot compare is no command at all."
+    }
+  }
+}

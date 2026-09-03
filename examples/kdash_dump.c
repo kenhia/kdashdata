@@ -8,6 +8,7 @@
  *   ./build/kdash_dump                       # discover the endpoints via khlenv
  *   KDASH_CENTRAL_REDIS=rpi53:6379 ./build/kdash_dump    # pin the central one
  *   KDASH_CLAUDE_REDIS=rpi53:6379 ./build/kdash_dump     # pin the claude one
+ *   KDASH_PANEL_HOST=kstudio ./build/kdash_dump          # another panel's command
  *
  * TWO handles, two stems (CD-4/CD-7): the kpidash families resolve
  * KDASH_CENTRAL_REDIS and the claude family resolves KDASH_CLAUDE_REDIS. They
@@ -20,7 +21,9 @@
  */
 #include <stdio.h>
 #include <stdlib.h>
+#include <string.h>
 #include <time.h>
+#include <unistd.h>
 
 #include "kdash/kdash.h"
 
@@ -148,6 +151,50 @@ static void dump_apttemps(kdash_conn_t *c, long long now) {
     printf("  %d zone(s), %d skipped\n", n, skipped);
 }
 
+/* kdash:panel:<host> — the control feed (CD-17). Addressed per panel with no
+ * discovery set to walk, so this reads the key with THIS host's name on it,
+ * which is what a real dashboard does. `KDASH_PANEL_HOST` looks at another
+ * panel's instead — the useful case from a build host, since the panel being
+ * commanded is usually not the one you are sitting at. */
+static void dump_panel(kdash_conn_t *c, long long now) {
+    char host[KDASH_TOKEN_MAX] = "";
+    const char *pinned = getenv("KDASH_PANEL_HOST");
+    if (pinned && pinned[0]) {
+        snprintf(host, sizeof(host), "%s", pinned);
+    } else if (gethostname(host, sizeof(host)) != 0) {
+        host[0] = '\0';
+    }
+    /* gethostname() may not terminate on truncation. */
+    host[sizeof(host) - 1] = '\0';
+
+    printf("\n== panel control (kdash:panel:%s) ==\n", host[0] ? host : "?");
+    if (!host[0]) {
+        printf("  no host to ask about\n");
+        return;
+    }
+
+    kdash_panel_t p;
+    switch (kdash_panel(c, host, &p)) {
+    case KDASH_UNAVAIL:
+        printf("  unavailable\n");
+        return;
+    case KDASH_ABSENT:
+        /* Distinct from unavailable on purpose: nobody has ever commanded this
+         * panel, which is not a fault and not a reason to render anything. */
+        printf("  no command for this panel\n");
+        return;
+    case KDASH_OK:
+        /* acted_ts 0 — a fresh process has acted on nothing, which is exactly
+         * the state a panel is in when it boots. */
+        printf("  want=%s  issued %llds ago%s\n", kdash_panel_want_str(p.want),
+               kdash_age_s(p.ts, now),
+               kdash_panel_actionable(&p, 0, now, KDASH_PANEL_WINDOW_S)
+                   ? "  [a booting panel would act on this]"
+                   : "  [outside the window — a booting panel would ignore it]");
+        return;
+    }
+}
+
 /* The claude family, on its own handle at its own stem. Three feeds, two of
  * them Redis HASHes rather than JSON documents — which the consumer never has
  * to know, because the readers hand back the same kind of struct either way. */
@@ -254,6 +301,7 @@ int main(int argc, char **argv) {
     dump_clients(c, now);
     dump_services(c, now);
     dump_apttemps(c, now);
+    dump_panel(c, now);
     dump_claude(cc, now);
 
     /* A dashboard would render "unavailable" here and carry on; a CLI can be

@@ -241,6 +241,100 @@ int main(void) {
               "negative temperature is legal");
     }
 
+    /* ---- kdash:panel ---- */
+    {
+        kdash_panel_t p;
+        memset(&p, 0, sizeof(p));
+        strcpy(p.host, "kstudio");
+        CHECK(PARSE(kdash_parse_panel, "{\"want\":\"desktop\",\"ts\":1756600000}",
+                    &p),
+              "full panel command");
+        CHECK(p.want == KDASH_PANEL_DESKTOP, "want");
+        CHECK(p.ts == 1756600000.0, "ts");
+        CHECK(strcmp(p.host, "kstudio") == 0, "key host stays authoritative");
+
+        CHECK(PARSE(kdash_parse_panel, "{\"want\":\"dash\",\"ts\":1}", &p),
+              "the other word");
+        CHECK(p.want == KDASH_PANEL_DASH, "want");
+
+        /* The enum is closed. Defaulting an unknown word to `dash` would send a
+         * panel back to the dashboard on a typo — the exact class of bug the
+         * claude `status` enum is closed to avoid. */
+        CHECK(!PARSE(kdash_parse_panel, "{\"want\":\"desk\",\"ts\":1}", &p),
+              "an unrecognised want rejects the record");
+        CHECK(p.ts == 0, "a rejected record leaves no usable stamp");
+        CHECK(!PARSE(kdash_parse_panel, "{\"want\":\"DESKTOP\",\"ts\":1}", &p),
+              "the enum is lowercase, and matching is exact");
+        CHECK(!PARSE(kdash_parse_panel, "{\"want\":1,\"ts\":1}", &p),
+              "want must be a string");
+        CHECK(!PARSE(kdash_parse_panel, "{\"ts\":1}", &p), "missing want");
+
+        /* `ts` is this record's identity, so it is required AND positive — a
+         * stamp a consumer cannot compare is no command at all. */
+        CHECK(!PARSE(kdash_parse_panel, "{\"want\":\"desktop\"}", &p),
+              "missing ts");
+        CHECK(!PARSE(kdash_parse_panel, "{\"want\":\"desktop\",\"ts\":0}", &p),
+              "ts 0 is the family's spelling of \"no stamp\"");
+        CHECK(!PARSE(kdash_parse_panel, "{\"want\":\"desktop\",\"ts\":-5}", &p),
+              "a negative ts is not a command");
+        CHECK(!PARSE(kdash_parse_panel, "{\"want\":\"desktop\",\"ts\":\"soon\"}",
+                     &p),
+              "a non-numeric ts is not a command");
+        CHECK(!PARSE(kdash_parse_panel, "[\"desktop\"]", &p), "not an object");
+
+        CHECK(PARSE(kdash_parse_panel,
+                    "{\"want\":\"desktop\",\"ts\":1,\"by\":\"kdeskdash\"}", &p),
+              "unknown fields must be ignored, never rejected");
+    }
+
+    /* ---- kdash:panel edge detection ---- */
+    {
+        const long long window = KDASH_PANEL_WINDOW_S;
+        const long long now = 1756600000;
+        kdash_panel_t p;
+        memset(&p, 0, sizeof(p));
+        p.want = KDASH_PANEL_DESKTOP;
+        p.ts = (double)now - 2;
+
+        CHECK(kdash_panel_actionable(&p, 0, now, window),
+              "a fresh command nobody has acted on is actionable");
+
+        /* Edge-triggered, not level-triggered: this is what stops the panel
+         * fighting a human at the keyboard. */
+        CHECK(!kdash_panel_actionable(&p, p.ts, now, window),
+              "the same command must not be acted on twice");
+        CHECK(!kdash_panel_actionable(&p, p.ts + 1, now, window),
+              "a stamp older than the last acted-on one is not a new command");
+
+        /* The window: a restart must not replay yesterday's switch. */
+        {
+            kdash_panel_t old = p;
+            old.ts = (double)now - window - 1;
+            CHECK(!kdash_panel_actionable(&old, 0, now, window),
+                  "a command older than the window is never replayed");
+            old.ts = (double)now - window + 1;
+            CHECK(kdash_panel_actionable(&old, 0, now, window),
+                  "and one inside it still is");
+        }
+
+        /* Writer-clock skew reads as fresh, per rules.md. */
+        {
+            kdash_panel_t future = p;
+            future.ts = (double)now + 30;
+            CHECK(kdash_panel_actionable(&future, 0, now, window),
+                  "a stamp in the future is not stale");
+        }
+
+        /* The safety property the KDASH_ABSENT path leans on. */
+        {
+            kdash_panel_t zeroed;
+            memset(&zeroed, 0, sizeof(zeroed));
+            CHECK(!kdash_panel_actionable(&zeroed, 0, now, window),
+                  "a zeroed record is never actionable");
+            CHECK(!kdash_panel_actionable(NULL, 0, now, window), "NULL is safe");
+        }
+    }
+
     /* ---- claude:session (HASH field/value pairs) ---- */
     {
         kdash_claude_session_t s;

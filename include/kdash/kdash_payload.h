@@ -1,7 +1,7 @@
 /**
  * @file kdash_payload.h
- * Pure parsers for the schema'd payloads — the five kpidash feeds and the
- * three claude ones. No Redis, no sockets. Host-testable.
+ * Pure parsers for the schema'd payloads — the five kpidash feeds, the panel
+ * control feed, and the three claude ones. No Redis, no sockets. Host-testable.
  *
  * **Two payload shapes, two parser signatures.** Every kpidash feed is a JSON
  * document under one key, so those parsers take a buffer and a length. The
@@ -164,6 +164,65 @@ typedef struct {
 
 /* Parses only the payload half; `out->zone` is left untouched (see above). */
 bool kdash_parse_apttemps(const char *json, size_t len, kdash_apttemps_t *out);
+
+/* ---- kdash:panel:<host> ---- */
+
+/* Which screen the panel should be showing. The schema's enum is closed: an
+ * unrecognised word rejects the record rather than being guessed at, exactly
+ * as the claude `status` enum does. */
+typedef enum {
+    KDASH_PANEL_DASH = 0,
+    KDASH_PANEL_DESKTOP,
+} kdash_panel_want_t;
+
+typedef struct {
+    /* Identity comes from the KEY and the payload carries no echo of it, so
+     * the reader fills this from the host it built the key with. */
+    char host[KDASH_TOKEN_MAX];
+
+    kdash_panel_want_t want; /* required; one of the closed enum's words */
+    double ts;               /* required AND positive — see below        */
+} kdash_panel_t;
+
+/* Parses only the payload half; `out->host` is left untouched so the reader
+ * can fill it from the key either before or after this call.
+ *
+ * `ts` must be present, numeric and POSITIVE — stricter than the other
+ * ts-owned families, and deliberately so. Here the stamp is not merely the
+ * record's age: it is the command's IDENTITY, because a consumer acts on `ts`
+ * advancing. A record whose stamp cannot be compared is not a weakly-dated
+ * command, it is no command at all, and 0 is already this repo's spelling of
+ * "unknown stamp" (see the claude field helpers). */
+bool kdash_parse_panel(const char *json, size_t len, kdash_panel_t *out);
+
+/* Map a `want` string to the enum, and back to the schema's own word. */
+bool kdash_panel_want_from_str(const char *s, kdash_panel_want_t *out);
+const char *kdash_panel_want_str(kdash_panel_want_t w);
+
+/* Should this command be acted on now?
+ *
+ * True when `cmd` carries a stamp STRICTLY newer than `acted_ts` — the stamp
+ * of the last command the caller acted on, or 0 if it has acted on none — and
+ * that stamp is no older than `window_s`. KDASH_PANEL_WINDOW_S is the family's
+ * default; it is a parameter for the same reason every other threshold here is
+ * one (CD-16).
+ *
+ * Both halves earn their place, and this is the whole reason the family is
+ * ts-owned state rather than a GETDEL one-shot (CD-17):
+ *
+ *   - Strictly newer, not merely different, makes a republish idempotent and
+ *     makes the feed EDGE-triggered rather than level-triggered. That is what
+ *     stops a dashboard fighting a human at the keyboard: once someone
+ *     switches the screen by hand, a `want` still sitting in Redis must not
+ *     yank it back.
+ *   - The window stops a restart replaying an old switch: a panel that was off
+ *     for an hour comes back to its own screen.
+ *
+ * A zeroed record — the one a rejected parse or a KDASH_ABSENT read leaves
+ * behind — is never actionable, so a caller that ignores the status and just
+ * asks this question still behaves correctly. */
+bool kdash_panel_actionable(const kdash_panel_t *cmd, double acted_ts,
+                            long long now, long long window_s);
 
 /* ---- claude:session:<host>:<sid> (HASH) ---- */
 

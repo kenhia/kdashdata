@@ -26,7 +26,7 @@
  *
  *   kdash_keys.h       key grammar and the token choke point      pure
  *   kdash_freshness.h  both freshness models + the CD-6 ladder    pure
- *   kdash_payload.h    the five schema'd payloads                 pure
+ *   kdash_payload.h    every schema'd payload                     pure
  *   kdash_endpoint.h   khlenv protocol; CD-4 discovery            pure + I/O
  *   kdash_conn.h       connection, backoff, reachability          I/O
  *   kdash_feed.h       the typed readers                          I/O

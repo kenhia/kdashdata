@@ -330,6 +330,78 @@ bool kdash_parse_apttemps(const char *json, size_t len, kdash_apttemps_t *out) {
     return ok;
 }
 
+/* ---- panel control ------------------------------------------------------ */
+
+static const struct {
+    const char *word;
+    kdash_panel_want_t want;
+} WANTS[] = {
+    {"dash", KDASH_PANEL_DASH},
+    {"desktop", KDASH_PANEL_DESKTOP},
+};
+
+bool kdash_panel_want_from_str(const char *s, kdash_panel_want_t *out) {
+    if (!s || !out)
+        return false;
+    for (size_t i = 0; i < sizeof(WANTS) / sizeof(WANTS[0]); i++) {
+        if (strcmp(s, WANTS[i].word) == 0) {
+            *out = WANTS[i].want;
+            return true;
+        }
+    }
+    return false;
+}
+
+const char *kdash_panel_want_str(kdash_panel_want_t w) {
+    for (size_t i = 0; i < sizeof(WANTS) / sizeof(WANTS[0]); i++)
+        if (WANTS[i].want == w)
+            return WANTS[i].word;
+    return "dash";
+}
+
+bool kdash_parse_panel(const char *json, size_t len, kdash_panel_t *out) {
+    if (!out)
+        return false;
+    /* Identity lives on the key, and the reader may have filled it already —
+     * so zero only the payload half. */
+    out->want = KDASH_PANEL_DASH;
+    out->ts = 0;
+
+    cJSON *root = parse_object(json, len);
+    if (!root)
+        return false;
+
+    const cJSON *w = cJSON_GetObjectItemCaseSensitive(root, "want");
+    bool ok = cJSON_IsString(w) && w->valuestring &&
+              kdash_panel_want_from_str(w->valuestring, &out->want);
+    /* Positive, not merely numeric: the stamp is this record's identity, and
+     * 0 is already the family's spelling of "no usable stamp". */
+    if (ok)
+        ok = req_num(root, "ts", 0.0, &out->ts) && out->ts > 0.0;
+
+    if (!ok) {
+        out->want = KDASH_PANEL_DASH;
+        out->ts = 0;
+    }
+
+    cJSON_Delete(root);
+    return ok;
+}
+
+bool kdash_panel_actionable(const kdash_panel_t *cmd, double acted_ts,
+                            long long now, long long window_s) {
+    /* A zeroed record — what a rejected parse or an absent key leaves behind —
+     * carries ts 0 and stops here. */
+    if (!cmd || cmd->ts <= 0.0)
+        return false;
+    /* Strictly newer: a republish of the same command is the same command, and
+     * a stamp that went backwards cannot resurrect an older one. */
+    if (cmd->ts <= acted_ts)
+        return false;
+    /* And the window, so a restart does not replay yesterday's switch. */
+    return !kdash_ts_stale(cmd->ts, now, window_s);
+}
+
 /* ---- claude: HASH field/value helpers ---------------------------------- */
 
 /* Every value in a Redis HASH arrives as a string, so the whole "is this a

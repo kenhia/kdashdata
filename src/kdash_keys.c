@@ -199,6 +199,24 @@ bool kdash_claude_session_key_parse(const char *key, size_t keylen,
     return true;
 }
 
+bool kdash_panel_key(char *out, size_t outsz, const char *host) {
+    if (!out || !host)
+        return false;
+    size_t hlen = strlen(host);
+    if (!kdash_token_ok(host, hlen))
+        return false;
+
+    const char *pfx = KDASH_KEY_PANEL_PFX;
+    size_t plen = strlen(pfx);
+    if (plen + hlen + 1 > outsz)
+        return false;
+
+    memcpy(out, pfx, plen);
+    memcpy(out + plen, host, hlen);
+    out[plen + hlen] = '\0';
+    return true;
+}
+
 bool kdash_apttemps_key_parse(const char *key, size_t keylen,
                               char *zone, size_t zonesz) {
     if (!key || !zone || zonesz == 0)
