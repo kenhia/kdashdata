@@ -192,6 +192,40 @@ int main(void) {
         CHECK(strcmp(host, "kai") == 0, "host \"%s\"", host);
     }
 
+    /* ---- panel keys: construction only, and that is the point ---- */
+    {
+        char key[KDASH_KEY_MAX];
+        CHECK(kdash_panel_key(key, sizeof(key), "kstudio"), "build a panel key");
+        CHECK(strcmp(key, "kdash:panel:kstudio") == 0, "built \"%s\"", key);
+
+        /* This family is never discovered, so construction is the ONLY choke
+         * point it has — a bad host here would reach Redis unchallenged. */
+        CHECK(!kdash_panel_key(key, sizeof(key), "kai:evil"),
+              "a host carrying ':' must not construct a key");
+        CHECK(!kdash_panel_key(key, sizeof(key), "bad host"),
+              "space in host must not construct a key");
+        CHECK(!kdash_panel_key(key, sizeof(key), ""), "empty host");
+        CHECK(!kdash_panel_key(key, sizeof(key), "kstudio/../kai"),
+              "path-ish host must not construct a key");
+
+        char tiny[8];
+        memcpy(tiny, "SENTINEL", 8);
+        CHECK(!kdash_panel_key(tiny, sizeof(tiny), "kstudio"),
+              "buffer too small must fail, not truncate");
+        CHECK(memcmp(tiny, "SENTINEL", 8) == 0, "refusal must not clobber out");
+
+        /* KDASH_KEY_MAX sizes the readers' key buffers, and this family shares
+         * it rather than getting a constant of its own — so the widest legal
+         * panel key has to fit. */
+        {
+            char tok[KDASH_TOKEN_MAX];
+            memset(tok, 'x', KDASH_TOKEN_MAX - 1);
+            tok[KDASH_TOKEN_MAX - 1] = '\0';
+            CHECK(kdash_panel_key(key, sizeof(key), tok),
+                  "a 63-char host must fit KDASH_KEY_MAX");
+        }
+    }
+
     /* ---- claude:session:<host>:<sid> ---- */
     {
         claude_ok("claude:session:kai:abc123", "kai", "abc123");

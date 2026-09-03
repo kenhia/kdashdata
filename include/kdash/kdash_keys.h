@@ -15,6 +15,7 @@
  *   kpidash:client:<host>:dev_telemetry
  *   kpidash:services:<name>:<host>              exactly 4 segments, `_` = none
  *   kpidash:apttemps:<zone>                     exactly 3 segments
+ *   kdash:panel:<host>                          exactly 3 segments
  *   claude:session:<host>:<sid>                 4 segments, last is opaque
  *   claude:limits                               one shared key
  *   claude:recent                               one shared key
@@ -38,6 +39,9 @@
 #define KDASH_KEY_CLIENT_PFX   "kpidash:client:"
 #define KDASH_KEY_SERVICES_PFX "kpidash:services:"
 #define KDASH_KEY_APTTEMPS_PFX "kpidash:apttemps:"
+
+/* The kdash namespace's control feed (registry.md): one key per panel. */
+#define KDASH_KEY_PANEL_PFX "kdash:panel:"
 
 /* The claude family (registry.md). Two of the three are single fixed keys, so
  * they are literals rather than grammars; only the session family is parsed. */
@@ -100,6 +104,19 @@ bool kdash_service_key_parse(const char *key, size_t keylen,
  * zone slug from the key is authoritative; the payload's `zone` is a label. */
 bool kdash_apttemps_key_parse(const char *key, size_t keylen,
                               char *zone, size_t zonesz);
+
+/* Build `kdash:panel:<host>` (exactly 3 segments) into `out`. `host` is
+ * revalidated against the token contract first, exactly as kdash_client_key()
+ * does it: the name may have come from config or from a hostname lookup, and
+ * neither is a contract.
+ *
+ * There is deliberately no matching parse. Every other family here is
+ * DISCOVERED — a SCAN or a member set hands a reader keys it did not choose,
+ * so parsing is where the choke point has to sit. This one is not discovered:
+ * a panel builds the key with its own name on it, and construction is the only
+ * place a bad token could get in. Add the parse the day something enumerates
+ * panels, not before. */
+bool kdash_panel_key(char *out, size_t outsz, const char *host);
 
 /* Build `claude:session:<host>:<sid>`. Both tokens are revalidated first: a
  * reader constructs this key from segments it read back off a SCAN, so

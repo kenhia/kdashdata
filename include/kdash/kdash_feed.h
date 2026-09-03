@@ -1,10 +1,10 @@
 /**
  * @file kdash_feed.h
- * Typed readers for the schema'd feeds — the five kpidash ones and the three
- * claude ones. A consumer using these needs no knowledge of key grammar, SCAN,
- * HGETALL, hiredis reply types, or the difference between the two freshness
- * models — which is the whole point of the library existing once instead of
- * three times.
+ * Typed readers for the schema'd feeds — the five kpidash ones, the panel
+ * control feed, and the three claude ones. A consumer using these needs no
+ * knowledge of key grammar, SCAN, HGETALL, hiredis reply types, or the
+ * difference between the two freshness models — which is the whole point of
+ * the library existing once instead of three times.
  *
  * Every reader:
  *   - connects lazily through the handle and honours its backoff (CD-6);
@@ -72,6 +72,20 @@ int kdash_services(kdash_conn_t *c, kdash_service_t *out, int max, int *skipped)
 /* SCAN kpidash:apttemps:* — same contract, KDASH_APTTEMPS_WINDOW_S window. */
 int kdash_apttemps(kdash_conn_t *c, kdash_apttemps_t *out, int max,
                    int *skipped);
+
+/* GET kdash:panel:<host> — the control feed for one panel (CD-17). This is a
+ * `kdash:*` family on the central Redis, so it runs on an ordinary default
+ * handle, NOT the claude one. `host` is revalidated before the key is built.
+ *
+ * One round trip and no SCAN, so it fits inside a staggered per-tick budget:
+ * a panel reads the key with its own name on it.
+ *
+ * KDASH_ABSENT means nobody has ever commanded this panel — "no opinion" — and
+ * is deliberately distinct from KDASH_UNAVAIL, which means the endpoint did not
+ * answer. Nothing is filtered by age: `ts` comes back verbatim so the caller
+ * does its own edge detection with kdash_panel_actionable(). */
+kdash_status_t kdash_panel(kdash_conn_t *c, const char *host,
+                           kdash_panel_t *out);
 
 /* ---- the claude family --------------------------------------------------
  *

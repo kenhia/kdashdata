@@ -524,6 +524,49 @@ yours because you took twenty minutes over it, so they stay prominent until the
 ladder says stale. Age still has the last say at the stale boundary, because
 the hooks cannot report a killed process.
 
+## CD-17 — A dashboard control feed is ts-owned state, not a one-shot command
+
+`kdash:panel:<host>` (sprint 007) is the first feed that tells a dashboard to
+*do* something rather than describing the world to it. rules.md already offers
+a **one-shot command** pattern — a STRING consumed with `GETDEL`, where
+consumed means handled — and it looks like the obvious fit. It is the wrong
+one, for two reasons that point the same way.
+
+**`GETDEL` is a write.** libkdash exposes no write path at all (CD-5), and a
+handle that could delete a key is a handle that could delete the wrong one.
+Taking the one-shot pattern would mean carving an exception into CD-5 for a
+cosmetic feature — spending the property that makes the library safe to link
+into three dashboards, to save a consumer from keeping one `double`.
+
+**A command must be edge-triggered, or it fights the human at the keyboard.**
+This is the part that is easy to miss. A level-triggered reading of the same
+key — "Redis says `desktop`, so be showing the desktop" — means that the moment
+Ken switches a VT by hand, the panel yanks it straight back, and keeps doing so
+forever. So the consumer acts on `ts` **advancing** and on nothing else:
+
+- a republish with an unchanged `ts` is the same command, and does nothing;
+- a stamp older than the reader's window is not replayed at all, so a panel
+  that was off for an hour comes back to its own screen;
+- clock skew reads as fresh, per rules.md.
+
+kstudiodash's `--claim-after` already applies exactly this one-shot discipline
+to the boot race, for exactly this reason; this inherits it rather than
+inventing a second rule.
+
+**Where the rule lives.** In the library, as `kdash_panel_actionable()`, not in
+each panel — same reasoning as CD-16. "Is this a command I have already acted
+on" has one right answer, and a second dashboard deriving it independently is
+how two panels come to disagree about what a button press means. Thresholds are
+parameters with `KDASH_PANEL_WINDOW_S` as the default, as everywhere else here.
+
+**What this decision costs.** A command whose consumer was down for longer than
+the window is silently dropped, and nothing tells the publisher that. That is
+the right trade for a screen switch — pressing the button again is free, and
+acting on a stale one is worse than not acting — but it would be the wrong
+trade for a command with a side effect the user cannot see, and a future
+control feed that needs delivery guarantees needs a different pattern, not a
+wider window.
+
 ## Open questions
 
 - **OQ-2 — Redis ACL writer/reader split** (see CD-2).

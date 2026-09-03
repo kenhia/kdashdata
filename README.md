@@ -59,6 +59,17 @@ kdash_claude_sessions_refresh(s, n, time(NULL), KDASH_CLAUDE_IDLE_S,
 /* s[0] is whatever most wants your attention; s[i].disp says why */
 ```
 
+A dashboard can also be **told** something — one control feed, still read-only,
+because acting on a command is a matter of noticing its `ts` advance rather
+than consuming it (CD-17):
+
+```c
+kdash_panel_t p;
+if (kdash_panel(c, my_hostname, &p) == KDASH_OK &&
+    kdash_panel_actionable(&p, last_acted_ts, time(NULL), KDASH_PANEL_WINDOW_S))
+    show(p.want);   /* KDASH_PANEL_DASH or KDASH_PANEL_DESKTOP */
+```
+
 The endpoint comes from khlenv (CD-4) and the password from `REDISCLI_AUTH`
 (CD-2), so a consumer hardcodes neither. Builds for x86_64 natively and for
 aarch64 with `just build-aarch64`. Dependencies are hiredis (system) and a

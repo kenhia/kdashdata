@@ -24,6 +24,10 @@
   (CD-16), a stem-parameterized connection handle, and the CMake options that
   let a dashboard consume this repo as a submodule. Slice 1 of program
   korg:1785.
+- Sprint 007 (korg:1817): the panel-control feed — `kdash:panel:<host>`, the
+  first feed that tells a dashboard to *do* something, and CD-17 on why a
+  control feed is ts-owned state rather than a `GETDEL` one-shot. Unblocks
+  kstudiodash 006.
 
 ## Now
 
@@ -33,6 +37,9 @@
 
 ## Next
 
+- kstudiodash 006 (korg:1729) resumes on its paused branch and consumes
+  `kdash_panel()`; the kdeskdash button that publishes the command is still an
+  unfiled third piece, and the pair belongs under a program.
 - kdeskdash adopts these readers (kdeskdash korg:1783), retiring the duplicate
   claude logic sprint 006 knowingly left in place. Not urgent: migrating a
   panel people look at daily is a different risk from adding a reader.

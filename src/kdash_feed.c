@@ -322,6 +322,46 @@ int kdash_apttemps(kdash_conn_t *c, kdash_apttemps_t *out, int max,
     return n;
 }
 
+/* ---- panel control (GET one key) ----------------------------------------- */
+
+kdash_status_t kdash_panel(kdash_conn_t *c, const char *host,
+                           kdash_panel_t *out) {
+    if (out)
+        memset(out, 0, sizeof(*out));
+    if (!c || !host || !out)
+        return KDASH_ABSENT;
+
+    /* `kdash:panel:` + a 63-char token fits KDASH_KEY_MAX with room to spare —
+     * the client family's `:dev_telemetry` suffix is what sizes that. */
+    char key[KDASH_KEY_MAX];
+    if (!kdash_panel_key(key, sizeof(key), host))
+        return KDASH_ABSENT; /* a host that fails the contract has no key */
+
+    /* Identity comes from the key, and kdash_panel_key() just revalidated it,
+     * so the token contract bounds this copy at 63 chars. */
+    size_t hlen = strlen(host);
+    memcpy(out->host, host, hlen);
+    out->host[hlen] = '\0';
+
+    redisReply *r = NULL;
+    kdash_status_t st = get_string(c, key, &r);
+    if (st != KDASH_OK) {
+        memset(out, 0, sizeof(*out));
+        return st;
+    }
+
+    size_t len = (size_t)r->len;
+    if (len > VALUE_MAX)
+        len = VALUE_MAX;
+    bool ok = kdash_parse_panel(r->str, len, out);
+    freeReplyObject(r);
+    if (!ok) {
+        memset(out, 0, sizeof(*out));
+        return KDASH_ABSENT;
+    }
+    return KDASH_OK;
+}
+
 /* ---- the claude family (HGETALL + LRANGE) -------------------------------- */
 
 /* A session hash is a handful of short fields; the limits hash is the widest

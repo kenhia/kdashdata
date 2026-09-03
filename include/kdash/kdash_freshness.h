@@ -31,6 +31,13 @@
 #define KDASH_SERVICES_WINDOW_S 60
 #define KDASH_APTTEMPS_WINDOW_S 300
 
+/* kdash:panel:<host> is a COMMAND, and a command has a shorter useful life
+ * than a status card: a panel that was down for an hour must come back to its
+ * own screen rather than to whatever it was told while it was away. 60 s is
+ * the same window `services` uses and is generous either way — a consumer
+ * polling on a render tick sees a new command within seconds of it landing. */
+#define KDASH_PANEL_WINDOW_S 60
+
 /* Publisher cadences and TTLs for the expiring feeds, for callers that want to
  * pace their polling off the contract rather than off a guess. */
 #define KDASH_HEALTH_TTL_S         5
