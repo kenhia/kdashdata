@@ -567,6 +567,53 @@ trade for a command with a side effect the user cannot see, and a future
 control feed that needs delivery guarantees needs a different pattern, not a
 wider window.
 
+## CD-18 — A condition flag is presence-owned: no TTL, no window, and a bad payload never clears it
+
+`kdash:stale:<host>:<deployer>` (sprint 008) records that a deployer wanted to
+push to an intermittently reachable host and could not. rules.md offers two
+freshness rules and this feed can use neither, so it establishes a third.
+
+**Not expiring (TTL).** A TTL is a self-clearing flag, and the only thing
+allowed to clear this one is a verified sync. The TTL guidance is "≈ 3× write
+cadence", and there is no cadence to multiply: a skip is an *event*, not a
+heartbeat. A deployer that skips komarchy once and is then never run again must
+leave the flag standing — that is the true state of the world, and it is
+precisely the state an operator needs to see.
+
+**Not ts-owned either.** The same argument one level up, and the more dangerous
+of the two because the shape is otherwise identical to `services`. Those age
+out because a silent writer means "nobody knows". Here a silent writer means
+the host is *still* unreached, so a reader applying a staleness window would
+make the longest outages produce the greenest dashboards — the exact inversion
+of what the feed is for.
+
+**So presence is the truth.** `SET` on a skip, `DEL` on a verified sync,
+absence is the only all-clear. The payload's `stale` field is pinned
+`const: true` in the schema rather than merely documented, because a writer
+reaching for `stale: false` to clear the flag would leave the key — and
+therefore the flag — up. There is no false; clearing is a `DEL`.
+
+**And a malformed payload must not clear it.** This is the part that has to be
+written down, because it contradicts a rule that is otherwise absolute here: a
+reader validates at the choke point and skips a record it cannot parse
+(rules.md, CD-6). Skipping *this* record renders as all-clear — a parse bug in
+the reader would silently report a three-week-old outage as healthy. So the key
+carries the signal and the payload only enriches it: a reader that cannot parse
+the payload still reports the host stale and drops the detail. Any future feed
+whose *presence* means "something is wrong" inherits this inversion; feeds that
+describe the world keep the ordinary skip-the-record rule.
+
+**What this decision costs.** Nothing garbage-collects. A flag for a host that
+was decommissioned, or a deployer that was retired, sits in Redis forever and
+no timer will ever remove it — the same property that makes the feed honest
+about a long outage makes it unable to notice it has become irrelevant. That is
+the right trade for an operator-facing "something is behind" signal, where a
+false all-clear is much worse than a stale entry a human can see and delete.
+It would be the wrong trade for anything high-cardinality or machine-consumed
+without review, which would need a reaper rather than a longer window. The
+mitigation here is that the key names both parties, so whoever retires a host
+or a deployer can see exactly which keys to delete.
+
 ## Open questions
 
 - **OQ-2 — Redis ACL writer/reader split** (see CD-2).

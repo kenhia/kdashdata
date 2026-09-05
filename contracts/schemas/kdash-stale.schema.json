@@ -1,0 +1,31 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/kenhia/kdashdata/contracts/schemas/kdash-stale.schema.json",
+  "title": "kdash host staleness flag",
+  "description": "Payload of kdash:stale:{host}:{deployer} — latest-value, no TTL, exactly 4 segments. One deployer's statement that it wanted to push to an intermittently reachable host and could not. {host} is the host's name in k-homelab's inventory.yml (the file that declares availability: intermittent); {deployer} is the repo doing the pushing (agent-skills, k-homelab, …). Both segments use the host-token grammar from rules.md ([A-Za-z0-9._-], 1–63 chars) and both are authoritative — the payload echoes neither. Two properties invert this repo's usual reader defaults, and both are deliberate. (1) THE KEY'S PRESENCE IS THE FLAG: it is SET on a skip and DELeted on a verified sync, and its absence is the only all-clear. There is no TTL and no staleness window; a reader that ages this record out the way it ages a services card turns a host nobody has reached in a month into a green light, which is the exact failure this feed exists to prevent. A deployer that never runs again correctly leaves the flag up forever. (2) A MALFORMED PAYLOAD MUST NOT CLEAR THE FLAG: everywhere else here an unparseable record is skipped whole, but skipping this one would read as all-clear. A reader that cannot parse the payload still reports the host stale, with the detail missing. The payload only ever enriches a signal the key has already given.",
+  "type": "object",
+  "required": ["stale", "since", "reason", "ts"],
+  "additionalProperties": true,
+  "properties": {
+    "stale": {
+      "type": "boolean",
+      "const": true,
+      "description": "Always true, and pinned by the schema so it cannot be anything else. The field exists so a human running GET reads a sentence rather than three bare numbers; nothing branches on it, because the key's presence already said this. There is no false: clearing is a DEL, so a writer that publishes stale:false has not cleared the flag, it has published an off-contract record while leaving the flag up. No reader may treat a false here as an all-clear."
+    },
+    "since": {
+      "type": "number",
+      "exclusiveMinimum": 0,
+      "description": "Unix seconds (float) of the FIRST skip in the current run of skips — when this deployer started being unable to reach this host. It is not a last-contact time and must never be rendered as one: after a long outage it and the host's actual last-seen differ by the whole outage. (k-homelab keeps that other clock itself, as a git-ignored per-checkout .state/last-seen, deliberately outside Redis.) Set once when the flag goes up and carried unchanged across every later skip; a writer that restamps it on each run has turned 'stale for three weeks' into 'stale for an hour'."
+    },
+    "reason": {
+      "type": "string",
+      "minLength": 1,
+      "description": "One human-facing line saying what was skipped and why, e.g. 'fleet-deploy skipped: unreachable'. This is what a dashboard renders beside the host, so it carries the operator's whole explanation; an empty string renders as a blank line, which is worse than a missing field, hence minLength."
+    },
+    "ts": {
+      "type": "number",
+      "exclusiveMinimum": 0,
+      "description": "Unix seconds (float) of the LAST write — the most recent skip, per the ts-everywhere rule in rules.md. Distinct from since: ts moves on every skipped run, since does not. Like since it is a skip-side stamp and not a last-contact time. Positive because both stamps here are rendered as durations, and a 0 renders as a plausible-looking 'stale since 1970' rather than as the missing stamp it is."
+    }
+  }
+}

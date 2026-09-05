@@ -85,6 +85,7 @@ first key arrived with the publisher wrappers in sprint 003.
 |---|---|---|---|---|
 | `kdash:selftest:{host}` | latest-value, expiring | either publisher wrapper, on demand | 300 s | [selftest](schemas/kdash-selftest.schema.json) |
 | `kdash:panel:{host}` | latest-value, ts-owned | kdeskdash, on demand (a button press) | none | [panel](schemas/kdash-panel.schema.json) |
+| `kdash:stale:{host}:{deployer}` | latest-value, presence-owned | each deployer, on a skipped deploy | none (never) | [stale](schemas/kdash-stale.schema.json) |
 
 `selftest` is a publish canary, not a dashboard feed: running it from a host
 proves that host's whole publish path — khlenv discovery, `REDISCLI_AUTH`, key
@@ -114,6 +115,82 @@ free ([rules.md](rules.md) payload rules), so the whole write is:
 ```sh
 kdash-pub set kdash:panel:kstudio '{"want":"desktop"}'
 ```
+
+`stale` is the family's first **fleet-state** feed — data about the fleet
+rather than about a dashboard — and the first whose freshness rule is neither
+of the two [rules.md](rules.md) offers (CD-18). One key per *(host, deployer)*
+pair records that this deployer wanted to push to this host and could not:
+`fleet-deploy` sets `kdash:stale:komarchy:agent-skills` when it skips komarchy,
+k-homelab's `bin/apply` sets `kdash:stale:komarchy:k-homelab` beside it, and
+each deletes **only its own** after a verified sync. The pairing is the whole
+point — "what is out of date on that machine" is the operator's real question,
+and a single per-host flag could not answer it without one deployer's success
+erasing another's failure.
+
+`{host}` is the host's name in **k-homelab's `inventory.yml`** — the file that
+declares `availability: intermittent` — not a manifest name and not a dashboard
+name. `{deployer}` is the pushing repo. Both segments take the ordinary
+host-token grammar from [rules.md](rules.md), and the family is exactly 4
+segments.
+
+**The key's presence is the flag**: `SET` on a skip, `DEL` on a verified sync,
+no TTL — and, unlike the ts-owned feeds above it, **no staleness window**. A
+reader must never age this record out. `services` and `apttemps` age out
+because a silent writer there means "nobody knows"; here a silent writer means
+the host is *still* unreached, so expiring the flag would make the longest
+outages show the greenest dashboards. A deployer that never runs again
+correctly leaves its flag up forever.
+
+That inverts a second default, and it is worth stating because every other
+reader in this repo does the opposite: **a malformed payload must not clear the
+flag.** Elsewhere an unparseable record is skipped whole ([rules.md](rules.md),
+Payloads); skipping this one renders as all-clear. A reader that cannot parse
+the payload still reports the host stale and simply drops the detail — the
+payload only ever enriches a signal the key has already given.
+
+**Two stamps, and neither is a last-contact time.** `since` is the *first* skip
+of the current run — how long this has been broken, and it must be carried
+unchanged across later skips rather than restamped, or "stale for three weeks"
+silently becomes "stale for an hour". `ts` is the *last* write, the most recent
+skipped run. The host's actual last-contact clock is a third thing that lives
+outside this feed: k-homelab keeps it per-checkout as a git-ignored
+`.state/last-seen`, deliberately not in Redis so `bin/audit` never blocks on
+it. After a three-week outage `since` and `last-seen` differ by the whole
+outage, so operator-facing text built from the wrong one is wrong by exactly
+the number that mattered.
+
+`stale` is pinned `const: true` in the schema rather than merely documented as
+always-true. It is redundant with the key's presence and exists so a human
+running `GET` reads a sentence; there is no `false`, because clearing is a
+`DEL`. A writer publishing `stale: false` has not cleared anything — it has
+left the flag up and gone off-contract, and the schema says so structurally
+instead of trusting prose.
+
+**Writers**: agent-skills `fleet-deploy` and k-homelab `bin/apply` / `bin/audit`,
+each owning only its own `{deployer}` key. No new publisher code — `kdash` is
+already in the namespace table both wrappers accept, `ts` is stamped for free
+([rules.md](rules.md) payload rules), and `del` is an existing verb, so both
+halves are one line each:
+
+```sh
+kdash-pub set kdash:stale:komarchy:k-homelab \
+  '{"stale":true,"since":1786698720,"reason":"bin/apply skipped: unreachable"}'
+kdash-pub del kdash:stale:komarchy:k-homelab
+```
+
+The wrappers validate the namespace and the token charset, **not** this
+family's segment count — `kdash:stale:komarchy` with the deployer left off
+publishes without complaint and no reader will ever look at it. Arity is the
+reader's choke point by design ([rules.md](rules.md), Key grammar), so a
+deployer builds this key carefully or not at all.
+
+**Readers**: kpidash renders a `<host> stale` card while any key for that host
+exists, listing the deployers behind it; kmon may later read it instead of
+counting an intermittent host against fleet health. No C reader ships with this
+contract — the feed is registered ahead of its consumers on purpose. The day a
+dashboard wants it through libkdash it needs a **SCAN over
+`kdash:stale:{host}:*`** and a parse (both identity segments come off the key),
+not the single GET the other two `kdash:*` feeds use.
 
 ## Family: claude (central, live)
 
@@ -192,4 +269,4 @@ kvscf keeps the pair endpoint — the shared default decoupled at that flip.
 ## Reserved
 
 - `kdash:<family>:<…>` — the namespace for new shared feeds (rules.md).
-  `selftest` and `panel` are the families in it so far.
+  `selftest`, `panel` and `stale` are the families in it so far.

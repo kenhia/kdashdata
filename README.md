@@ -19,7 +19,7 @@ kstudiodash — live in their own repos and consume this one.
   (start at [`kdash.h`](include/kdash/kdash.h))
 - [`src/`](src/) — its implementation; [`tests/`](tests/) — the host unit tests
 - [`examples/kdash_dump.c`](examples/kdash_dump.c) — a toy consumer that reads
-  every schema'd family and prints it
+  every family libkdash has a reader for and prints it
 - [`publishers/`](publishers/) — the publisher wrappers: a
   [Rust crate and CLI](publishers/rust/) and a [Python package](publishers/python/)
 
