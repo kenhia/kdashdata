@@ -567,7 +567,7 @@ trade for a command with a side effect the user cannot see, and a future
 control feed that needs delivery guarantees needs a different pattern, not a
 wider window.
 
-## CD-18 — A condition flag is presence-owned: no TTL, no window, and a bad payload never clears it
+## CD-18 — A condition flag is presence-owned: no TTL, no window, and nothing the reader cannot parse — payload or key — ever clears it
 
 `kdash:stale:<host>:<deployer>` (sprint 008) records that a deployer wanted to
 push to an intermittently reachable host and could not. rules.md offers two
@@ -593,7 +593,8 @@ absence is the only all-clear. The payload's `stale` field is pinned
 reaching for `stale: false` to clear the flag would leave the key — and
 therefore the flag — up. There is no false; clearing is a `DEL`.
 
-**And a malformed payload must not clear it.** This is the part that has to be
+**And nothing the reader fails to understand may clear it — payload or key.**
+This is the part that has to be
 written down, because it contradicts a rule that is otherwise absolute here: a
 reader validates at the choke point and skips a record it cannot parse
 (rules.md, CD-6). Skipping *this* record renders as all-clear — a parse bug in
@@ -602,6 +603,38 @@ carries the signal and the payload only enriches it: a reader that cannot parse
 the payload still reports the host stale and drops the detail. Any future feed
 whose *presence* means "something is wrong" inherits this inversion; feeds that
 describe the world keep the ordinary skip-the-record rule.
+
+**The same argument reaches the key, and it had to be said out loud** (sprint
+009, WI 1935; raised by kpidash sprint 017 and upheld as an extension rather
+than a reading). An off-contract *key* is more dangerous than an off-contract
+payload, not less: a dropped payload still raises its host, while a dropped key
+renders nothing at all — the false all-clear in its most complete form. And
+these keys are reachable in production, because the publisher wrappers validate
+the namespace and the token charset but **not this family's segment count**
+(established in sprint 008 and carried as an explicit warning to both writer
+slices). `kdash:stale:komarchy` and `kdash:stale:a:b:c` are both things a
+writer can produce today.
+
+So the rule generalises to: **the inversion covers anything the reader cannot
+fully understand about a record whose presence is the signal — payload and key
+alike — and it stops only where the record cannot be attributed to a subject at
+all.** Concretely, and as kpidash implemented it:
+
+| key | reader does |
+|---|---|
+| `kdash:stale:<host>:<deployer>` | raises `<host>`, names `<deployer>` |
+| `kdash:stale:<host>` or `kdash:stale:<host>:a:b` | **raises `<host>`**, deployer renders `(unknown)` |
+| `kdash:stale:` (no host at all) | **ignored** |
+
+The last row is the honest boundary rather than an inconsistency. The inversion
+exists to protect a signal that can be *attributed*; a key naming no host is not
+a signal about any host, and there is nothing to put on a card. Raising an
+unattributable flag would trade a false all-clear for a false alarm nobody can
+act on.
+
+Feeds that describe the world still keep the ordinary skip-the-record rule —
+this is not a licence to render junk generally. It applies to the presence-owned
+family only.
 
 **What this decision costs.** Nothing garbage-collects. A flag for a host that
 was decommissioned, or a deployer that was retired, sits in Redis forever and

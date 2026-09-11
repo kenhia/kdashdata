@@ -165,6 +165,34 @@ typedef struct {
 /* Parses only the payload half; `out->zone` is left untouched (see above). */
 bool kdash_parse_apttemps(const char *json, size_t len, kdash_apttemps_t *out);
 
+/* Which band a zone's temperature falls in (CD-16 applied to apttemps; see
+ * kdash_freshness.h for the thresholds and the argument).
+ *
+ * `stale` is the caller's own ts-owned verdict — kdash_ts_stale() against
+ * KDASH_APTTEMPS_WINDOW_S — and it WINS over the number, because a reading
+ * nobody has refreshed in five minutes is not evidence about the room. Both
+ * panels already grey it; this makes that ordering the library's, not each
+ * panel's.
+ *
+ * Vocabulary, not colour: which colour a band renders as stays in the panel
+ * (CD-10). Thresholds are parameters, with KDASH_APTTEMPS_{COLD,OK,HOT}_F as
+ * the defaults. Boundaries arriving out of order are clamped rather than
+ * rejected, so a caller cannot configure a band that can never be reached —
+ * the same guarantee kdash_ladder() gives for stale_s below idle_s. */
+typedef enum {
+    KDASH_TEMP_COLD = 0, /* below COLD_F                          */
+    KDASH_TEMP_OK,       /* COLD_F .. OK_F inclusive              */
+    KDASH_TEMP_WARM,     /* above OK_F, below HOT_F               */
+    KDASH_TEMP_HOT,      /* HOT_F and above                       */
+    KDASH_TEMP_STALE,    /* too old to judge — `stale` was true  */
+} kdash_temp_band_t;
+
+kdash_temp_band_t kdash_apttemps_band(double temp_f, bool stale, double cold_f,
+                                      double ok_f, double hot_f);
+
+/* Fixed lowercase label ("cold", "ok", "warm", "hot", "stale"). Never NULL. */
+const char *kdash_temp_band_label(kdash_temp_band_t b);
+
 /* ---- kdash:panel:<host> ---- */
 
 /* Which screen the panel should be showing. The schema's enum is closed: an

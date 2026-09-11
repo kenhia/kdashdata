@@ -64,6 +64,24 @@ are ignored. `services`/`apttemps` staleness is reader-owned via `ts`
 (60 s / 300 s windows in kpidash today). A red card means "nobody is
 publishing", not "that host is down" — check the publisher.
 
+**Bands (`apttemps`).** What counts as cold / ok / warm / hot is part of the
+shared data model, not each panel's taste: `kdash_apttemps_band()` in
+[`kdash_payload.h`](../include/kdash/kdash_payload.h), with the thresholds
+`KDASH_APTTEMPS_{COLD,OK,HOT}_F` in
+[`kdash_freshness.h`](../include/kdash/kdash_freshness.h) as defaults. Below
+65 F cold, 65–75 ok, 75.1–79.9 warm, 80 and above hot — kpidash's bands,
+which kstudiodash had ported by hand. Which *colour* a band renders as stays
+in the panel (CD-10). A zone whose `ts` is outside the 300 s window classifies
+`stale` regardless of the reading. Added sprint 009 (CD-16's argument applied
+to `apttemps`, WI 1804).
+
+**Counted readers return -1 or a complete list** (sprint 009, WI 1790).
+`kdash_services()`, `kdash_apttemps()` and `kdash_claude_sessions()` SCAN and
+then read each key, so they can lose the endpoint mid-list. When that happens
+they return -1 with `out` zeroed rather than the rows gathered so far: a
+partial list is indistinguishable from a complete one at the call site, and
+these feeds render missing rows as absent *things*.
+
 ### kpidash-internal (documented for completeness, not schema'd)
 
 | Keys | Pattern | Notes |

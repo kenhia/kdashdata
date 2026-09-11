@@ -254,8 +254,16 @@ int kdash_services(kdash_conn_t *c, kdash_service_t *out, int max,
 
         redisReply *r = NULL;
         kdash_status_t st = get_string(c, ks.keys[i], &r);
-        if (st == KDASH_UNAVAIL)
-            return n > 0 ? n : -1;
+        if (st == KDASH_UNAVAIL) {
+            /* The endpoint went away mid-read. Handing back the rows gathered
+             * so far would be a partial list indistinguishable from a complete
+             * one, which on these panels renders as "the missing ones are
+             * gone" — a confident wrong answer where -1 is an honest
+             * unavailable. See kdash_feed.h. `*skipped` is already 0 from the
+             * function head and 0 is now the truth: nothing was read. */
+            memset(out, 0, (size_t)max * sizeof(*out));
+            return -1;
+        }
         if (st != KDASH_OK) {
             ks.skipped++;
             continue; /* raced with an expiry or a delete */
@@ -300,8 +308,16 @@ int kdash_apttemps(kdash_conn_t *c, kdash_apttemps_t *out, int max,
 
         redisReply *r = NULL;
         kdash_status_t st = get_string(c, ks.keys[i], &r);
-        if (st == KDASH_UNAVAIL)
-            return n > 0 ? n : -1;
+        if (st == KDASH_UNAVAIL) {
+            /* The endpoint went away mid-read. Handing back the rows gathered
+             * so far would be a partial list indistinguishable from a complete
+             * one, which on these panels renders as "the missing ones are
+             * gone" — a confident wrong answer where -1 is an honest
+             * unavailable. See kdash_feed.h. `*skipped` is already 0 from the
+             * function head and 0 is now the truth: nothing was read. */
+            memset(out, 0, (size_t)max * sizeof(*out));
+            return -1;
+        }
         if (st != KDASH_OK) {
             ks.skipped++;
             continue;
@@ -479,8 +495,16 @@ int kdash_claude_sessions(kdash_conn_t *c, kdash_claude_session_t *out, int max,
 
         redisReply *r = NULL;
         kdash_status_t st = get_hash(c, key, &r);
-        if (st == KDASH_UNAVAIL)
-            return n > 0 ? n : -1;
+        if (st == KDASH_UNAVAIL) {
+            /* The endpoint went away mid-read. Handing back the rows gathered
+             * so far would be a partial list indistinguishable from a complete
+             * one, which on these panels renders as "the missing ones are
+             * gone" — a confident wrong answer where -1 is an honest
+             * unavailable. See kdash_feed.h. `*skipped` is already 0 from the
+             * function head and 0 is now the truth: nothing was read. */
+            memset(out, 0, (size_t)max * sizeof(*out));
+            return -1;
+        }
         if (st != KDASH_OK) {
             ks.skipped++;
             continue; /* raced with the 7200 s TTL, or with SessionEnd's DEL */

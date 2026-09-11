@@ -708,6 +708,63 @@ int main(void) {
               "unknown fields must be ignored, never rejected");
     }
 
+    /* Apartment-temperature bands (CD-16 applied to apttemps). These must
+     * reproduce kpidash's `< 65 / <= 75 / < 80 / else` EXACTLY — the whole
+     * point of moving the classification here is that the panels keep
+     * agreeing, so every boundary is asserted on both sides. */
+    {
+#define BAND(t, s)                                                             \
+    kdash_apttemps_band((t), (s), KDASH_APTTEMPS_COLD_F, KDASH_APTTEMPS_OK_F,  \
+                        KDASH_APTTEMPS_HOT_F)
+
+        CHECK(BAND(40.0, false) == KDASH_TEMP_COLD, "well below is cold");
+        CHECK(BAND(64.9, false) == KDASH_TEMP_COLD, "just below 65 is cold");
+        CHECK(BAND(65.0, false) == KDASH_TEMP_OK, "65.0 is ok, not cold");
+        CHECK(BAND(70.0, false) == KDASH_TEMP_OK, "mid-band is ok");
+        CHECK(BAND(75.0, false) == KDASH_TEMP_OK, "75.0 is ok — inclusive");
+        CHECK(BAND(75.1, false) == KDASH_TEMP_WARM, "75.1 is warm");
+        CHECK(BAND(79.9, false) == KDASH_TEMP_WARM, "79.9 is warm");
+        CHECK(BAND(80.0, false) == KDASH_TEMP_HOT, "80.0 is hot, not warm");
+        CHECK(BAND(104.0, false) == KDASH_TEMP_HOT, "well above is hot");
+
+        /* Age beats the number, at every band. */
+        CHECK(BAND(70.0, true) == KDASH_TEMP_STALE, "a stale comfortable room");
+        CHECK(BAND(104.0, true) == KDASH_TEMP_STALE, "a stale hot room");
+
+        /* Thresholds are parameters, not policy. */
+        CHECK(kdash_apttemps_band(70.0, false, 72.0, 80.0, 90.0) ==
+                  KDASH_TEMP_COLD,
+              "a caller's own colder band moves the verdict");
+
+        /* Out-of-order boundaries clamp rather than produce an unreachable
+         * band — the guarantee kdash_ladder() gives for stale_s < idle_s.
+         *
+         * This case is the one that can tell the clamp apart from its
+         * absence, and finding it took a negative test: cold_f == temp_f with
+         * ok_f BELOW cold_f. Clamped, ok_f becomes 80 and 80.0 lands `ok`.
+         * Unclamped, `80 <= 60` fails and the reading falls through to warm —
+         * a room at exactly the comfortable boundary rendered as warm. */
+        CHECK(kdash_apttemps_band(80.0, false, 80.0, 60.0, 100.0) ==
+                  KDASH_TEMP_OK,
+              "ok_f below cold_f clamps up, so cold_f itself is still ok");
+        CHECK(kdash_apttemps_band(79.0, false, 80.0, 60.0, 100.0) ==
+                  KDASH_TEMP_COLD,
+              "below a clamped cold_f is still cold");
+        CHECK(kdash_apttemps_band(90.0, false, 80.0, 60.0, 100.0) ==
+                  KDASH_TEMP_WARM,
+              "above the clamped ok_f, the caller's hot_f still governs");
+
+        CHECK(strcmp(kdash_temp_band_label(KDASH_TEMP_COLD), "cold") == 0, "cold");
+        CHECK(strcmp(kdash_temp_band_label(KDASH_TEMP_OK), "ok") == 0, "ok");
+        CHECK(strcmp(kdash_temp_band_label(KDASH_TEMP_WARM), "warm") == 0, "warm");
+        CHECK(strcmp(kdash_temp_band_label(KDASH_TEMP_HOT), "hot") == 0, "hot");
+        CHECK(strcmp(kdash_temp_band_label(KDASH_TEMP_STALE), "stale") == 0,
+              "stale");
+        CHECK(kdash_temp_band_label((kdash_temp_band_t)99) != NULL,
+              "never NULL, even off the enum");
+#undef BAND
+    }
+
     /* Buffers are counted, not NUL-terminated: SCAN and GET both hand back
      * lengths, and an embedded NUL must not truncate the parse. */
     {

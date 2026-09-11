@@ -1,11 +1,14 @@
 #!/usr/bin/env python3
 """Repo gate: JSON parses, markdown links resolve, every schema is
-registered, every PowerShell script is pure ASCII.
+registered, every PowerShell script is pure ASCII, and CLAUDE.md's Status
+line names the newest sprint record.
 
 Stdlib only, by design — this repo carries contracts and docs, and its
 failure modes are a schema that doesn't parse, a stale cross-reference, a
-feed whose schema landed without anyone telling the registry about it, and
-(since sprint 004) a non-ASCII byte in the deploy script cleo runs.
+feed whose schema landed without anyone telling the registry about it,
+(since sprint 004) a non-ASCII byte in the deploy script cleo runs, and
+(since sprint 009) an orientation file that has quietly stopped describing
+the repo.
 
 The code gates live elsewhere: `just check-python`, `just check-rust`, and the
 CMake build plus ctest.
@@ -25,6 +28,11 @@ SKIP_PREFIXES = (".venv",)
 LINK_RE = re.compile(r"\[[^\]]*\]\(([^)\s]+)\)")
 SCHEMA_DIR = ROOT / "contracts" / "schemas"
 REGISTRY = ROOT / "contracts" / "registry.md"
+SPRINTS = ROOT / "sprints"
+CLAUDE_MD = ROOT / "CLAUDE.md"
+#: `007-panel-control-feed.md`, or a `007-panel-control-feed/` directory — the
+#: harness allows either spelling for a sprint record.
+SPRINT_RE = re.compile(r"^(\d{3})-")
 #: Tab, newline, and printable ASCII. Anything else is a parse failure on
 #: cleo — see the check below.
 ASCII_OK = {0x09, 0x0A, 0x0D} | set(range(0x20, 0x7F))
@@ -93,6 +101,44 @@ def main() -> int:
                     "a .ps1 cleo runs must be pure ASCII (see the file's .NOTES)"
                 )
 
+    # CLAUDE.md's Status line is the first thing an agent reads in this repo,
+    # and it had gone four sprints without being touched (WI 1928) — which is
+    # worse than omitting it, because it confidently describes a state the repo
+    # left months ago. Nothing about writing that line can be automated, but
+    # noticing it is stale is one comparison, and it turns a silent rot into a
+    # failing gate in the sprint that caused it.
+    newest = max(
+        (m.group(1) for p in SPRINTS.iterdir() if (m := SPRINT_RE.match(p.name))),
+        default=None,
+    )
+    if newest is None:
+        errors.append("sprints/: no NNN-named sprint record found")
+    elif CLAUDE_MD.exists():
+        claude_text = CLAUDE_MD.read_text(encoding="utf-8")
+        status = next(
+            (ln for ln in claude_text.splitlines() if ln.startswith("Status:")),
+            None,
+        )
+        if status is None:
+            errors.append("CLAUDE.md: no `Status:` line to check")
+        else:
+            # The whole paragraph, not just its first line — the Status line
+            # wraps, and every sprint it names sits on a later one.
+            para, seen = [], False
+            for ln in claude_text.splitlines():
+                if ln.startswith("Status:"):
+                    seen = True
+                if seen:
+                    if not ln.strip():
+                        break
+                    para.append(ln)
+            if f"sprint {newest}" not in "\n".join(para):
+                errors.append(
+                    f"CLAUDE.md: the Status paragraph does not mention "
+                    f"`sprint {newest}`, the newest sprints/ record — it "
+                    "describes a repo that no longer exists (see WI 1928)"
+                )
+
     if errors:
         print("\n".join(errors))
         print(f"check: {len(errors)} problem(s)")
@@ -100,7 +146,8 @@ def main() -> int:
 
     print(
         "check: all JSON parses, all markdown links resolve, "
-        "all schemas registered, all .ps1 pure ASCII"
+        "all schemas registered, all .ps1 pure ASCII, "
+        f"CLAUDE.md current to sprint {newest}"
     )
     return 0
 
