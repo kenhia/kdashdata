@@ -307,6 +307,50 @@ bool kdash_parse_service(const char *json, size_t len, kdash_service_t *out) {
 
 /* ---- apartment temperatures --------------------------------------------- */
 
+kdash_temp_band_t kdash_apttemps_band(double temp_f, bool stale, double cold_f,
+                                      double ok_f, double hot_f) {
+    /* Age beats the number: an unrefreshed reading is not evidence about the
+     * room, however comfortable it looks. */
+    if (stale)
+        return KDASH_TEMP_STALE;
+
+    /* Clamp rather than reject, so a caller cannot configure a band that can
+     * never be reached (kdash_ladder() makes the same guarantee).
+     *
+     * Only ONE clamp is needed, which is not obvious: `hot_f` below `ok_f`
+     * corrects itself, because the `temp_f <= ok_f` test below runs first and
+     * has already claimed everything a collapsed warm band could have held.
+     * A second `if (hot_f < ok_f) hot_f = ok_f;` looks symmetrical and cannot
+     * change any answer — it was written, found to be untestable, and removed
+     * rather than left as a branch no test could ever reach. */
+    if (ok_f < cold_f)
+        ok_f = cold_f;
+
+    if (temp_f < cold_f)
+        return KDASH_TEMP_COLD;
+    if (temp_f <= ok_f)
+        return KDASH_TEMP_OK;
+    if (temp_f < hot_f)
+        return KDASH_TEMP_WARM;
+    return KDASH_TEMP_HOT;
+}
+
+const char *kdash_temp_band_label(kdash_temp_band_t b) {
+    switch (b) {
+    case KDASH_TEMP_COLD:
+        return "cold";
+    case KDASH_TEMP_WARM:
+        return "warm";
+    case KDASH_TEMP_HOT:
+        return "hot";
+    case KDASH_TEMP_STALE:
+        return "stale";
+    case KDASH_TEMP_OK:
+    default:
+        return "ok";
+    }
+}
+
 bool kdash_parse_apttemps(const char *json, size_t len, kdash_apttemps_t *out) {
     if (!out)
         return false;

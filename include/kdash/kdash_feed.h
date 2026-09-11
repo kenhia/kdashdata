@@ -59,11 +59,33 @@ kdash_status_t kdash_telemetry(kdash_conn_t *c, const char *host,
 kdash_status_t kdash_dev_telemetry(kdash_conn_t *c, const char *host,
                                    kdash_dev_telemetry_t *out);
 
+/* ---- the counted readers ------------------------------------------------
+ *
+ * kdash_services(), kdash_apttemps() and kdash_claude_sessions() all SCAN for
+ * keys and then read each one, so unlike the single-key readers they can lose
+ * the endpoint half way through a list. They share one rule:
+ *
+ *   -1 means the read did not complete. `out` is zeroed and `*skipped` is 0,
+ *   and NEITHER carries information. A non-negative return is a COMPLETE list.
+ *
+ * The tempting alternative — hand back the rows gathered before the endpoint
+ * dropped — is what these readers did until sprint 009, and it is a confident
+ * wrong answer. A partial list is indistinguishable from a complete one at the
+ * call site, and on every panel that consumes these feeds the missing rows
+ * render as absent things: services that are not running, zones whose sensor
+ * died, Claude sessions that ended. That is strictly worse than one tick of
+ * "unavailable", which is what the next tick's lazy reconnect (CD-6) costs.
+ * It is CD-18's argument in a different dress — a reader that cannot see all
+ * of a feed must not render the gap as an all-clear.
+ *
+ * `kdash_clients()` and `kdash_claude_recent()` are single round trips and
+ * cannot fail this way, so the rule is vacuous for them. */
+
 /* SCAN kpidash:services:*:* and read every conforming card. Keys that are not
  * exactly 4 segments are ignored (the additive-evolution rule); the `_` host
  * sentinel arrives as an empty `host`. Returns the count written, or -1 when
- * unreachable. `skipped` counts keys rejected by the grammar plus payloads
- * rejected by their schema.
+ * unreachable — including a mid-list drop; see above. `skipped` counts keys
+ * rejected by the grammar plus payloads rejected by their schema.
  *
  * Staleness is the caller's: compare each `ts` against
  * KDASH_SERVICES_WINDOW_S. */
@@ -110,6 +132,9 @@ kdash_status_t kdash_panel(kdash_conn_t *c, const char *host,
  * `skipped` counts keys the grammar rejected plus hashes their schema did —
  * a session whose hash carries no `status` is the common one, and it is a
  * legitimate transient rather than a fault (see kdash_parse_claude_session).
+ * Returns the count written, or -1 when unreachable — including a mid-list
+ * drop, which zeroes `out` and leaves `*skipped` 0 (see the counted-reader
+ * rule above).
  *
  * `disp` is left zeroed; call kdash_claude_sessions_refresh() to derive it and
  * order the rows. */

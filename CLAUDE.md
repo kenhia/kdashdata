@@ -72,12 +72,25 @@ consume this one — nothing here runs as a service.
 
 Status: contract v0 landed (sprint 001, korg:1733); the shared C consumer
 library landed (sprint 002, korg:1751); the publisher wrappers landed
-(sprint 003, korg:1752 — slice 1 of the CD-7 relocation program korg:1755).
-See `docs/architecture.md` (decisions CD-1…CD-12, open questions OQ-n),
-`contracts/rules.md`, `contracts/registry.md`, `include/kdash/kdash.h` for
-the consumer API, and `publishers/README.md` for the publish side. Next: the
-kdeskdash cutover + repoint (korg:1753), or kstudiodash's first consumption
-of the library (korg:1728).
+(sprint 003, korg:1752). The CD-7 relocation program (korg:1755) is
+**complete**: `kdash-pub` distribution through the package store (sprint 004,
+korg:1764), then the close-out that retired `claude:*`'s old home, flipped the
+registry and landed the family's schemas (sprint 005, korg:1754). Since then
+the library grew the readers and feeds its consumers were blocked on — typed
+`claude:*` readers (sprint 006, korg:1784), the `kdash:panel:<host>` control
+feed (sprint 007, korg:1817), the `kdash:stale:<host>:<deployer>` feed for
+intermittently reachable hosts (sprint 008, korg:1915), and the shared
+apartment-temperature bands plus the counted-reader contract (sprint 009,
+korg:2217). See `docs/architecture.md` (decisions CD-1…CD-18, open questions
+OQ-n), `contracts/rules.md`, `contracts/registry.md`,
+`include/kdash/kdash.h` for the consumer API, and `publishers/README.md` for
+the publish side. Next: kdeskdash adopting the `claude:*` readers (korg:2218,
+work item 1783), or kstudiodash's first consumption of the library
+(korg:1728).
+
+This line is gated: `scripts/check.py` fails if it does not name the
+newest `sprints/` record, so a sprint cannot ship leaving it behind again
+(it had been four sprints stale — work item 1928).
 
 Conventions and constraints:
 
@@ -94,7 +107,8 @@ Conventions and constraints:
 - `just check` is four gates: `check-docs` (python3 stdlib only,
   `scripts/check.py` — every JSON file parses, every relative markdown link
   resolves, every schema is listed in the registry, every `.ps1` is pure
-  ASCII), `check-python` (the
+  ASCII, and this file's Status line names the newest sprint record),
+  `check-python` (the
   Python wrapper's pure core, stdlib only), `check-rust` (fmt, clippy, unit
   tests — a first build needs network and git access to the private khlenv
   repo), plus a CMake build of the C library and its ctest unit tests.

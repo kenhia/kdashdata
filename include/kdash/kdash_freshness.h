@@ -31,6 +31,26 @@
 #define KDASH_SERVICES_WINDOW_S 60
 #define KDASH_APTTEMPS_WINDOW_S 300
 
+/* The apartment-temperature bands kpidash has rendered since its apttemps
+ * panel landed, and which kstudiodash 005 ported verbatim so that the two
+ * panels would agree about what "warm" means.
+ *
+ * Agreeing by copy is exactly the drift CD-16 named for the claude ladder:
+ * two dashboards deriving the same judgement is how they stop agreeing. So
+ * the classification lives here and in kdash_apttemps_band(), and the panels
+ * keep their palettes — CD-10, the library has no colours and never will.
+ *
+ * These are DEFAULTS, not policy baked into the derivation: the classifier
+ * takes its thresholds by parameter, the way kdash_ladder() already does.
+ *
+ * The three numbers are BOUNDARIES, not band starts, and they reproduce
+ * kpidash's `< 65 / <= 75 / < 80 / else` exactly: cold below COLD_F, ok from
+ * COLD_F through OK_F inclusive, warm above OK_F and below HOT_F, hot at
+ * HOT_F and above. */
+#define KDASH_APTTEMPS_COLD_F 65.0
+#define KDASH_APTTEMPS_OK_F   75.0
+#define KDASH_APTTEMPS_HOT_F  80.0
+
 /* kdash:panel:<host> is a COMMAND, and a command has a shorter useful life
  * than a status card: a panel that was down for an hour must come back to its
  * own screen rather than to whatever it was told while it was away. 60 s is
