@@ -109,7 +109,9 @@ Uses the [kprojects](https://github.com/kenhia/kprojects) minimal harness:
 `just check` is four gates, in increasing order of what they need installed:
 
 - `check-docs` — python3 only: every JSON file parses, every relative markdown
-  link resolves, every schema is listed in the registry.
+  link resolves, every schema is listed in the registry, every `.ps1` is pure
+  ASCII (Windows PowerShell 5.1 reads a BOM-less script as the ANSI codepage),
+  and `CLAUDE.md`'s Status line names the newest `sprints/` record.
 - `check-python` — python3 only: the Python wrapper's pure core, which imports
   nothing but the stdlib precisely so this gate needs nothing installed.
 - `check-rust` — cargo: fmt, clippy, and the Rust wrapper's unit tests. A first

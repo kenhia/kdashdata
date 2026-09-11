@@ -178,7 +178,10 @@ three counted readers now zeroes `out` and returns -1. Contract stated once in
 note and a counted-reader note; `CLAUDE.md`'s status line brought from sprint
 003 to 009.
 
-**Gate**: `scripts/check.py` grows the status-line check.
+**Gate**: `scripts/check.py` grows the status-line check. `README.md`'s
+description of `check-docs` was stale in both directions — it had never
+mentioned the `.ps1` ASCII check from sprint 004 either — and now lists all
+four.
 
 ## Negative tests
 
