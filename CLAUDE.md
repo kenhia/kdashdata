@@ -81,12 +81,14 @@ the library grew the readers and feeds its consumers were blocked on — typed
 feed (sprint 007, korg:1817), the `kdash:stale:<host>:<deployer>` feed for
 intermittently reachable hosts (sprint 008, korg:1915), and the shared
 apartment-temperature bands plus the counted-reader contract (sprint 009,
-korg:2217). See `docs/architecture.md` (decisions CD-1…CD-18, open questions
-OQ-n), `contracts/rules.md`, `contracts/registry.md`,
-`include/kdash/kdash.h` for the consumer API, and `publishers/README.md` for
-the publish side. Next: kdeskdash adopting the `claude:*` readers (korg:2218,
-work item 1783), or kstudiodash's first consumption of the library
-(korg:1728).
+korg:2217). The publishers then joined the fleet's per-host secrets file, ahead
+of the per-user files CD-12 shipped with (sprint 010, korg:2427 — one slice of
+the simplify-secrets program korg:2440). See `docs/architecture.md` (decisions
+CD-1…CD-19, open questions OQ-n), `contracts/rules.md`,
+`contracts/registry.md`, `include/kdash/kdash.h` for the consumer API, and
+`publishers/README.md` for the publish side. Next: kdeskdash adopting the
+`claude:*` readers (korg:2218, work item 1783), or kstudiodash's first
+consumption of the library (korg:1728).
 
 This line is gated: `scripts/check.py` fails if it does not name the
 newest `sprints/` record, so a sprint cannot ship leaving it behind again

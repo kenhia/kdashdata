@@ -301,7 +301,7 @@ The wrappers do **not** schedule, retry, or cap. A publisher owns its cadence
 and its cap (rules.md); a wrapper that retried behind a hook's back would turn
 a fire-and-forget into an unbounded stall.
 
-## CD-12 — `REDISCLI_AUTH` reaches hook contexts through a 0600 env file
+## CD-12 — `REDISCLI_AUTH` reaches hook contexts through an env file
 
 CD-2 says the password travels in `REDISCLI_AUTH`. What sprint 003 measured is
 that *nothing delivers it* outside a systemd unit:
@@ -319,21 +319,29 @@ that *nothing delivers it* outside a systemd unit:
 `claude-pub.sh` works today only because `rpidash2:6380` is unauthenticated —
 which is exactly why the CD-7 repoint cannot happen before this is settled.
 
-**The convention**: when `REDISCLI_AUTH` is unset, a publisher reads it from a
-0600 env file, in order — `$KDASH_AUTH_FILE`, `~/.config/kdash/redis-auth.env`,
-then `~/.config/kpidash-client/redis-auth.env`. Same variable, same value, same
-krot entry (`rpi53-redis-password`, krot #1293 — seven consumer copies); a
-delivery mechanism, not a second contract, and no new secret is minted. The
-kpidash-client file is last and is not kdashdata's to own, but it is already on
-every reporting host and already on krot's consumer list, so the convention
-works on day one with no new file anywhere.
+**The convention**: when `REDISCLI_AUTH` is unset, a publisher reads it from an
+env file holding the same variable. Same variable, same value; a delivery
+mechanism, not a second contract, and no new secret is minted.
+
+Sprint 003 shipped that as an explicit override plus two per-user files —
+`$KDASH_AUTH_FILE`, then `~/.config/kdash/redis-auth.env`, then
+`~/.config/kpidash-client/redis-auth.env`, all 0600 — which is what made CD-12
+work on day one with no new file anywhere: the kpidash-client file was already
+on every reporting host and already on krot's `rpi53-redis-password` consumer
+list (krot #1293).
+
+**[CD-19](#cd-19--the-per-host-secrets-file-comes-first-and-the-mode-policy-travels-with-the-candidate)
+supersedes the ordering and the mode rule**: the fleet's own per-host file comes
+first, and the per-user files are deprecated behind it. Everything below about
+*why* an env file at all, and about the three properties, still holds.
 
 Two properties that are load-bearing rather than tidy:
 
-- **A group- or world-readable secret file is refused, not used.** The August
+- **A secret file that cannot be trusted is refused, not used.** The August
   2026 rotation missed the consumers whose copy lived in a different shape;
   a publisher that quietly used a 0644 secret would hide the same class of
-  fault. Refusing is noisy in exactly the right place.
+  fault. Refusing is noisy in exactly the right place. (CD-19 says what
+  "cannot be trusted" means for each kind of file — it is not one threshold.)
 - **No password is still a valid answer.** "Found nothing" must connect anyway
   rather than error. Only a file that exists and cannot be trusted is fatal.
 - **"I have a password" and "this server wants one" are different questions.**
@@ -351,6 +359,16 @@ Two properties that are load-bearing rather than tidy:
 
 Both wrappers implement this; a future non-wrapper publisher that needs the
 password in a hook context follows the same order or it is divergent.
+
+**The C consumer library deliberately does not.** `libkdash` reads
+`getenv("REDISCLI_AUTH")` and nothing else (`include/kdash/kdash_endpoint.h`,
+`src/kdash_conn.c`): every consumer of it is a dashboard running as a systemd
+unit, which is precisely the context `EnvironmentFile=` *does* reach. Giving it
+a file-walking chain would add a filesystem read, a permissions policy and a
+second answer to "where is the password" to a library whose whole design is a
+pure core plus a thin I/O shell (CD-10), for a context that does not exist. A
+dashboard that needs the per-host file gets it through its unit, which is each
+dashboard repo's own slice of program korg:2440.
 
 ## CD-13 — `kdash-pub` ships through the package store, to fixed absolute paths
 
@@ -646,6 +664,96 @@ It would be the wrong trade for anything high-cardinality or machine-consumed
 without review, which would need a reaper rather than a longer window. The
 mitigation here is that the key names both parties, so whoever retires a host
 or a deployer can see exactly which keys to delete.
+
+## CD-19 — The per-host secrets file comes first, and the mode policy travels with the candidate
+
+Program korg:2440 gives the homelab one copy of each infrastructure password
+per host, rendered by k-homelab from the age store, and says every tool we own
+reads it there. For the publishers that is not a new mechanism — CD-12 already
+walks env files — so this is an ordering change plus the two rules the new file
+forces.
+
+**The order**, and only the first rung is unchanged from CD-12:
+
+| # | rung | notes |
+|---|---|---|
+| 1 | `$REDISCLI_AUTH` | the explicit override; no file is consulted |
+| 2 | `$KDASH_AUTH_FILE` | **exclusive** — set it and no other candidate is tried |
+| 3 | `%ProgramData%\khomelab\secrets.env` | only when `ProgramData` is set |
+| 4 | `/etc/khomelab/secrets.env` | the per-host file on Linux and macOS |
+| 5 | `$XDG_CONFIG_HOME`/`~/.config`/`kdash/redis-auth.env` | **deprecated** |
+| 6 | `…/kpidash-client/redis-auth.env` | **deprecated** |
+
+`ProgramData` is read from the environment **at run time and never defaulted**.
+`C:\ProgramData` is what it resolves to on Ken's machines today and that is not
+fixed — VMs elsewhere routinely resolve it to another drive (Ken, 2026-09-12) —
+so an unset variable **skips** rung 3 rather than guessing it. The rung is
+driven by the environment rather than by a compile-time platform check, which
+is also what lets `just check` prove nothing is hardcoded: there is no Windows
+CI, and pointing `ProgramData` at a temp directory is a unit test on kai.
+
+### The mode policy is a property of the source, not a single threshold
+
+The per-host file is `root:khomelab 0640`. CD-12's rule refused **any** group
+or other bit, so the naive change — add the path, touch nothing else — does not
+prefer the new file. It makes every publisher on every converged host
+hard-error, because the walk returns the first existing candidate's error
+rather than falling through.
+
+So each candidate carries the ownership model it expects:
+
+| model | files | refuses |
+|---|---|---|
+| private | the per-user files (rungs 5–6) | any group or other bit (`mode & 0o077`) |
+| shared | the per-host file, and `$KDASH_AUTH_FILE` | group **write**, any other bit (`mode & 0o027`) |
+
+Group **read** is the per-host file's access mechanism — refusing it would
+refuse the contract k-homelab publishes. What stays refused everywhere is group
+write (any `khomelab` member could change the password every host reads) and
+any world bit (which defeats the group entirely). `0640` passes; `0644` and
+`0660` do not. `$KDASH_AUTH_FILE` takes the shared policy because a caller
+naming a file explicitly must be able to name *that* file.
+
+**A file too open still stops the walk, on every rung including the shared
+one.** That is the property CD-12 called load-bearing, and a mis-rendered
+world-readable fleet password being silently *used* is worse than publishers
+failing loudly.
+
+### Two outcomes on the per-host rung mean "keep looking", not "stop"
+
+| outcome | per-host file | per-user file |
+|---|---|---|
+| exists, cannot be read (`EACCES`) | skip, keep looking | fatal |
+| exists, readable, no `REDISCLI_AUTH=` line | skip, keep looking | fatal |
+| exists, mode cannot be trusted | fatal | fatal |
+
+The per-host file is **shared, multi-key and not ours**: nine keys across eight
+hosts, rendered by another repo, with each host's manifest granting a subset.
+"I am not in `khomelab` yet" and "my key is not on this host" are states of the
+fleet, not faults in the file. Measured 2026-09-12: `ken` is in `khomelab` on
+kubs0 and is **not** on kai, so the fatal reading would have stopped kai's
+publishers the moment this shipped and kept them stopped until the changeover
+(korg:2436) declares `ken` in kai's `secrets_group_members`.
+
+On the per-user files both stay fatal. Those files exist for exactly one reason,
+and silence there is the fault CD-12's refusal was written to make noisy.
+
+### Where the password came from is reported by the executable, not the library
+
+Neither wrapper's library has ever written to stderr, and CD-10 is why. So
+`resolve()` returns the answering source and path alongside the password, and
+the reporting belongs to the thing with a user: `kdash-pub` names the route
+under `endpoint`/`--verbose` and warns unconditionally when a deprecated file
+answered; the Python side exposes `publisher.auth` and `selftest.py` prints it.
+It also turns "the per-host file wins, and a per-user file is deprecated" into a
+gate assertion rather than a stderr scrape.
+
+**What this decision costs.** Between this sprint and korg:2436 the fleet
+answers from *both* kinds of file depending on the host, and the deprecation
+warning is the only thing that says which. That is deliberate: the alternative
+orderings either break hosts that have not been granted access yet, or require
+this repo to grant group membership, which is k-homelab's manifest and not
+kdashdata's to write.
 
 ## Open questions
 

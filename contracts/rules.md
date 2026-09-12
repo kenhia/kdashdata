@@ -87,8 +87,10 @@ publisher has to re-derive them:
   [registry](registry.md#homes).
 - **The password is `REDISCLI_AUTH`** (CD-2), and khlenv never holds it. Where
   that variable cannot reach — a Claude Code hook, a statusline — it is
-  delivered by a 0600 env file holding the same variable (CD-12), not by a
-  second mechanism.
+  delivered by an env file holding the same variable (CD-12), not by a second
+  mechanism. That file is the fleet's per-host `/etc/khomelab/secrets.env`
+  (`%ProgramData%\khomelab\secrets.env` on Windows, resolved at run time);
+  the per-user files are still read behind it and are deprecated (CD-19).
 - **Validate the key before writing it.** Same grammar, same charset, same
   fixed-segment discipline the reader parses with. A writer that can emit a key
   no reader will parse has published nothing.
