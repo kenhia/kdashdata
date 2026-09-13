@@ -252,13 +252,48 @@ chain (checked by grep for `0600 env file` and for `KDASH_AUTH_FILE`).
 
 ## Deployed
 
-Not yet. After korg:2427 merges, from `main` on kai:
+`kdash-pub` **0.1.0-83e5795**, published and deployed 2026-09-12 from merged
+`main` on kai, under the overseer's clearance (korg:2427 comment 2052, review
+handoff korg:2495).
 
-```sh
-just publish      # linux + windows, one version, to the package store
-just deploy-all   # kai, kubs0 (knarr) and cleo (install-cleo.ps1)
-```
+**Published**: `just publish` — linux and windows binaries built from one
+checkout, one version, one `SHA256SUMS`, into
+`artifacts/kdash-pub/0.1.0-83e5795/` on the package store (kubsdb :4880).
+`latest → 0.1.0-83e5795`.
 
-`deploy-all` and not `deploy`: kpolice sprint 002's lesson is in the justfile —
-never verify by iterating the hosts you deployed. Then the live check on each of
-the three, with the wrong-password control beside it, and cleo's is WI 2491.
+**Deployed**: `just deploy-all` — never `just deploy` alone, because kpolice
+sprint 002 redeployed the two hosts knarr reaches and left cleo on a commit that
+no longer existed.
+
+| host | route | confirmed |
+|---|---|---|
+| kai | knarr → `/usr/local/bin/kdash-pub` | `0.1.0-83e5795` |
+| kubs0 | knarr → `/usr/local/bin/kdash-pub` | `0.1.0-83e5795` |
+| cleo | `install-cleo.ps1` → `C:\tools\bin\kdash-pub.exe` | sha256 ok, `0.1.0-83e5795` |
+
+Nothing was stopped or restarted anywhere: `kdash-pub` is a hook-invoked CLI,
+not a service.
+
+### Verified live on the deployed binaries, each on its own host
+
+Every pass is paired with the wrong-password control, which is the program's
+standing rule for this changeover (overseer ruling 3 on korg:2495) — because
+`kdash-pub endpoint` exits 0 even with no credential at all (WI 2492).
+
+| host | `REDISCLI_AUTH` unset | control: wrong password |
+|---|---|---|
+| kubs0 | `auth from per-host secrets file (/etc/khomelab/secrets.env)`, exit 0 | refused, exit 2 |
+| kai | `auth from per-user env file (deprecated) (…/kpidash-client/redis-auth.env)` **plus the CD-19 warning**, exit 0 | refused, exit 2 |
+| cleo | n/a — no per-host file there yet (WI 2491) | — |
+
+kai answering from the deprecated file is the **expected** result, not a
+shortfall: `ken` is not in `khomelab` there, and adding him is
+`secrets_group_members` in k-homelab's manifest — korg:2436's work. CD-19 is
+built so that costs nothing, and the warning is how the host says which file it
+used.
+
+The first kubs0 run interleaved its two checks across ssh (stderr flushed
+late), which made the `per-host` line's attribution ambiguous; re-run
+separately before being recorded here.
+
+No secret value was printed at any point.
