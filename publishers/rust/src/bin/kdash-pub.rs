@@ -200,8 +200,11 @@ fn help() -> String {
          \x20 --verbose, -v       print the endpoint written to\n\
          \x20 --help, --version\n\
          \n\
-         The password comes from $REDISCLI_AUTH, or from a 0600 env file when it\n\
-         is unset (CD-12): $KDASH_AUTH_FILE, ~/.config/kdash/redis-auth.env,\n\
+         The password comes from $REDISCLI_AUTH, or from an env file when it is\n\
+         unset (CD-12, CD-19), in order: $KDASH_AUTH_FILE (exclusive), then the\n\
+         per-host file -- %ProgramData%\\khomelab\\secrets.env where ProgramData\n\
+         is set, else /etc/khomelab/secrets.env -- then the deprecated per-user\n\
+         files ~/.config/kdash/redis-auth.env and\n\
          ~/.config/kpidash-client/redis-auth.env.\n\
          \n\
          hget prints the value and a newline, or nothing at all when the field\n\
@@ -283,6 +286,26 @@ fn run(invocation: Invocation) -> Result<(), (u8, String)> {
         .map_err(|e| (EXIT_DELIVERY, e.to_string()))?;
     if invocation.verbose || matches!(invocation.action, Action::Endpoint) {
         eprintln!("kdash-pub: {}", connection.endpoint());
+        // `endpoint` exists to answer "can this host publish, and how" — which
+        // file answered is half of that, and it is the one half no amount of
+        // staring at the output could otherwise recover (CD-19).
+        eprintln!("kdash-pub: auth from {}", connection.auth_origin());
+    }
+    // Always, not only under --verbose: the per-user files are on their way out
+    // with the k-homelab changeover, and a host still answering from one is the
+    // thing that needs to become visible before they are deleted (CD-19).
+    if connection
+        .auth_source()
+        .is_some_and(|source| source.deprecated())
+    {
+        eprintln!(
+            "kdash-pub: warning: the password came from {} — deprecated, \
+             superseded by the per-host secrets file (CD-19)",
+            connection
+                .auth_path()
+                .map(|p| p.display().to_string())
+                .unwrap_or_else(|| "a per-user env file".to_string())
+        );
     }
     if let Some(query) = &query {
         // Nothing printed for an absent field — the caller's empty read is the

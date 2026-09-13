@@ -22,9 +22,15 @@ publisher.publish_event("kpidash:activities", {"what": "deploy"}, cap=20)
 
 Nothing above names a host, a port or a password. The endpoint comes from
 khlenv on **every** connect (CD-4), the password from `REDISCLI_AUTH` or, when
-that is unset, a 0600 env file (CD-2/CD-12). `ts` is stamped if the payload did
-not carry one, and the key is checked against the grammar before anything is
+that is unset, an env file (CD-2/CD-12/CD-19) — the fleet's per-host
+`/etc/khomelab/secrets.env`, or `%ProgramData%\khomelab\secrets.env` on
+Windows, ahead of the deprecated per-user files. `ts` is stamped if the payload
+did not carry one, and the key is checked against the grammar before anything is
 written.
+
+`publisher.auth` says which file answered after a `connect()`, and
+`.source.deprecated` says whether that file is one the k-homelab changeover is
+about to delete. Nothing in the package prints it — see CD-19.
 
 ## Install
 

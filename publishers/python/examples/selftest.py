@@ -4,8 +4,10 @@
 Writes `kdash:selftest:<host>` to the central Redis: a schema-valid
 latest-value feed, published with **zero hardcoded endpoints** and zero
 hardcoded credentials. Everything it needs it asks for — khlenv for the
-endpoint (CD-4), `REDISCLI_AUTH` or a 0600 env file for the password
-(CD-2/CD-12), `contracts/schemas/kdash-selftest.schema.json` for the shape.
+endpoint (CD-4), `REDISCLI_AUTH` or an env file for the password
+(CD-2/CD-12/CD-19), `contracts/schemas/kdash-selftest.schema.json` for the
+shape. It also reports which file answered, and warns when that file is one the
+k-homelab changeover is about to delete.
 
 It is also useful past the sprint: run it on any host to find out whether that
 host can publish at all, and what it would publish to.
@@ -57,6 +59,17 @@ def main() -> int:
 
     publisher.publish_expiring(key, record, ttl=TTL_S)
     print(f"wrote {key} (ttl {TTL_S}s) to {publisher.endpoint}")
+    # "Can this host publish" is half answered by *how* it authenticated: which
+    # file answered is the part nobody can recover from the output afterwards
+    # (CD-19). The library never prints it; this is the thing with a user.
+    resolved = publisher.auth
+    print(f"auth: {resolved.origin() if resolved else 'no password'}")
+    if resolved and resolved.source.deprecated:
+        print(
+            f"warning: the password came from {resolved.path} — deprecated, "
+            "superseded by the per-host secrets file (CD-19)",
+            file=sys.stderr,
+        )
     return 0
 
 

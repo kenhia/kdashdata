@@ -11,7 +11,7 @@ A publisher's whole job is small and nobody gets all of it right:
 | Obligation | Decision |
 |---|---|
 | find the Redis, and notice when it moves | CD-4 — khlenv, re-resolved on every connect |
-| authenticate | CD-2 / CD-12 — `REDISCLI_AUTH`, or a 0600 env file where that cannot reach |
+| authenticate | CD-2 / CD-12 / CD-19 — `REDISCLI_AUTH`, or an env file where that cannot reach: the per-host `/etc/khomelab/secrets.env` (`%ProgramData%\khomelab\secrets.env` on Windows) first, the per-user files after it and deprecated |
 | write a key a reader will parse | [rules.md](../contracts/rules.md) key grammar, enforced at the publish choke point |
 | stamp `ts` | [rules.md](../contracts/rules.md) payload rules |
 | pick a publish pattern | latest-value expiring / ts-owned / capped event log |

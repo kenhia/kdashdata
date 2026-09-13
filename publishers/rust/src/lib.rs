@@ -193,14 +193,19 @@ impl Publisher {
             Resolved::Nowhere => return Err(Error::NoEndpoint(self.stem.key.to_string())),
         };
 
+        // Resolved once and kept, so the caller can say which file answered
+        // (CD-19). This crate does not print it: a library writing to stderr
+        // inside a hook is the kind of surprise CD-10 keeps out.
+        let auth = if self.authenticate {
+            auth::resolve()?
+        } else {
+            None
+        };
+
         let info = redis::ConnectionInfo {
             addr: redis::ConnectionAddr::Tcp(host.clone(), port),
             redis: redis::RedisConnectionInfo {
-                password: if self.authenticate {
-                    auth::password()?
-                } else {
-                    None
-                },
+                password: auth.as_ref().map(|a| a.password.clone()),
                 ..Default::default()
             },
         };
@@ -209,6 +214,7 @@ impl Publisher {
         Ok(Connection {
             inner,
             endpoint: (host, port),
+            auth: auth.map(|a| (a.source, a.path)),
         })
     }
 }
@@ -217,6 +223,7 @@ impl Publisher {
 pub struct Connection {
     inner: redis::Connection,
     endpoint: (String, u16),
+    auth: Option<(auth::Source, Option<std::path::PathBuf>)>,
 }
 
 impl Connection {
@@ -224,6 +231,28 @@ impl Connection {
     /// and what makes a mis-routed write obvious.
     pub fn endpoint(&self) -> String {
         format!("{}:{}", self.endpoint.0, self.endpoint.1)
+    }
+
+    /// Where the password came from, or `None` when none was found or asked
+    /// for. The executable reports it; this crate never prints (CD-19, CD-10).
+    pub fn auth_source(&self) -> Option<auth::Source> {
+        self.auth.as_ref().map(|(source, _)| *source)
+    }
+
+    /// The file the password came from, or `None` when `$REDISCLI_AUTH`
+    /// answered, nothing did, or auth was not asked for.
+    pub fn auth_path(&self) -> Option<&std::path::Path> {
+        self.auth.as_ref().and_then(|(_, path)| path.as_deref())
+    }
+
+    /// How to name the answering route to a human: the source's label, plus
+    /// the file when there was one.
+    pub fn auth_origin(&self) -> String {
+        match &self.auth {
+            None => "no password".to_string(),
+            Some((source, None)) => source.label().to_string(),
+            Some((source, Some(path))) => format!("{} ({})", source.label(), path.display()),
+        }
     }
 
     /// Latest-value, ts-owned: STRING, no TTL, reader-owned staleness.

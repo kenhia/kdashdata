@@ -60,6 +60,7 @@ class Publisher:
         self.timeout = timeout
         self._client: Any = None
         self._endpoint: tuple[str, int] | None = None
+        self._auth: auth.Resolution | None = None
 
     # --- discovery ---------------------------------------------------------
 
@@ -88,10 +89,16 @@ class Publisher:
         if self._client is not None and self._endpoint == (host, port):
             return self._client
 
+        # Resolved once and kept, so the caller can say which file answered
+        # (CD-19). This module does not print it: a library writing to stderr
+        # inside a hook is the kind of surprise CD-10 keeps out.
+        resolved_auth = auth.resolve() if self.authenticate else None
+        self._auth = resolved_auth
+
         self._client = redis.Redis(
             host=host,
             port=port,
-            password=auth.password() if self.authenticate else None,
+            password=resolved_auth.password if resolved_auth else None,
             socket_connect_timeout=self.timeout,
             socket_timeout=self.timeout,
             decode_responses=True,
@@ -103,6 +110,16 @@ class Publisher:
     def endpoint(self) -> str | None:
         """`host:port` last connected to — what a log line should carry."""
         return f"{self._endpoint[0]}:{self._endpoint[1]}" if self._endpoint else None
+
+    @property
+    def auth(self) -> auth.Resolution | None:
+        """Where the password came from on the last `connect()`, or `None`.
+
+        `None` covers three different things — not connected yet, auth not asked
+        for, and nothing found — which is why the reporting belongs to a caller
+        that knows which of them applies (CD-19).
+        """
+        return self._auth
 
     # --- the publish patterns (contracts/rules.md) -------------------------
 
