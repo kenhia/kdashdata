@@ -48,7 +48,8 @@ just version        # the store label this checkout would publish under
 just publish        # linux + windows cross-build, ONE version, from main
 just deploy         # knarr -> /usr/local/bin/kdash-pub on kai and kubs0
 just deploy-cleo    # store-resolving install -> C:\tools\bin\kdash-pub.exe
-just deploy-all     # all three publisher hosts, which is the point
+just deploy-komarchy  # the laptop — knarr, but only with the lid open
+just deploy-all     # all four publisher hosts, which is the point
 ```
 
 `publish` refuses a dirty tree and refuses a stamp that names no commit, and
@@ -56,11 +57,19 @@ off `main` it publishes without moving `latest`. The install paths are a
 contract: the CD-7 hook scripts exec them absolutely, because a hook context's
 `PATH` is not the interactive one.
 
-Verify a rollout by naming the hosts — `kdash-pub --version` on kai, kubs0
-**and** cleo — never by iterating the hosts the runner happened to reach.
-`kdash-pub --app kdashdata endpoint` is the stronger per-host check: it proves
-khlenv resolution and the CD-12 auth route work on that host, not just that a
-file landed.
+Verify a rollout by naming the hosts — `kdash-pub --version` on kai, kubs0,
+cleo **and** komarchy — never by iterating the hosts the runner happened to
+reach. `kdash-pub --app kdashdata endpoint` is the stronger per-host check: it
+proves khlenv resolution and the CD-12 auth route work on that host, not just
+that a file landed. On a host with a systemd user manager, run it *through*
+one — `systemd-run --user --collect --wait --pipe kdash-pub --app kdashdata
+endpoint` — because a login shell's groups and a user manager's groups are
+different facts, and the per-host secrets file is readable by group.
+
+komarchy is the host this rule is easiest to lose: it is asleep most of the
+time, so it is the one that silently keeps an old binary. It ran
+`0.1.0-7fe2c87` for ten days after the rest of the fleet moved on, which is
+how CD-19 came to be shipped everywhere except the laptop.
 
 ## Gates
 

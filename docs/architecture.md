@@ -404,6 +404,7 @@ but must never be what the fleet resolves.
 |---|---|---|
 | kai, kubs0 | `/usr/local/bin/kdash-pub` | `knarr deploy` (`just deploy`) |
 | cleo | `C:\tools\bin\kdash-pub.exe` | `scripts/install-cleo.ps1` (`just deploy-cleo`) |
+| komarchy | `/usr/local/bin/kdash-pub` | `knarr deploy` (`just deploy-komarchy`) |
 
 CD-12 is the reason. A Claude Code hook context inherits neither an
 interactive shell's environment nor its `PATH`, so the hook scripts that will
@@ -415,10 +416,46 @@ during the CD-7 program: it would bypass the store, so a `just publish` +
 `just deploy` upgrade would never reach the hooks, recreating stale-binary
 drift in a per-user form invisible to knarr and kmuster.
 
-**Verify by naming the hosts.** `just deploy-all` covers all three, and the
-verification names kai, kubs0 and cleo explicitly rather than iterating
-whatever the runner reached — that is precisely how kpolice sprint 002 left
-cleo on a commit that no longer existed for a whole sprint.
+**Verify by naming the hosts.** `just deploy-all` covers all four, and the
+verification names kai, kubs0, cleo and komarchy explicitly rather than
+iterating whatever the runner reached — that is precisely how kpolice sprint
+002 left cleo on a commit that no longer existed for a whole sprint.
+
+### komarchy is a publisher host that is normally asleep (sprint 011)
+
+komarchy is the fourth host and it arrived late, having been missed entirely by
+the CD-7 program: it ran `0.1.0-7fe2c87` from 2026-09-02 to 2026-09-15 while
+the rest of the fleet moved to `83e5795`, because it was in no deploy target
+at all. The mechanism was never in doubt — k-homelab's `claude-hooks` recipe
+already calls `kdash-pub` its unmanaged prerequisite, "installed by
+`knarr deploy kdash-pub`, because the binary belongs to the repo that owns it"
+— so the Sep 2 hand install was a stopgap and this is the correction.
+
+**It is not in `just deploy`'s host list, and that is knarr's constraint.**
+komarchy is `availability: intermittent`: the lid is closed most of the time,
+and `No route to host` is its expected answer rather than a fault. knarr
+already handles two thirds of that correctly — a fleet deploy is not a
+transaction, so an unreachable host costs the others nothing, and the
+aggregate names the host rather than dropping it. What it has no way to say is
+that a host may be *absent without failing the run*: measured 2026-09-15,
+`--host kai,no-such-host --dry-run` installs kai cleanly and still exits **3**
+with `ok: false`. In a shared list that makes the everyday `just deploy` fail
+on most days for a reason that is not a problem, and a deploy command whose
+exit code is routinely wrong is one whose exit code stops being read.
+
+So komarchy gets `just deploy-komarchy`, and `just deploy-all` runs it last
+behind an `ssh -o BatchMode=yes -o ConnectTimeout=5` probe. The probe is what
+keeps **asleep** and **broken** apart, and both halves matter: if komarchy
+answers, its deploy runs and any failure is fatal exactly like kai's; if it
+does not, the skip is *printed*, because a host quietly missing from a fleet
+deploy is the one outcome `deploy-all` exists to prevent. The probe runs from
+the host doing the deploying — a reachability check run anywhere else measures
+that machine's route, not komarchy's availability.
+
+This is a recipe standing in for a knarr feature, the same shape as
+`scripts/install-cleo.ps1`. **korg 2680** asks knarr for an allowed-absent
+host; when it lands, komarchy folds back into `deploy`'s list and both the
+extra recipe and the probe go away.
 
 ## CD-14 — `kdash-pub` has exactly one read verb, and it is a publisher's
 

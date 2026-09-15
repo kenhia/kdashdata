@@ -148,11 +148,41 @@ publish:
 # Pass --version to pin a build, or --dry-run to see the plan.
 #
 # cleo is NOT here — knarr installs over ssh with `install -m 0755`, which is
-# not the Windows shape. It is a separate recipe, `just deploy-cleo`, and
-# `just deploy-all` runs both.
-[doc("Deploy the store's latest to the Linux publisher hosts (kai, kubs0)")]
+# not the Windows shape. It is a separate recipe, `just deploy-cleo`.
+#
+# komarchy is not here either, for a different reason — see `deploy-komarchy`.
+# `just deploy-all` runs all four.
+[doc("Deploy the store's latest to the always-on Linux publisher hosts (kai, kubs0)")]
 deploy *ARGS:
     knarr deploy kdash-pub --host kai,kubs0 {{ARGS}}
+
+# Install on komarchy, the laptop.
+#
+# komarchy is a publisher host like the others — k-homelab's claude-hooks
+# recipe calls `kdash-pub` its unmanaged prerequisite, "installed by
+# `knarr deploy kdash-pub`, because the binary belongs to the repo that owns
+# it". What makes it its own recipe is that it is normally ASLEEP:
+# `availability: intermittent` in k-homelab, lid closed being its resting
+# state, and `No route to host` the expected answer rather than a fault.
+#
+# knarr cannot express that today, and it is not for want of the hard part.
+# A fleet deploy is already not a transaction, so an unreachable host does not
+# cost the others their upgrade, and the aggregate NAMES it rather than
+# quietly dropping it. What is missing is a host that may be absent without
+# costing the RUN its exit code: measured 2026-09-15, one unreachable host in
+# the list gives `ok: false` and exit 3 while every reachable host installs
+# cleanly. Put komarchy in `deploy`'s list and the everyday `just deploy`
+# fails on most days for a reason that is not a problem — which teaches the
+# operator to stop reading its exit code.
+#
+# korg 2680 asks knarr for that host. When it lands, komarchy folds back into
+# `deploy` above and this recipe and `deploy-all`'s probe both go away.
+#
+# Run it with the lid open. Failure here is a plain failure on purpose: asking
+# for komarchy explicitly means you believe it is awake.
+[doc("Deploy the store's latest to komarchy (the laptop — needs the lid open)")]
+deploy-komarchy *ARGS:
+    knarr deploy kdash-pub --host komarchy {{ARGS}}
 
 # Install on cleo from the store.
 #
@@ -178,14 +208,33 @@ deploy-cleo *ARGS:
 
 # Deploy to every claude-publisher host.
 #
-# All three in one recipe, because the failure this exists to prevent is
+# All four in one recipe, because the failure this exists to prevent is
 # deploying *most* of them. kpolice sprint 002 redeployed the two hosts knarr
 # reaches and left cleo on a commit that no longer existed — and the
 # verification could not catch it, because it only iterated the hosts knarr
 # had touched. Never verify by iterating what you deployed; name the hosts.
-[doc("Deploy to all three publisher hosts: kai, kubs0 (knarr) and cleo (Windows)")]
+#
+# komarchy is named here for exactly that reason, and it is the one host this
+# recipe is allowed to finish without. It runs LAST and behind an explicit
+# reachability probe, which is what keeps "asleep" and "broken" apart: if the
+# probe answers, the deploy runs and any failure it hits is fatal like every
+# other host's; if it does not answer, the skip is PRINTED, because a host
+# quietly missing from a fleet deploy is the whole thing this recipe exists to
+# stop. The probe runs from here, the host doing the deploying — a
+# reachability check run anywhere else measures that machine's route, not
+# komarchy's availability.
+#
+# This is a recipe standing in for a knarr feature (korg 2680), the same shape
+# as scripts/install-cleo.ps1. Both go away when knarr grows the real thing.
+[doc("Deploy to all four publisher hosts: kai, kubs0 (knarr), cleo (Windows), komarchy (if awake)")]
 deploy-all *ARGS:
     #!/usr/bin/env bash
     set -euo pipefail
     just deploy {{ARGS}}
     just deploy-cleo
+    if ssh -o BatchMode=yes -o ConnectTimeout=5 -n komarchy true 2>/dev/null; then
+        just deploy-komarchy {{ARGS}}
+    else
+        echo "deploy-all: komarchy did not answer — SKIPPED (lid closed is its normal state)" >&2
+        echo "deploy-all: run 'just deploy-komarchy' with the lid open to finish the rollout" >&2
+    fi

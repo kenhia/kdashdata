@@ -83,7 +83,9 @@ intermittently reachable hosts (sprint 008, korg:1915), and the shared
 apartment-temperature bands plus the counted-reader contract (sprint 009,
 korg:2217). The publishers then joined the fleet's per-host secrets file, ahead
 of the per-user files CD-12 shipped with (sprint 010, korg:2427 — one slice of
-the simplify-secrets program korg:2440). See `docs/architecture.md` (decisions
+the simplify-secrets program korg:2440), and komarchy — the laptop, which had
+been in no deploy target and was ten days behind on `kdash-pub` — became one
+and got that build (sprint 011, korg:2679). See `docs/architecture.md` (decisions
 CD-1…CD-19, open questions OQ-n), `contracts/rules.md`,
 `contracts/registry.md`, `include/kdash/kdash.h` for the consumer API, and
 `publishers/README.md` for the publish side. Next: kdeskdash adopting the
