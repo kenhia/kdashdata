@@ -162,5 +162,48 @@ What remains is distribution, and it is the ship turn's first action.
 
 ## Deployed
 
-_Pending — `just publish` then `just deploy-all` from main on the ship turn.
-Appended after it runs, never predicted before it._
+`kdash-pub` **0.1.0-8d13cce** to all four publisher hosts, 2026-09-16, from kai,
+off merged `main` (`8d13cce`).
+
+**`just publish`** — linux and windows binaries built from one checkout, one
+`--version` label, one store directory. `latest -> 0.1.0-8d13cce`. The pointer
+moved because this ran from `main`; from the branch it would have carried
+`--no-latest`, which is why the deploy waited for the merge.
+
+**`just deploy-all`** — `ok: true`, every host. komarchy answered its
+reachability probe (run from kai, the host doing the deploying) and took the
+build in the same run rather than being skipped; sha256 `8ff48516…`, backup
+rotated to `kdash-pub.prev`, restart and readiness `skipped` as always — it is
+a hook-invoked CLI with no unit.
+
+**Stamps confirmed by naming the hosts**, not by iterating what the deploy
+reported — the rule `deploy-all`'s own comment exists to enforce, after kpolice
+sprint 002 left cleo on a commit that no longer existed:
+
+| host | path | stamp |
+|---|---|---|
+| kai | `/usr/local/bin/kdash-pub` | `0.1.0-8d13cce (2026-09-16)` |
+| kubs0 | `/usr/local/bin/kdash-pub` | `0.1.0-8d13cce (2026-09-16)` |
+| komarchy | `/usr/local/bin/kdash-pub` | `0.1.0-8d13cce (2026-09-16)` |
+| cleo | `C:\tools\bin\kdash-pub.exe` | `0.1.0-8d13cce (2026-09-16)` |
+
+One version across the fleet, which was the whole point of the overseer's
+ruling to redeploy in one go rather than following the slices.
+
+### Verified live, post-deploy
+
+The acceptance run, with the **deployed** binary this time — the same batch that
+returned rc 1 before the ship:
+
+| host | probed from | write | read back | delete |
+|---|---|---|---|---|
+| kai | kai | **rc 0** | `host=kai` | gone, confirmed by re-read |
+| kubs0 | kubs0 | **rc 0** | `host=kubs0` | gone, confirmed by re-read |
+
+Each probe ran **on** the host it is a fact about. Both keys deleted and the
+deletions confirmed by a follow-up read returning empty.
+
+cleo's copy is the overseer's to verify from cleo, by the same method — a
+`ghcp:session:cleo:probe` write and delete. komarchy was deployed and its stamp
+confirmed, but not feed-tested: it runs no Copilot hooks, so there is nothing
+there for the feed to carry.
