@@ -902,6 +902,29 @@ down: **a hook contract's guarantees are its event ordering and its units, and
 neither is visible in a field list.** Probing costs one session; assuming costs
 a feed that looks healthy and is wrong.
 
+**The postscript, and the one part of this decision that is now machine-checked
+(sprint 013).** Everything above landed in sprint 012 — schema, registry
+section, rules.md exception, this decision — and neither publisher wrapper was
+taught the namespace. `kdash-pub` refused every `ghcp:*` write as off-contract
+for as long as the contract said it was legal, and it was found by a consumer
+repo's live acceptance rather than by anything here.
+
+Both per-language gates were green throughout, and correctly so: each tests its
+own side against itself. Nothing compared the contract to the enforcement,
+because declaring a family is an edit to `contracts/` and accepting one is an
+edit to `publishers/`, and no gate read both. **A decision recorded in three
+documents and no code is a decision the code can contradict silently** — which
+is the same failure shape as CD-20's silent join and this decision's own
+millisecond `ts`: nothing errors, the wrong thing just happens.
+
+`scripts/check.py` now holds `contracts/registry.md`'s families against both
+`NAMESPACES` allowlists in both directions — a documented family no publisher
+accepts, and an accepted namespace the registry does not document, are each a
+failing gate. It lives in `check-docs` because that is the only gate positioned
+to read both sides; it reads them as text, so it stays free of the network and
+git-credential cost CD-11 keeps out of that gate. The general rule, for the
+next family: **adding one is two edits, and `just check` now insists on both.**
+
 ## Open questions
 
 - **OQ-2 — Redis ACL writer/reader split** (see CD-2).
