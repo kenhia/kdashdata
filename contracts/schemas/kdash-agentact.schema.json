@@ -1,0 +1,119 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/kenhia/kdashdata/contracts/schemas/kdash-agentact.schema.json",
+  "title": "kdash agent activity",
+  "description": "Payload of kdash:agentact:{host}:{sid} — latest-value EXPIRING (STRING JSON, SET .. EX), exactly 4 segments. One coding agent's liveness at one tick, as observed from OUTSIDE the agent by a process monitor (klaude-top) reading /proc, rather than reported by the agent about itself. That is the whole reason the family exists: an agent that has hung cannot publish that it has hung, so the one signal worth having is the one it is not the author of. Key absence means no monitor is running on that host, which is NOT the same as no agent running there — a reader must render it as unknown, never as idle. {host} is the publishing host's lowercase hostname; {sid} is the agent session's id, and BOTH tokens are deliberately identical to claude:session:{host}:{sid} so a reader joins the two families on the key with no lookup and no mapping table (CD-20). For Claude Code that identity is exact and verified: the hooks publish claude:session keyed on the hook's session_id, and the transcript file klaude-top locates is named <session_id>.jsonl, so the uuid klaude-top derives from the filename IS the hooks' sid. TTL is the publisher's cadence x3 per rules.md (klaude-top ticks at 2 s, so ~10 s at every tick and ~15 s at every other). Fields mirror klaude-top's --json Snapshot contract (internal/monitor/monitor.go) field-for-field and in its units; `ts` there is already unix seconds float, so nothing on this path converts anything. Only `verdict` and `ts` are required: a tick that could not read some counter publishes the fields it has rather than nothing at all, because a partial liveness signal is still liveness.",
+  "type": "object",
+  "required": ["verdict", "ts"],
+  "additionalProperties": true,
+  "properties": {
+    "verdict": {
+      "type": "string",
+      "enum": ["WAITING", "WORKING", "TOOL", "STALLED"],
+      "description": "The monitor's judgement of this session. WAITING: the turn ended and it is the operator's move — the only state where nothing happening is correct. WORKING: owes a reply and something is moving. TOOL: owes a reply, quiet at the top level, but a child process is alive — a long tool call, not a stall. STALLED: owes a reply, quiet, and nothing is running; this is the state the feed exists to surface. UPPERCASE on purpose — it is klaude-top's own vocabulary, carried verbatim rather than case-folded to match this repo's lowercase keys, because a transform is a second place for the two ends to disagree about what a state is called. An unrecognised value distrusts the whole record rather than defaulting, exactly as claude:session's `status` does."
+    },
+    "ts": {
+      "type": "number",
+      "exclusiveMinimum": 0,
+      "maximum": 100000000000,
+      "description": "Unix seconds (float) of this tick, per the ts-everywhere rule in rules.md. Present even though the key also carries a TTL: the TTL says whether a monitor is alive, `ts` says how old this particular reading is, and a reader that wants to age a row within the TTL window needs the second. Positive because it is rendered as an age. Bounded above at 1e11 — the year 5138 — so a publisher that ever hands this field milliseconds fails the schema instead of publishing a record that reads as permanently fresh (readers treat negative ages as skew). klaude-top already emits unix seconds float here, so the bound guards a future writer rather than the current one."
+    },
+    "name": {
+      "type": "string",
+      "description": "The session's label, as klaude-top derived it, and the field a panel puts at the head of the row. Free text, display only, nothing branches on it. Derivation, in order: the `-n <name>` karc gave the session if it is a leg, else the basename of the process's cwd, else `?`. THE FIRST CASE IS THE POINT — an overseen karc leg carries the name the overseer launched it under (`overseen 2747`), so the row Ken is looking at is identifiable as the leg he is watching rather than as a pid on a host. That is this feed's stated purpose, so treat `name` as a first-class field even though it is optional. Optional because the derivation has a fallback but no guarantee, and because a tick that could not read `/proc` for it still publishes a verdict."
+    },
+    "turn": {
+      "type": "string",
+      "description": "Human-facing label for where the turn stands, as klaude-top derives it from the transcript. Free text: it is display, not a state machine — `verdict` is the field to branch on."
+    },
+    "state": {
+      "type": "string",
+      "description": "The process state letter from /proc (R, S, D, Z, ...). Diagnostic; a panel showing a stalled agent may want it, nothing should branch on it."
+    },
+    "pid": {
+      "type": "integer",
+      "exclusiveMinimum": 0,
+      "description": "The agent process id on {host}. Useful for an operator about to go and look, and meaningless anywhere else — it is not an identity across ticks (a restarted session keeps its sid and gets a new pid), so never key on it."
+    },
+    "uptime": {
+      "type": "number",
+      "minimum": 0,
+      "description": "Seconds since the agent process started. Not the session's age: a resumed session is older than its process."
+    },
+    "cpu": {
+      "type": "number",
+      "minimum": 0,
+      "description": "CPU percent over the last tick, summed across the process subtree. Can exceed 100 on a multicore host — that is a busy agent, not a bad reading."
+    },
+    "in": {
+      "type": "number",
+      "minimum": 0,
+      "description": "Bytes-per-second read rate over the last tick. Sustained `in` with no transcript growth is the network-glitch shape klaude-top was built to catch."
+    },
+    "out": {
+      "type": "number",
+      "minimum": 0,
+      "description": "Bytes-per-second write rate over the last tick."
+    },
+    "disk": {
+      "type": "number",
+      "minimum": 0,
+      "description": "Bytes-per-second of actual block-device I/O over the last tick, as distinct from `in`/`out`, which count bytes through the syscall layer and so include the page cache."
+    },
+    "rss": {
+      "type": "integer",
+      "minimum": 0,
+      "description": "Resident set size in BYTES, not kilobytes and not pages. Stated because /proc reports this quantity in three different units depending on which file you read, and a panel that picks the wrong one is wrong by 4096."
+    },
+    "threads": {
+      "type": "integer",
+      "minimum": 0,
+      "description": "Thread count of the agent process."
+    },
+    "kids": {
+      "type": "integer",
+      "minimum": 0,
+      "description": "Live child processes. The field that separates TOOL from STALLED: quiet with children is a tool running, quiet without them is nothing running at all."
+    },
+    "sockets": {
+      "type": "integer",
+      "minimum": 0,
+      "description": "All ESTABLISHED sockets held by the subtree."
+    },
+    "api_sockets": {
+      "type": "integer",
+      "minimum": 0,
+      "description": "ESTABLISHED connections to :443 — the subset of `sockets` that plausibly reaches the model API. Zero while the agent owes a reply is the specific reading klaude-top was written to make visible."
+    },
+    "quiet": {
+      "type": "number",
+      "minimum": 0,
+      "description": "Seconds since the last observed sign of work. This is the number a panel renders beside a row ('quiet 4m'), and the one the verdict's stall threshold is applied to upstream — the threshold itself stays with klaude-top and is deliberately not published, so a panel cannot disagree with the monitor about what counts as stalled."
+    },
+    "transcript_growth": {
+      "type": "integer",
+      "description": "Bytes the transcript file grew during the last tick. Zero is the ordinary quiet reading. It may be NEGATIVE when a transcript is rotated or truncated, which means the bookkeeping moved rather than that work un-happened, so there is no minimum here."
+    },
+    "transcript_age": {
+      "type": ["number", "null"],
+      "minimum": 0,
+      "description": "Seconds since the transcript file was last modified, or NULL when no transcript could be located for this process. Explicitly nullable because klaude-top publishes it as a pointer and emits JSON null rather than omitting the field: null means 'looked and did not find', which is a different fact from absent, and a reader that coerces it to 0 reports a hung session as having just written."
+    },
+    "transcript": {
+      "type": "string",
+      "description": "Absolute path to the session's transcript file on {host}, as klaude-top located it. Optional and purely diagnostic — it is meaningful only on the publishing host, so nothing branches on it and no panel should render it as a link. Documented rather than left to the additive rule because klaude-top emits it on every tick, so a reader will meet it; and because it is the field {sid} is DERIVED from (basename minus `.jsonl`), which makes it look like an identity it is not. The key is authoritative for {sid}; this is where that value came from, not a second copy of it."
+    },
+    "cpu_hist": {
+      "type": "array",
+      "maxItems": 24,
+      "items": { "type": "number", "minimum": 0 },
+      "description": "Optional bounded CPU history, oldest first, so a panel can draw a sparkline without keeping its own per-session ring. NOT emitted by klaude-top today — its Snapshot marks the history slices `json:\"-\"`, terminal-UI only — so this is a slot the contract opens rather than a field to expect; a reader must work with it absent. Capped at 24 because an uncapped array in a value republished every 2 s is how a Redis fills up quietly."
+    },
+    "in_hist": {
+      "type": "array",
+      "maxItems": 24,
+      "items": { "type": "number", "minimum": 0 },
+      "description": "Optional bounded read-rate history, oldest first, same cap and same caveat as `cpu_hist`: klaude-top does not emit it yet."
+    }
+  }
+}

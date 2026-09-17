@@ -14,7 +14,7 @@ stem answers today, and a move is an edit to the store, not to any consumer.
 | Home | khlenv stem | Value today | Auth | Holds |
 |---|---|---|---|---|
 | Central | `KDASH_CENTRAL_REDIS` (legacy alias `KPIDASH_REDIS`) | `rpi53:6379` | `REDISCLI_AUTH` (krot: rpi53-redis-password) | `kpidash:*`, `kdash:*` |
-| Claude feed (CD-7, relocated) | `KDASH_CLAUDE_REDIS` | `rpi53:6379` | `REDISCLI_AUTH` (krot: rpi53-redis-password) | `claude:*` |
+| Claude feed (CD-7, relocated) | `KDASH_CLAUDE_REDIS` | `rpi53:6379` | `REDISCLI_AUTH` (krot: rpi53-redis-password) | `claude:*`, `ghcp:*` |
 | Workstation pair (CD-8) | per-app env (no stem yet) | dev pair `rpidash2:6380`; work pair its own | per-app env | `kvscf:*` — stays with the pair by design |
 | Dashboard-local | none — `127.0.0.1:6379` by definition | `127.0.0.1:6379` on each dashboard host | none/local | `<dashboard>:*` |
 
@@ -104,6 +104,7 @@ first key arrived with the publisher wrappers in sprint 003.
 | `kdash:selftest:{host}` | latest-value, expiring | either publisher wrapper, on demand | 300 s | [selftest](schemas/kdash-selftest.schema.json) |
 | `kdash:panel:{host}` | latest-value, ts-owned | kdeskdash, on demand (a button press) | none | [panel](schemas/kdash-panel.schema.json) |
 | `kdash:stale:{host}:{deployer}` | latest-value, presence-owned | each deployer, on a skipped deploy | none (never) | [stale](schemas/kdash-stale.schema.json) |
+| `kdash:agentact:{host}:{sid}` | latest-value, expiring | klaude-top `--publish` (~2 s tick) | ~10 s | [agentact](schemas/kdash-agentact.schema.json) |
 
 `selftest` is a publish canary, not a dashboard feed: running it from a host
 proves that host's whole publish path — khlenv discovery, `REDISCLI_AUTH`, key
@@ -210,6 +211,165 @@ dashboard wants it through libkdash it needs a **SCAN over
 `kdash:stale:{host}:*`** and a parse (both identity segments come off the key),
 not the single GET the other two `kdash:*` feeds use.
 
+`agentact` is the family's first **observed-from-outside** feed, and the first
+whose key is deliberately a *copy* of another family's (CD-20). Everything else
+here is a thing reporting on itself: a client publishes its own health, a
+deployer publishes its own skip, a session's hooks publish that session's
+status. This one is a process monitor — klaude-top, reading `/proc` on the
+host — publishing its judgement of an agent that is not consulted. That is the
+entire value: **an agent that has hung cannot publish that it has hung.**
+`claude:session` goes quiet in exactly the same way whether a session is
+thinking hard, waiting for Ken, or wedged; `kdash:agentact` is the second
+opinion that tells those apart, which is what makes an overseen karc leg on kai
+or kubs0 legible while it runs.
+
+The four verdicts are klaude-top's, carried verbatim in its own uppercase:
+`WAITING` (turn ended, the operator's move), `WORKING`, `TOOL` (quiet at the
+top level but a child is alive — a long tool call), `STALLED` (owes a reply,
+quiet, nothing running). Only `verdict` and `ts` are required; a tick that
+could not read a counter publishes what it has, because a partial liveness
+signal is still liveness.
+
+**`name` is the row's label, and for a karc leg it is the leg's own name.**
+klaude-top derives it from the `-n <name>` karc gave the session, falling back
+to the cwd basename — so an overseen leg publishes as `overseen 2747` rather
+than as a pid on a host, and the row Ken is looking at is identifiable as the
+leg the overseer launched. That is what this feed is for, so a panel should
+treat `name` as the first-class display field even though the schema marks it
+optional. `transcript` rides along beside it as the host-local path klaude-top
+found: diagnostic only, meaningless off-host, and worth knowing about mainly
+because `{sid}` is *derived* from it (basename minus `.jsonl`), which makes it
+look like an identity it is not — the key stays authoritative.
+
+**The key is the join, and the join is verified rather than assumed.**
+`{host}` and `{sid}` are the same two tokens as
+`claude:session:{host}:{sid}`, so a reader holding one row has the other's key
+already — no lookup, no mapping table, no third key to keep in step. It works
+because the identity is genuinely one thing wearing two hats: the hooks key on
+Claude Code's `session_id`, and the transcript file klaude-top locates is named
+`<session_id>.jsonl`, so the uuid klaude-top takes off the filename *is* the
+hooks' `{sid}`. Confirmed live on kai in sprint 012 against a running session.
+The two families stay independently publishable — either can be absent — and a
+reader must treat a missing `agentact` row as *unknown*, never as idle: key
+absence here means no monitor is running on that host, which is not a statement
+about the agent.
+
+**Key absence is deliberately weaker than on the other expiring feeds**, which
+is why it is worth spelling out. For `kpidash:client:*` absence means the
+source is offline and the card goes red. Here it means nobody is watching —
+klaude-top is Linux-and-`/proc` only, so **cleo will never write this feed**,
+and a panel that rendered absence as "no agents on cleo" would be asserting
+something it cannot know. That is a fact for the registry, not a gap to close.
+
+**Writer**: klaude-top, through `kdash-pub` — `kdash` is already in the
+namespace both wrappers accept and `ts` is stamped for free, so no new
+publisher code. klaude-top's `--json` snapshot is already the payload, in the
+right units (`ts` is unix seconds float there too) and with `snake_case`
+names, so the contract is its `Snapshot` struct rather than a translation of
+it. **Readers**: kxeneon's Agents panel reads Redis directly. No C reader ships
+with this contract — the feed is registered ahead of its consumers, as `stale`
+was.
+
+Two shapes in the schema exist to stop a specific misreading. `transcript_age`
+is explicitly nullable: `null` means klaude-top looked for a transcript and
+found none, which is a different fact from the field being absent, and a reader
+coercing it to `0` reports a hung session as having just written.
+`transcript_growth` has no minimum, because a rotated or truncated transcript
+makes it negative — the bookkeeping moved, not the work. The optional
+`cpu_hist` / `in_hist` arrays are a **slot the contract opens, not a field to
+expect**: klaude-top marks its history slices `json:"-"` today, terminal-UI
+only, so a panel wanting a sparkline either keeps its own ring or asks
+klaude-top to start emitting them. Capped at 24 either way — an uncapped array
+in a value republished every two seconds is how a Redis fills up quietly.
+
+## Family: ghcp (central, live)
+
+Owner: kdeskdash (`publisher/ghcp-pub.sh`, shipped in the same package-store
+bundle as `claude-pub.sh`); installed by k-homelab's `copilot-hooks` recipe on
+kai, kubs0 and komarchy, and by hand on cleo, exactly as the Claude hooks are.
+Endpoint: `KDASH_CLAUDE_REDIS`, answering `rpi53:6379` — the same home as
+`claude:*`, because the panels that read one read the other in the same pass.
+
+| Key | Type / pattern | Schema | Notes |
+|---|---|---|---|
+| `ghcp:session:{host}:{sid}` | HASH, TTL 7200 s | [session](schemas/ghcp-session.schema.json) | field-for-field `claude:session`'s shape; `{sid}` is Copilot's own `sessionId` uuid; sessionEnd DELs the key |
+
+**Not grandfathered — new, and frozen from day one.** `ghcp:` is
+grandfathered-*shaped*: it sits outside the `kdash:<family>:` namespace
+rules.md reserves for new shared feeds. That is a deliberate exception rather
+than a slip. kxeneon's reader and the sprint-004 ruling already spell it this
+way, and renaming a family to satisfy a naming rule — before it has a single
+writer — would spend the one thing the rule exists to protect. The consequence
+travels with the exception: because it is new, there is nothing to migrate
+opportunistically and no historical shape to honour, so a change to it is a
+**versioning event** under rules.md, not a migration.
+
+**The field set is `claude:session`'s on purpose** (CD-21). Same names, same
+meanings, same required pair, same resurrection-race guard. Copilot is not
+Claude and a field set designed for it alone would be a better description of
+Copilot — and would double every consumer's parsing and display code for the
+privilege. kxeneon's `parse_session`, libkdash's derivation and CD-16's
+attention ladder apply to both families unchanged, and a session row renders
+identically whichever agent produced it. Anything Copilot has that Claude does
+not can arrive later as an added field; the additive rule already allows it.
+
+**What a Copilot hook cannot say, measured.** The user-level hook set was
+probed live on kai against Copilot CLI 1.0.83 in sprint 012 — a temporary hook
+file declaring every candidate event, two real sessions, and the stdin of each
+event captured. The complete set is `sessionStart`, `sessionEnd`,
+`userPromptSubmitted`, `preToolUse`, `postToolUse`, `errorOccurred`; six
+speculative names (`turnEnd`, `responseCompleted`, `stop`, `assistantMessage`,
+`notification`, `preCompact`) fired nothing and drew no warning, so **a
+mistyped event name in a hook file fails silently** — worth knowing for the
+recipe that installs one. Every payload carries `sessionId`, `timestamp` and
+`cwd`; `sessionStart` adds `source` and `initialPrompt`, the tool events add
+`toolName`/`toolArgs` (and `postToolUse` a `toolResult`), and `sessionEnd`
+adds `reason`.
+
+Three consequences the schema states and a reader must hold:
+
+- **There is no turn-end event.** Nothing fires when the agent finishes
+  replying. So a publisher can raise `working` and can DEL on `sessionEnd`, and
+  can never observe a session becoming `awaiting`. A Copilot session that is
+  really waiting for its user keeps saying `working` until the reader's
+  freshness ladder ages it (idle at 15 min, stale at 40). That window is the
+  feed's known blind spot and the reason the ladder is not optional here.
+  `blocked` has no event either — `preToolUse` fires before a *tool*, not
+  before a permission prompt, and the probe ran `--allow-all-tools`, so the
+  approval path is recorded as unobserved rather than as absent.
+- **`timestamp` is in milliseconds.** `ts` is unix seconds everywhere in this
+  repo, so the publisher divides by 1000. Passing it through would put every
+  record a thousand-fold into the future, and since readers treat negative ages
+  as clock skew and therefore fresh, a session that ended weeks ago would show
+  as live forever with nothing reporting an error anywhere. **The schema bounds
+  `ts` and `started_ts` at 1e11** — the year 5138 in seconds, which every
+  millisecond stamp after 1973 exceeds — so the slip is a validation failure
+  rather than a convincing record. That bound was added because a negative test
+  caught the prose version letting one straight through: this family's whole
+  documented hazard, and the documentation did not stop it. `claude:session`'s
+  `ts` carries no such bound, which is the one place the two families
+  deliberately differ (see the follow-up on that family).
+- **`userPromptSubmitted` fires *before* `sessionStart`** — reproducibly, by
+  about 4 ms, in `-p` mode. A publisher that treats `sessionStart` as "the
+  first write" clobbers a record that already exists; taking `started_ts` from
+  the payload's own stamp is correct in either order.
+
+`model` and `title` are consequently **normally absent**: no hook event carries
+either. The claude family fills them from the transcript; Copilot's equivalent
+state sits in `~/.copilot/session-state/<id>/`, which a hook could read but
+which no hook hands it. Both fall back to `project` in the view, which costs
+the consumer nothing because that fallback already exists.
+
+**No usage feed, and no `ghcp:limits`.** The sprint-004 ruling stands:
+Microsoft-managed quota numbers carry no signal that changes on a dashboard's
+timescale. A `ghcp:recent` remains optional and unschema'd until somebody wants
+it — `sessionEnd` carries the `reason` it would need (`complete` on a clean
+exit), so it is one extra `LPUSH` in the same batch on the day it is asked for.
+
+**Readers**: kxeneon's Agents panel, which already reads this key pattern and
+whose field guesses this contract replaces. kdeskdash's claude mode may follow.
+No C reader ships with this contract.
+
 ## Family: claude (central, live)
 
 Owner: the Claude-activity publisher (`publisher/claude-pub.sh` + Claude Code
@@ -287,4 +447,6 @@ kvscf keeps the pair endpoint — the shared default decoupled at that flip.
 ## Reserved
 
 - `kdash:<family>:<…>` — the namespace for new shared feeds (rules.md).
-  `selftest`, `panel` and `stale` are the families in it so far.
+  `selftest`, `panel`, `stale` and `agentact` are the families in it so far.
+- `ghcp:*` — outside that namespace by a named exception (CD-21), not by
+  omission. New, frozen from day one, and not a migration candidate.

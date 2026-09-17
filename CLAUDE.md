@@ -85,10 +85,18 @@ korg:2217). The publishers then joined the fleet's per-host secrets file, ahead
 of the per-user files CD-12 shipped with (sprint 010, korg:2427 — one slice of
 the simplify-secrets program korg:2440), and komarchy — the laptop, which had
 been in no deploy target and was ten days behind on `kdash-pub` — became one
-and got that build (sprint 011, korg:2679). See `docs/architecture.md` (decisions
-CD-1…CD-19, open questions OQ-n), `contracts/rules.md`,
+and got that build (sprint 011, korg:2679). Most recently the contracts the
+kxeneon Agents panel is blocked on landed, code-free: `kdash:agentact` — a
+process monitor's verdict on an agent, the first family keyed deliberately to
+join `claude:session` (CD-20) — and `ghcp:session` for Copilot CLI, a new
+family outside the `kdash:` namespace by named exception and mirroring
+`claude:session` field-for-field so every consumer's ladder applies unchanged
+(CD-21) (sprint 012, korg:2747 — slice 3 of the Agents-panel program
+korg:2751). See `docs/architecture.md` (decisions
+CD-1…CD-21, open questions OQ-n), `contracts/rules.md`,
 `contracts/registry.md`, `include/kdash/kdash.h` for the consumer API, and
-`publishers/README.md` for the publish side. Next: kdeskdash adopting the
+`publishers/README.md` for the publish side. Next: the two publishers that fill
+those feeds (klaude-top korg:2748, kdeskdash korg:2755), kdeskdash adopting the
 `claude:*` readers (korg:2218, work item 1783), or kstudiodash's first
 consumption of the library (korg:1728).
 

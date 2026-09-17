@@ -15,6 +15,14 @@
   schema-governed.
 - **Grandfathered**: `kpidash:*`, `claude:*`, `kvscf:*` — frozen shapes,
   documented in the registry, migrated opportunistically.
+- **`ghcp:*` — one named exception** (CD-21): a *new* family that sits outside
+  `kdash:` because a consumer and a prior ruling had already spelled it that
+  way, and renaming a family with no writer yet would spend the stability the
+  namespace rule exists to buy. Being new rather than grandfathered, it has
+  nothing to migrate and is frozen from day one: a change to it is a versioning
+  event below, not an opportunistic migration. An exception is a decision with
+  a reason, recorded in [architecture](../docs/architecture.md) — not a
+  precedent. The next family outside `kdash:` needs its own.
 
 ## Key grammar
 

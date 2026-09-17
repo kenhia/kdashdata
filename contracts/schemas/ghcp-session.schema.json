@@ -1,0 +1,49 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/kenhia/kdashdata/contracts/schemas/ghcp-session.schema.json",
+  "title": "ghcp session",
+  "description": "Record of ghcp:session:{host}:{sid} — one live GitHub Copilot CLI session, on the central Redis beside claude:session. This is a Redis HASH, not a JSON string: fields are described here as the DECODED record, and every value arrives off the wire as a string. Key is exactly 4 segments; {host} and {sid} both obey the host-token contract ([A-Za-z0-9._-], 1..63), the key is authoritative for {host}, and {sid} is Copilot's own sessionId uuid, delivered on every hook's stdin and matching the ~/.copilot/session-state/<id>/ directory. TTL 7200 s, re-armed on every lifecycle write; sessionEnd DELs the key. THE FIELD NAMES AND SEMANTICS ARE claude-session.schema.json's, ON PURPOSE (CD-21): every consumer's display ladder — libkdash's derivation, kxeneon's parse_session — then applies to both families unchanged, which is worth more than naming anything more accurately. `status` and `ts` are the whole liveness contract and a record missing either is rejected outright, the same resurrection-race guard the claude family carries. UNLIKE that family, this one is NOT grandfathered: it is frozen in this shape from day one, so a change here is a versioning event (rules.md) and not a migration. WHAT A COPILOT HOOK CANNOT SAY is the part a reader must internalise, and it is measured rather than assumed — see `status`.",
+  "type": "object",
+  "required": ["status", "ts"],
+  "additionalProperties": true,
+  "properties": {
+    "host": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9._-]{1,63}$",
+      "description": "Echo of the key's host segment; the key is authoritative. Supplied by the publisher, not by the hook — Copilot's hook payloads carry no hostname."
+    },
+    "project": {
+      "type": "string",
+      "description": "Basename of the session's cwd, POSIX or Windows style. Derived by the publisher from the hook's `cwd`, which every Copilot hook event carries."
+    },
+    "cwd": {
+      "type": "string",
+      "description": "Session working directory, verbatim, from the hook payload's `cwd`. Note this is the directory Copilot was STARTED in and it appears on every event, so it needs no caching across the session."
+    },
+    "status": {
+      "type": "string",
+      "enum": ["working", "awaiting", "blocked"],
+      "description": "Published status, the same three values and the same meanings as claude:session. THE ENUM IS WIDER THAN COPILOT CAN FILL, and that is a deliberate consequence of mirroring the claude family rather than an oversight. Measured against Copilot CLI 1.0.83 on kai (sprint 012, live probe on every documented hook event): the complete user-level hook set is sessionStart, sessionEnd, userPromptSubmitted, preToolUse, postToolUse, errorOccurred, and there is NO turn-end event — nothing fires when the agent finishes replying and hands control back. So a hooks publisher can raise `working` (on userPromptSubmitted, refreshed by pre/postToolUse) and can clear the key (on sessionEnd), and it can never observe the moment a session becomes `awaiting`. `blocked` — the agent sitting on a question it cannot proceed past — has no corresponding event either; preToolUse fires before a tool runs, not before a permission prompt, and the probe ran with --allow-all-tools so the approval path was never exercised and is recorded here as unobserved rather than absent. CONSEQUENCE FOR READERS: a Copilot session that is really waiting for its user keeps saying `working` until the reader's own freshness ladder ages it (fresh -> idle at 15 min -> stale at 40 min). That window is the feed's known blind spot, it is the reason the ladder is not optional for this family, and a panel that trusts `working` without applying it is rendering a stale claim as a live one. Should Copilot later grow a turn-end hook, the publisher gains `awaiting` with no change to this schema — the field is already here, which is the point of mirroring."
+    },
+    "ts": {
+      "type": "integer",
+      "exclusiveMinimum": 0,
+      "maximum": 100000000000,
+      "description": "Unix SECONDS of the last lifecycle event, per rules.md. Drives the reader's freshness ladder; a non-numeric value rejects the record. THE UNIT IS THE TRAP ON THIS FEED: Copilot's hook stdin delivers `timestamp` in MILLISECONDS (measured: 1789620973658), so the publisher must divide by 1000. A pass-through publishes a stamp roughly a thousand times further in the future than now, and because readers treat negative ages as clock skew and therefore fresh (rules.md, Payloads), every such record would read as permanently, convincingly fresh — a session that ended weeks ago still showing as live, with nothing anywhere reporting an error. THAT IS WHY THE BOUNDS ARE HERE AND NOT JUST IN THIS SENTENCE: 1e11 seconds is the year 5138, and every millisecond stamp after 1973 exceeds it, so a unit slip is a schema violation rather than a plausible-looking record. Documenting the trap and leaving the schema to accept it would have caught nobody. Integer, like the claude family's, rather than the float the kdash:* families use. (claude-session.schema.json's own `ts` carries no such bound; the two families are otherwise field-for-field identical, and that difference is deliberate — this family's writer converts units on every write and its is a new contract with no installed writer to break.)"
+    },
+    "started_ts": {
+      "type": "integer",
+      "exclusiveMinimum": 0,
+      "maximum": 100000000000,
+      "description": "Unix seconds of session start, from the sessionStart event's `timestamp` (milliseconds — divide, as for `ts`, and bounded for the same reason: it comes off the same millisecond source and is the same slip). Take it from the PAYLOAD and never from the publisher's own clock at write time, because the two hooks do not fire in the order their names suggest: measured twice on kai, userPromptSubmitted fires ~4 ms BEFORE sessionStart in non-interactive (-p) mode, and sessionStart then arrives carrying `source` and `initialPrompt`. A publisher that treats sessionStart as 'the first write' will clobber a record that already exists; one that reads the stamps is correct either way round."
+    },
+    "model": {
+      "type": "string",
+      "description": "Friendly model label. NORMALLY ABSENT, and that is a property of the source rather than a gap in the publisher: Copilot's hook payloads carry sessionId, timestamp and cwd plus per-event extras, and no model field on any of the six events. (The claude family fills this from the transcript; Copilot's equivalent state lives in ~/.copilot/session-state/<id>/, which a hook could read but which no hook hands it.) Renders as an unknown model, not as a wrong one."
+    },
+    "title": {
+      "type": "string",
+      "description": "Session name. NORMALLY ABSENT for the same reason as `model` — no hook event carries one. An empty or absent title falls back to `project` in the view, which is the same fallback the claude family already uses, so this costs the consumer nothing."
+    }
+  }
+}
