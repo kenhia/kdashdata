@@ -792,6 +792,116 @@ orderings either break hosts that have not been granted access yet, or require
 this repo to grant group membership, which is k-homelab's manifest and not
 kdashdata's to write.
 
+## CD-20 — Two families join on a shared key, and the shared identity is verified before it is relied on
+
+`kdash:agentact:{host}:{sid}` (sprint 012) carries a process monitor's verdict
+on a Claude Code session. `claude:session:{host}:{sid}` carries that session's
+own published status. A panel wants both on one row, and the cheapest way to
+get them there is for the second key to be derivable from the first — which is
+what happens when the two families use the same tokens in the same positions.
+A reader holding one row has the other's key already: no lookup, no mapping
+table, no third key to keep in step, no join at all in the sense that would
+need code.
+
+It is the first time a `kdash:*` family has deliberately mirrored a
+grandfathered family's key, and the rule that makes it safe is the one that
+was easy to skip: **the shared identity has to be an identity, and you have to
+go and check.**
+
+Here it is genuinely one thing wearing two hats. The Claude Code hooks key
+`claude:session` on the hook payload's `session_id`. klaude-top never sees a
+hook — it locates the session's transcript file from `/proc` — and that file
+is named `<session_id>.jsonl`, so the uuid it takes off the filename *is* the
+hooks' `{sid}`. That was confirmed live on kai against a running session
+(`$CLAUDE_CODE_SESSION_ID` equal to the transcript's basename, and
+`claude-pub.sh` keying on the hook's `session_id`) rather than inferred from
+two things looking uuid-shaped.
+
+**The failure this avoids is silent and total.** Two families keyed on tokens
+that merely *resemble* each other produce a join that returns nothing —
+correctly, at every level: both publishers work, both readers parse, every key
+is well-formed, and the panel simply never shows the two halves together. There
+is no error to notice and no malformed record to skip. Every other contract
+fault in this repo announces itself somewhere; this one would have looked like
+a feature nobody got round to finishing.
+
+**What the shared key does not create is a dependency.** Either family may be
+absent and each is independently publishable. So a missing `agentact` row means
+*unknown* — nobody is monitoring that host — and never *idle*. That distinction
+matters concretely: klaude-top is Linux-and-`/proc` only, so cleo will never
+write this feed, and a panel rendering absence as "no agents here" would be
+asserting something no writer ever said. Key absence on the other expiring
+feeds means the source is offline; on this one it means nobody is looking.
+
+The general rule for the next family tempted by this: **borrowing another
+family's key tokens is a contract with that family**, so name the borrowing in
+both registry entries, verify the identity against running data, and say what
+absence means on each side — because the shapes will keep matching long after
+the meanings stop.
+
+## CD-21 — A new family may sit outside `kdash:`, and mirroring a sibling's field set beats describing itself accurately
+
+`ghcp:session:{host}:{sid}` (sprint 012) is the Copilot CLI's session feed. It
+breaks two of this repo's defaults at once, and both breaks buy the same thing.
+
+**It is outside the `kdash:` namespace.** rules.md reserves
+`kdash:<family>:<…>` for new shared feeds, and this is a new shared feed. But
+kxeneon's Agents panel already read `ghcp:session:*`, and the sprint-004 ruling
+already spelled it that way, so the name existed in a consumer and in a
+decision before it existed in Redis. Renaming a family that has no writer yet,
+to satisfy a rule whose entire purpose is that names stay put, would spend
+exactly what the rule protects. The exception is recorded in rules.md as a
+decision with a reason rather than left to be inferred from the registry, and
+it carries its own consequence: being *new* rather than grandfathered, `ghcp:*`
+has nothing to migrate opportunistically and is frozen from day one, so a
+change to it is a versioning event and not a migration. The next family
+tempted outside `kdash:` needs its own argument; this one is not a precedent.
+
+**Its field set is `claude:session`'s, not Copilot's.** Same names, same
+meanings, same required `status`/`ts` pair, same resurrection-race guard —
+including an enum wider than Copilot can fill. Copilot is not Claude, and a
+field set designed for it alone would describe it more accurately. It would
+also double every consumer's parsing and display code for the privilege:
+kxeneon's `parse_session`, libkdash's derivation and CD-16's attention ladder
+all apply to both families unchanged only because the records are the same
+record. A session row renders identically whichever agent produced it, and
+anything Copilot has that Claude does not can arrive later as an added field,
+which the additive rule already allows. **Consumer reuse beat descriptive
+accuracy, deliberately** — that is the decision, and it is the one to revisit
+if the two agents ever diverge in what they can report rather than in what they
+are called.
+
+**The measured half, and why it is in the contract rather than in the
+publisher.** The hook set was probed live on kai against Copilot CLI 1.0.83: a
+temporary hook file declaring every candidate event, two real sessions, each
+event's stdin captured. Three findings shape what this feed can mean, and none
+was guessable from the field names.
+
+There is **no turn-end event** — the complete set is `sessionStart`,
+`sessionEnd`, `userPromptSubmitted`, `preToolUse`, `postToolUse`,
+`errorOccurred`, and nothing fires when the agent finishes replying. So a
+publisher can raise `working` and can DEL on `sessionEnd`, and can never
+observe `awaiting`. A Copilot session genuinely waiting on its user keeps
+saying `working` until the reader's freshness ladder ages it. That blind spot
+is the feed's, not a publisher bug, which is why it is stated in the schema
+where a reader meets it rather than in the code that could not have avoided it.
+
+`timestamp` arrives in **milliseconds**, and `ts` is unix seconds everywhere
+here. A pass-through would put every record a thousand-fold into the future,
+and since readers treat negative ages as clock skew and therefore fresh, a
+session that ended weeks ago would read as live forever — with every publisher
+succeeding, every reader parsing, and nothing anywhere reporting an error. The
+same shape as CD-20's silent join failure, from the opposite direction: a unit
+mismatch does not fail, it lies.
+
+And `userPromptSubmitted` fires **before** `sessionStart`, reproducibly, in
+`-p` mode. A publisher treating `sessionStart` as the first write clobbers a
+record that already exists; taking `started_ts` from the payload's own stamp is
+correct in either order. The general form, and the reason all three are written
+down: **a hook contract's guarantees are its event ordering and its units, and
+neither is visible in a field list.** Probing costs one session; assuming costs
+a feed that looks healthy and is wrong.
+
 ## Open questions
 
 - **OQ-2 — Redis ACL writer/reader split** (see CD-2).
