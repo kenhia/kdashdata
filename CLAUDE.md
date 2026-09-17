@@ -92,13 +92,20 @@ join `claude:session` (CD-20) — and `ghcp:session` for Copilot CLI, a new
 family outside the `kdash:` namespace by named exception and mirroring
 `claude:session` field-for-field so every consumer's ladder applies unchanged
 (CD-21) (sprint 012, korg:2747 — slice 3 of the Agents-panel program
-korg:2751). See `docs/architecture.md` (decisions
+korg:2751). That contract then caught the publishers out: 012 legalised `ghcp`
+in the schema, the registry and the rules and taught neither `NAMESPACES`
+allowlist, so every `ghcp:*` write was refused as off-contract while the
+contract called it legal. Sprint 013 (korg:2788, slice 3.5) taught both sides
+and added the gate that compares them — `check-docs` now holds
+`contracts/registry.md`'s families against both publisher allowlists in both
+directions, which is the one check neither per-language gate could ever make.
+See `docs/architecture.md` (decisions
 CD-1…CD-21, open questions OQ-n), `contracts/rules.md`,
 `contracts/registry.md`, `include/kdash/kdash.h` for the consumer API, and
-`publishers/README.md` for the publish side. Next: the two publishers that fill
-those feeds (klaude-top korg:2748, kdeskdash korg:2755), kdeskdash adopting the
-`claude:*` readers (korg:2218, work item 1783), or kstudiodash's first
-consumption of the library (korg:1728).
+`publishers/README.md` for the publish side. Next: kdeskdash's Copilot
+publisher, unblocked by 013 (korg:2755) and the k-homelab recipe behind it
+(korg:2756); kdeskdash adopting the `claude:*` readers (korg:2218, work item
+1783); or kstudiodash's first consumption of the library (korg:1728).
 
 This line is gated: `scripts/check.py` fails if it does not name the
 newest `sprints/` record, so a sprint cannot ship leaving it behind again

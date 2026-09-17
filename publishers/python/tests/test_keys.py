@@ -33,6 +33,8 @@ class GovernedKeys(unittest.TestCase):
             "kpidash:services:sonarr:_",
             "claude:session:kai:abc-123",
             "claude:limits",
+            # The key sprint 012 legalised and this side refused (WI 2781).
+            "ghcp:session:kai:abc-123",
             "kvscf:instances:cleo",
             "kdeskdash:active_mode",
         ]:

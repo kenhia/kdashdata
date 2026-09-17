@@ -1,14 +1,23 @@
 #!/usr/bin/env python3
 """Repo gate: JSON parses, markdown links resolve, every schema is
-registered, every PowerShell script is pure ASCII, and CLAUDE.md's Status
-line names the newest sprint record.
+registered, the registry's families match both publishers' allowlists, every
+PowerShell script is pure ASCII, and CLAUDE.md's Status line names the newest
+sprint record.
 
 Stdlib only, by design — this repo carries contracts and docs, and its
 failure modes are a schema that doesn't parse, a stale cross-reference, a
 feed whose schema landed without anyone telling the registry about it,
-(since sprint 004) a non-ASCII byte in the deploy script cleo runs, and
+(since sprint 004) a non-ASCII byte in the deploy script cleo runs,
 (since sprint 009) an orientation file that has quietly stopped describing
-the repo.
+the repo, and (since sprint 013) a family legalised in prose that the code
+still refuses.
+
+That last one is the reason this gate reaches into `publishers/` at all, and
+it is worth being explicit about: the per-language gates cannot catch it.
+`check-rust` and `check-python` each test their own side against themselves,
+so both were green the whole time `ghcp:*` was documented and refused. Only a
+check that reads the registry and both arrays can compare them, and this is
+the only gate positioned to do it.
 
 The code gates live elsewhere: `just check-python`, `just check-rust`, and the
 CMake build plus ctest.
@@ -28,6 +37,17 @@ SKIP_PREFIXES = (".venv",)
 LINK_RE = re.compile(r"\[[^\]]*\]\(([^)\s]+)\)")
 SCHEMA_DIR = ROOT / "contracts" / "schemas"
 REGISTRY = ROOT / "contracts" / "registry.md"
+RUST_KEYS = ROOT / "publishers" / "rust" / "src" / "keys.rs"
+PYTHON_KEYS = ROOT / "publishers" / "python" / "src" / "kdash_pub" / "keys.py"
+#: `## Family: ghcp (central, live)` — name, then the parenthetical carrying
+#: the family's status (`live`, `migrating` or `retired`, per registry.md).
+FAMILY_RE = re.compile(r"^## Family:\s*(\S+)\s*\((.*)\)\s*$", re.MULTILINE)
+#: The dashboard-local table's first column: `| `kdeskdash:*` | each ... |`.
+LOCAL_NS_RE = re.compile(r"^\|\s*`([A-Za-z0-9_-]+):\*`\s*\|", re.MULTILINE)
+#: Both allowlists, each a flat list of string literals.
+RUST_NS_RE = re.compile(r"pub const NAMESPACES: &\[&str\] = &\[(.*?)\];", re.DOTALL)
+PYTHON_NS_RE = re.compile(r"^NAMESPACES = \((.*?)\)", re.DOTALL | re.MULTILINE)
+STRING_RE = re.compile(r'"([^"]*)"')
 SPRINTS = ROOT / "sprints"
 CLAUDE_MD = ROOT / "CLAUDE.md"
 #: `007-panel-control-feed.md`, or a `007-panel-control-feed/` directory — the
@@ -49,6 +69,109 @@ def repo_files(suffix: str):
         rel = path.relative_to(ROOT)
         if not skipped(rel):
             yield path
+
+
+def documented_namespaces(registry_text: str, errors: list) -> set:
+    """Every namespace contracts/registry.md says exists.
+
+    Two sources, because the registry describes two kinds. Schema-governed
+    families get a `## Family:` heading; dashboard-local state is listed for
+    visibility in its own table and never gets one. Both are legal to publish
+    to — `kstudiodash:*` is documented as holding nothing at all and is still
+    in both allowlists — so both belong in the comparison.
+
+    `retired` families are excluded: the registry's own vocabulary says a
+    retired family is no longer written, so requiring the publishers to keep
+    accepting it would be this check enforcing the opposite of the contract.
+    """
+    names = set()
+    for name, parenthetical in FAMILY_RE.findall(registry_text):
+        if "retired" in parenthetical.lower():
+            continue
+        names.add(name)
+    if not names:
+        errors.append(
+            "contracts/registry.md: no `## Family:` heading parsed — either "
+            "the registry lost its families or this gate's parser no longer "
+            "matches it. An empty result here would silently pass every "
+            "namespace check below, so it is a failure, not a no-op"
+        )
+
+    # Bound to the dashboard-local section: the same row shape appears in the
+    # `Homes` table and in the Reserved list, and neither is a namespace
+    # declaration.
+    section = ""
+    for block in registry_text.split("\n## "):
+        if block.startswith("Dashboard-local namespaces"):
+            section = block
+            break
+    if not section:
+        errors.append(
+            "contracts/registry.md: no `## Dashboard-local namespaces` "
+            "section — this gate reads the publishable namespace list from "
+            "it, and cannot tell a missing section from an empty one"
+        )
+    names.update(LOCAL_NS_RE.findall(section))
+    return names
+
+
+def declared_namespaces(path: Path, pattern: re.Pattern, errors: list) -> set:
+    """The NAMESPACES allowlist a publisher wrapper actually enforces."""
+    rel = path.relative_to(ROOT)
+    if not path.exists():
+        errors.append(f"{rel}: missing — cannot check it against the registry")
+        return set()
+    match = pattern.search(path.read_text(encoding="utf-8"))
+    if match is None:
+        errors.append(
+            f"{rel}: no NAMESPACES array found. It was renamed, reshaped or "
+            "moved, and this gate went blind rather than failing — which is "
+            "the failure mode it exists to prevent"
+        )
+        return set()
+    return set(STRING_RE.findall(match.group(1)))
+
+
+def check_namespaces(registry_text: str, errors: list) -> None:
+    """Hold contracts/registry.md and both publisher allowlists to each other.
+
+    Sprint 012 landed `ghcp-session.schema.json`, the `Family: ghcp` registry
+    section, the rules.md namespace exception and CD-21 — and nothing taught
+    either publisher the namespace, so every `ghcp:*` write was refused with
+    "a feed with no schema in kdashdata is off-contract" while the schema sat
+    in this repo (WI 2781). Both per-language gates were green throughout.
+
+    Both directions are the contract, and the CLI's own error message states
+    the second one: a documented family the code refuses is a feed nobody can
+    write, and an accepted namespace the registry never documents is a feed
+    with no schema, which rules.md calls off-contract.
+    """
+    documented = documented_namespaces(registry_text, errors)
+    arrays = {
+        "publishers/rust/src/keys.rs": declared_namespaces(
+            RUST_KEYS, RUST_NS_RE, errors
+        ),
+        "publishers/python/src/kdash_pub/keys.py": declared_namespaces(
+            PYTHON_KEYS, PYTHON_NS_RE, errors
+        ),
+    }
+    for rel, declared in arrays.items():
+        if not declared:
+            continue  # already reported by declared_namespaces
+        for missing in sorted(documented - declared):
+            errors.append(
+                f"{rel}: registry.md documents the `{missing}` namespace and "
+                f"NAMESPACES does not list it — every write to `{missing}:*` "
+                "is refused as off-contract while the contract says it is "
+                "legal (WI 2781)"
+            )
+        for extra in sorted(declared - documented):
+            errors.append(
+                f"{rel}: NAMESPACES accepts `{extra}` and contracts/"
+                "registry.md documents no such family — rules.md calls a feed "
+                "with no schema here off-contract, so either register it or "
+                "drop it"
+            )
 
 
 def main() -> int:
@@ -81,6 +204,8 @@ def main() -> int:
                 f"contracts/registry.md: no link to schemas/{schema.name} — "
                 "every schema names a feed the registry must list"
             )
+
+    check_namespaces(registry_text, errors)
 
     # scripts/install-cleo.ps1 runs under Windows PowerShell 5.1, which reads a
     # BOM-less .ps1 as the system ANSI codepage rather than UTF-8. A UTF-8
@@ -132,7 +257,10 @@ def main() -> int:
                     if not ln.strip():
                         break
                     para.append(ln)
-            if f"sprint {newest}" not in "\n".join(para):
+            # Case-insensitive: "Sprint 013 taught both sides" opening a
+            # sentence is correct prose, and a gate that rejects it is asking
+            # for a grammatical error to satisfy a string compare.
+            if f"sprint {newest}" not in "\n".join(para).lower():
                 errors.append(
                     f"CLAUDE.md: the Status paragraph does not mention "
                     f"`sprint {newest}`, the newest sprints/ record — it "
@@ -146,7 +274,8 @@ def main() -> int:
 
     print(
         "check: all JSON parses, all markdown links resolve, "
-        "all schemas registered, all .ps1 pure ASCII, "
+        "all schemas registered, registry families match both publisher "
+        "allowlists, all .ps1 pure ASCII, "
         f"CLAUDE.md current to sprint {newest}"
     )
     return 0

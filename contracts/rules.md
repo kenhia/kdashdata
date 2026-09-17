@@ -24,6 +24,19 @@
   a reason, recorded in [architecture](../docs/architecture.md) — not a
   precedent. The next family outside `kdash:` needs its own.
 
+**Adding a family is two edits, and `just check` now insists on both.** A
+family documented here and in [registry.md](registry.md) but absent from the
+publishers' `NAMESPACES` allowlists is a feed the contract calls legal and
+every writer refuses; the reverse is a feed with no schema, which this page
+calls off-contract. `scripts/check.py` compares the registry's families against
+both allowlists in both directions, so the two can no longer drift.
+
+They did drift: sprint 012 landed the `ghcp` family — schema, registry section,
+the exception above and CD-21 — and taught neither publisher, so every
+`ghcp:*` write was refused for as long as the contract said it was legal
+(korg WI 2781, fixed in sprint 013). Both per-language gates stayed green,
+because each tests its own side against itself.
+
 ## Key grammar
 
 - Lowercase, `:`-separated segments; no spaces.

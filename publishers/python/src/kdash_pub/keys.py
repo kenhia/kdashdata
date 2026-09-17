@@ -18,13 +18,23 @@ TOKEN_MAX = 63
 KEY_MAX = 512
 
 #: The namespaces contracts/registry.md knows about. `kdash` is for new shared
-#: feeds; the next three are grandfathered families (CD-3); the last two are
+#: feeds; `kpidash`, `claude` and `kvscf` are grandfathered families (CD-3);
+#: `ghcp` sits outside `kdash:` by one named exception (CD-21) and mirrors
+#: `claude:session` field-for-field; `kdeskdash` and `kstudiodash` are
 #: dashboard-local state, listed for visibility and not schema-governed.
+#:
+#: **scripts/check.py holds this tuple to registry.md in both directions**,
+#: because prose and enforcement drifting apart is not hypothetical: sprint 012
+#: legalised the `ghcp` family in the schema, the registry and the rules,
+#: nothing taught this tuple, and every `ghcp:*` write was refused until sprint
+#: 013 (WI 2781). Neither repo's gate could see it, because no gate compared
+#: the two sides.
 NAMESPACES = (
     "kdash",
     "kpidash",
     "claude",
     "kvscf",
+    "ghcp",
     "kdeskdash",
     "kstudiodash",
 )
