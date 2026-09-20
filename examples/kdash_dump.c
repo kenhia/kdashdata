@@ -151,23 +151,37 @@ static void dump_apttemps(kdash_conn_t *c, long long now) {
     printf("  %d zone(s), %d skipped\n", n, skipped);
 }
 
-/* kdash:panel:<host> — the control feed (CD-17). Addressed per panel with no
- * discovery set to walk, so this reads the key with THIS host's name on it,
+/* The three control feeds (CD-17, CD-22). Addressed per panel with no
+ * discovery set to walk, so these read the keys with THIS host's name on them,
  * which is what a real dashboard does. `KDASH_PANEL_HOST` looks at another
  * panel's instead — the useful case from a build host, since the panel being
  * commanded is usually not the one you are sitting at. */
-static void dump_panel(kdash_conn_t *c, long long now) {
-    char host[KDASH_TOKEN_MAX] = "";
+static void panel_host(char *out, size_t outsz) {
+    out[0] = '\0';
     const char *pinned = getenv("KDASH_PANEL_HOST");
     if (pinned && pinned[0]) {
-        snprintf(host, sizeof(host), "%s", pinned);
-    } else if (gethostname(host, sizeof(host)) != 0) {
-        host[0] = '\0';
+        snprintf(out, outsz, "%s", pinned);
+    } else if (gethostname(out, outsz) != 0) {
+        out[0] = '\0';
     }
     /* gethostname() may not terminate on truncation. */
-    host[sizeof(host) - 1] = '\0';
+    out[outsz - 1] = '\0';
+}
 
-    printf("\n== panel control (kdash:panel:%s) ==\n", host[0] ? host : "?");
+/* acted_ts 0 throughout — a fresh process has acted on nothing, which is
+ * exactly the state a panel is in when it boots. */
+static const char *would_act(double ts, long long now) {
+    return kdash_cmd_actionable(ts, 0, now, KDASH_PANEL_WINDOW_S)
+               ? "  [a booting panel would act on this]"
+               : "  [outside the window — a booting panel would ignore it]";
+}
+
+static void dump_panel(kdash_conn_t *c, long long now) {
+    char host[KDASH_TOKEN_MAX];
+    panel_host(host, sizeof(host));
+
+    printf("\n== panel control (kdash:panel|panelmode|panelshot:%s) ==\n",
+           host[0] ? host : "?");
     if (!host[0]) {
         printf("  no host to ask about\n");
         return;
@@ -176,22 +190,57 @@ static void dump_panel(kdash_conn_t *c, long long now) {
     kdash_panel_t p;
     switch (kdash_panel(c, host, &p)) {
     case KDASH_UNAVAIL:
-        printf("  unavailable\n");
-        return;
+        printf("  panel:     unavailable\n");
+        break;
     case KDASH_ABSENT:
         /* Distinct from unavailable on purpose: nobody has ever commanded this
          * panel, which is not a fault and not a reason to render anything. */
-        printf("  no command for this panel\n");
-        return;
+        printf("  panel:     no command\n");
+        break;
     case KDASH_OK:
-        /* acted_ts 0 — a fresh process has acted on nothing, which is exactly
-         * the state a panel is in when it boots. */
-        printf("  want=%s  issued %llds ago%s\n", kdash_panel_want_str(p.want),
-               kdash_age_s(p.ts, now),
-               kdash_panel_actionable(&p, 0, now, KDASH_PANEL_WINDOW_S)
-                   ? "  [a booting panel would act on this]"
-                   : "  [outside the window — a booting panel would ignore it]");
-        return;
+        printf("  panel:     want=%s  issued %llds ago%s\n",
+               kdash_panel_want_str(p.want), kdash_age_s(p.ts, now),
+               would_act(p.ts, now));
+        break;
+    }
+
+    /* Each verb keeps its own acted stamp, so each is judged on its own —
+     * which is the whole reason they are separate keys (CD-22). */
+    kdash_panelmode_t m;
+    switch (kdash_panelmode(c, host, &m)) {
+    case KDASH_UNAVAIL:
+        printf("  panelmode: unavailable\n");
+        break;
+    case KDASH_ABSENT:
+        printf("  panelmode: no command\n");
+        break;
+    case KDASH_OK:
+        printf("  panelmode: mode=%s  %d setting(s)%s  issued %llds ago%s\n",
+               m.mode, m.settings_count,
+               m.settings_truncated ? " (truncated)" : "",
+               kdash_age_s(m.ts, now), would_act(m.ts, now));
+        for (int i = 0; i < m.settings_count; i++)
+            printf("               %s = %s\n", m.settings[i].name,
+                   m.settings[i].value);
+        if (m.settings_skipped)
+            printf("               %d setting(s) skipped by the contract\n",
+                   m.settings_skipped);
+        break;
+    }
+
+    kdash_panelshot_t s;
+    switch (kdash_panelshot(c, host, &s)) {
+    case KDASH_UNAVAIL:
+        printf("  panelshot: unavailable\n");
+        break;
+    case KDASH_ABSENT:
+        printf("  panelshot: no command\n");
+        break;
+    case KDASH_OK:
+        printf("  panelshot: path=%s  issued %llds ago%s\n",
+               s.path[0] ? s.path : "(the panel's default)",
+               kdash_age_s(s.ts, now), would_act(s.ts, now));
+        break;
     }
 }
 

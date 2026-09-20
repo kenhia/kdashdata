@@ -1,0 +1,22 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/kenhia/kdashdata/contracts/schemas/kdash-panelshot.schema.json",
+  "title": "kdash panel screenshot command",
+  "description": "Payload of kdash:panelshot:{host} - latest-value, ts-owned, no TTL. Asks the dashboard running on {host} to capture its own screen. The key is exactly 3 segments and {host} is authoritative; the payload carries no echo of it. CD-17's rule is inherited verbatim: the consumer acts on a CHANGE of ts, never on the current value, and a command older than the reader's window (60 s, KDASH_PANEL_WINDOW_S) is never replayed at all - which is what stops a restart firing a capture that was asked for an hour ago. A separate family from kdash:panelmode:{host} because it is a separate VERB: one ts is one command's identity (CD-17), so a screenshot and a mode switch sharing a payload would share an edge, and acting on one would mean re-acting on the other.",
+  "type": "object",
+  "required": ["ts"],
+  "additionalProperties": true,
+  "properties": {
+    "path": {
+      "type": "string",
+      "description": "Optional absolute path on the PANEL's filesystem for the captured image. Absent means the dashboard's own default, which is the ordinary case. Absolute by contract so a relative path can never resolve against whatever the dashboard's working directory happens to be. The dashboard owns the rest of the policy: it may refuse a path outside a directory it owns, and it should - this key is writable by every holder of the central Redis password, so an unconstrained path is a write primitive on the panel (see CD-22).",
+      "pattern": "^/[^\\u0000]*$",
+      "maxLength": 255
+    },
+    "ts": {
+      "type": "number",
+      "exclusiveMinimum": 0,
+      "description": "Unix seconds (float): the COMMAND's time, not the writer's heartbeat. Advancing it is what issues a new command, so it is required and positive - a stamp a consumer cannot compare is no command at all."
+    }
+  }
+}

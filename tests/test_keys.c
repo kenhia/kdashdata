@@ -223,7 +223,32 @@ int main(void) {
             tok[KDASH_TOKEN_MAX - 1] = '\0';
             CHECK(kdash_panel_key(key, sizeof(key), tok),
                   "a 63-char host must fit KDASH_KEY_MAX");
+            CHECK(kdash_panelmode_key(key, sizeof(key), tok),
+                  "and so must the longest of the three prefixes");
         }
+
+        /* The two siblings (CD-22) share every rule with `panel` — they are
+         * the same construction with a different verb in the key, and the
+         * checks below are here because a shared implementation is exactly
+         * the thing that makes "it obviously still validates" untrue one day. */
+        CHECK(kdash_panelmode_key(key, sizeof(key), "rpidash2"),
+              "build a panelmode key");
+        CHECK(strcmp(key, "kdash:panelmode:rpidash2") == 0, "built \"%s\"", key);
+        CHECK(kdash_panelshot_key(key, sizeof(key), "rpidash2"),
+              "build a panelshot key");
+        CHECK(strcmp(key, "kdash:panelshot:rpidash2") == 0, "built \"%s\"", key);
+
+        CHECK(!kdash_panelmode_key(key, sizeof(key), "kai:evil"),
+              "a host carrying ':' must not construct a panelmode key");
+        CHECK(!kdash_panelshot_key(key, sizeof(key), "bad host"),
+              "space in host must not construct a panelshot key");
+        CHECK(!kdash_panelmode_key(key, sizeof(key), ""), "empty host");
+        CHECK(!kdash_panelshot_key(key, sizeof(key), ""), "empty host");
+
+        memcpy(tiny, "SENTINEL", 8);
+        CHECK(!kdash_panelmode_key(tiny, sizeof(tiny), "rpidash2"),
+              "buffer too small must fail, not truncate");
+        CHECK(memcmp(tiny, "SENTINEL", 8) == 0, "refusal must not clobber out");
     }
 
     /* ---- claude:session:<host>:<sid> ---- */

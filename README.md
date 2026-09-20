@@ -59,16 +59,29 @@ kdash_claude_sessions_refresh(s, n, time(NULL), KDASH_CLAUDE_IDLE_S,
 /* s[0] is whatever most wants your attention; s[i].disp says why */
 ```
 
-A dashboard can also be **told** something — one control feed, still read-only,
-because acting on a command is a matter of noticing its `ts` advance rather
-than consuming it (CD-17):
+A dashboard can also be **told** something — three control feeds, still
+read-only, because acting on a command is a matter of noticing its `ts` advance
+rather than consuming it (CD-17). One family per verb, each with its own edge
+(CD-22):
 
 ```c
 kdash_panel_t p;
 if (kdash_panel(c, my_hostname, &p) == KDASH_OK &&
     kdash_panel_actionable(&p, last_acted_ts, time(NULL), KDASH_PANEL_WINDOW_S))
     show(p.want);   /* KDASH_PANEL_DASH or KDASH_PANEL_DESKTOP */
+
+kdash_panelmode_t m;   /* which screen within the dashboard, and how to set it up */
+if (kdash_panelmode(c, my_hostname, &m) == KDASH_OK &&
+    kdash_cmd_actionable(m.ts, last_acted_mode_ts, time(NULL),
+                         KDASH_PANEL_WINDOW_S)) {
+    const char *density = kdash_setting_get(&m, "density"); /* NULL = leave it */
+    switch_to(m.mode, density);
+}
 ```
+
+`kdash_panelshot()` is the third, and `mode` is deliberately not a closed enum:
+the screen names are the dashboard's vocabulary, so the contract validates the
+shape and the dashboard ignores a mode it does not have.
 
 The endpoint comes from khlenv (CD-4) and the password from `REDISCLI_AUTH`
 (CD-2), so a consumer hardcodes neither. Builds for x86_64 natively and for

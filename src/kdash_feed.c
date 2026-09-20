@@ -338,7 +338,35 @@ int kdash_apttemps(kdash_conn_t *c, kdash_apttemps_t *out, int max,
     return n;
 }
 
-/* ---- panel control (GET one key) ----------------------------------------- */
+/* ---- panel control: three verbs, one GET each ---------------------------- */
+
+/* The half the three control readers share: build this family's key for
+ * `host`, fill the record's identity from that host, and GET it. The verb —
+ * which key builder, which parser, which record — is all that differs
+ * (CD-22), so keeping the common half here is what stops the three drifting
+ * apart the way a copied reader always eventually does.
+ *
+ * `kdash:panelmode:` + a 63-char token fits KDASH_KEY_MAX with room to spare;
+ * the kpidash client family's `:dev_telemetry` suffix is what sizes that. */
+static kdash_status_t panel_cmd_get(kdash_conn_t *c, const char *host,
+                                    bool (*build_key)(char *, size_t,
+                                                      const char *),
+                                    char *host_out, size_t host_outsz,
+                                    redisReply **r) {
+    char key[KDASH_KEY_MAX];
+    if (!build_key(key, sizeof(key), host))
+        return KDASH_ABSENT; /* a host that fails the contract has no key */
+
+    /* Identity comes from the key, and the builder just revalidated it, so
+     * the token contract bounds this copy at 63 chars. */
+    size_t hlen = strlen(host);
+    if (hlen + 1 > host_outsz)
+        return KDASH_ABSENT;
+    memcpy(host_out, host, hlen);
+    host_out[hlen] = '\0';
+
+    return get_string(c, key, r);
+}
 
 kdash_status_t kdash_panel(kdash_conn_t *c, const char *host,
                            kdash_panel_t *out) {
@@ -347,20 +375,9 @@ kdash_status_t kdash_panel(kdash_conn_t *c, const char *host,
     if (!c || !host || !out)
         return KDASH_ABSENT;
 
-    /* `kdash:panel:` + a 63-char token fits KDASH_KEY_MAX with room to spare —
-     * the client family's `:dev_telemetry` suffix is what sizes that. */
-    char key[KDASH_KEY_MAX];
-    if (!kdash_panel_key(key, sizeof(key), host))
-        return KDASH_ABSENT; /* a host that fails the contract has no key */
-
-    /* Identity comes from the key, and kdash_panel_key() just revalidated it,
-     * so the token contract bounds this copy at 63 chars. */
-    size_t hlen = strlen(host);
-    memcpy(out->host, host, hlen);
-    out->host[hlen] = '\0';
-
     redisReply *r = NULL;
-    kdash_status_t st = get_string(c, key, &r);
+    kdash_status_t st = panel_cmd_get(c, host, kdash_panel_key, out->host,
+                                      sizeof(out->host), &r);
     if (st != KDASH_OK) {
         memset(out, 0, sizeof(*out));
         return st;
@@ -370,6 +387,60 @@ kdash_status_t kdash_panel(kdash_conn_t *c, const char *host,
     if (len > VALUE_MAX)
         len = VALUE_MAX;
     bool ok = kdash_parse_panel(r->str, len, out);
+    freeReplyObject(r);
+    if (!ok) {
+        memset(out, 0, sizeof(*out));
+        return KDASH_ABSENT;
+    }
+    return KDASH_OK;
+}
+
+kdash_status_t kdash_panelmode(kdash_conn_t *c, const char *host,
+                               kdash_panelmode_t *out) {
+    if (out)
+        memset(out, 0, sizeof(*out));
+    if (!c || !host || !out)
+        return KDASH_ABSENT;
+
+    redisReply *r = NULL;
+    kdash_status_t st = panel_cmd_get(c, host, kdash_panelmode_key, out->host,
+                                      sizeof(out->host), &r);
+    if (st != KDASH_OK) {
+        memset(out, 0, sizeof(*out));
+        return st;
+    }
+
+    size_t len = (size_t)r->len;
+    if (len > VALUE_MAX)
+        len = VALUE_MAX;
+    bool ok = kdash_parse_panelmode(r->str, len, out);
+    freeReplyObject(r);
+    if (!ok) {
+        memset(out, 0, sizeof(*out));
+        return KDASH_ABSENT;
+    }
+    return KDASH_OK;
+}
+
+kdash_status_t kdash_panelshot(kdash_conn_t *c, const char *host,
+                               kdash_panelshot_t *out) {
+    if (out)
+        memset(out, 0, sizeof(*out));
+    if (!c || !host || !out)
+        return KDASH_ABSENT;
+
+    redisReply *r = NULL;
+    kdash_status_t st = panel_cmd_get(c, host, kdash_panelshot_key, out->host,
+                                      sizeof(out->host), &r);
+    if (st != KDASH_OK) {
+        memset(out, 0, sizeof(*out));
+        return st;
+    }
+
+    size_t len = (size_t)r->len;
+    if (len > VALUE_MAX)
+        len = VALUE_MAX;
+    bool ok = kdash_parse_panelshot(r->str, len, out);
     freeReplyObject(r);
     if (!ok) {
         memset(out, 0, sizeof(*out));

@@ -1,7 +1,7 @@
 /**
  * @file kdash_feed.h
- * Typed readers for the schema'd feeds — the five kpidash ones, the panel
- * control feed, and the three claude ones. A consumer using these needs no
+ * Typed readers for the schema'd feeds — the five kpidash ones, the three
+ * panel control ones, and the three claude ones. A consumer using these needs no
  * knowledge of key grammar, SCAN, HGETALL, hiredis reply types, or the
  * difference between the two freshness models — which is the whole point of
  * the library existing once instead of three times.
@@ -108,6 +108,23 @@ int kdash_apttemps(kdash_conn_t *c, kdash_apttemps_t *out, int max,
  * does its own edge detection with kdash_panel_actionable(). */
 kdash_status_t kdash_panel(kdash_conn_t *c, const char *host,
                            kdash_panel_t *out);
+
+/* GET kdash:panelmode:<host> and GET kdash:panelshot:<host> — the other two
+ * verbs of the same control cluster (CD-22). Everything kdash_panel() says
+ * above applies unchanged: the central stem and not the claude one, one round
+ * trip and no SCAN, `host` revalidated before the key is built, KDASH_ABSENT
+ * for "nobody has ever commanded this panel this way" as against KDASH_UNAVAIL
+ * for "the endpoint did not answer", and nothing filtered by age.
+ *
+ * Each verb keeps its OWN acted stamp. A screenshot and a mode switch are
+ * separate commands with separate edges — that is why they are separate keys —
+ * so a caller holds one `acted_ts` per reader and judges each of them with
+ * kdash_cmd_actionable(). Sharing one stamp across the three would make acting
+ * on any command suppress the next one of a different kind. */
+kdash_status_t kdash_panelmode(kdash_conn_t *c, const char *host,
+                               kdash_panelmode_t *out);
+kdash_status_t kdash_panelshot(kdash_conn_t *c, const char *host,
+                               kdash_panelshot_t *out);
 
 /* ---- the claude family --------------------------------------------------
  *
