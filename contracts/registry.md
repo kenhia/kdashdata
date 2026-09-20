@@ -15,7 +15,7 @@ stem answers today, and a move is an edit to the store, not to any consumer.
 |---|---|---|---|---|
 | Central | `KDASH_CENTRAL_REDIS` (legacy alias `KPIDASH_REDIS`) | `rpi53:6379` | `REDISCLI_AUTH` (krot: rpi53-redis-password) | `kpidash:*`, `kdash:*` |
 | Claude feed (CD-7, relocated) | `KDASH_CLAUDE_REDIS` | `rpi53:6379` | `REDISCLI_AUTH` (krot: rpi53-redis-password) | `claude:*`, `ghcp:*` |
-| Workstation pair (CD-8) | per-app env (no stem yet) | dev pair `rpidash2:6380`; work pair its own | per-app env | `kvscf:*` — stays with the pair by design |
+| Workstation pair (CD-8, amended) | per-app env (no stem yet) | **dev pair: central, `rpi53:6379`** (sprint 014); work pair its own | per-app env; the dev pair's half now uses the central `REDISCLI_AUTH` | `kvscf:*` — the work pair stays with the pair, because kwork cannot reach central |
 | Dashboard-local | none — `127.0.0.1:6379` by definition | `127.0.0.1:6379` on each dashboard host | none/local | `<dashboard>:*` |
 
 **Two stems, one endpoint, deliberately.** `KDASH_CLAUDE_REDIS` and
@@ -32,12 +32,15 @@ readers require a handle opened on `&KDASH_STEM_CLAUDE`. Reading `claude:*`
 through the central stem would work today and break at the next move — which is
 the whole point of keeping two names for one address.
 
-`kvscf:*` deliberately has **no** stem, and no longer needs one to stay put:
-both panels pin `KDESKDASH_KVSCF_REDIS_HOST/PORT` explicitly since kdeskdash
-sprint 031, so CD-8 holds by its own configuration rather than by riding on
-wherever the claude endpoint happens to point. That pin is not a formality —
-the credential inherited across a differing endpoint is what actually broke
-during the repoint (see the claude family below).
+`kvscf:*` deliberately has **no** stem, and that pin is what makes the sprint
+014 split expressible at all: both panels pin `KDESKDASH_KVSCF_REDIS_HOST/PORT`
+explicitly since kdeskdash sprint 031, so rpidash2's half can be repointed at
+central while rpidash3's stays on its own instance, by configuration on each
+panel rather than by a shared default. That pin is not a formality — the
+credential inherited across a differing endpoint is what actually broke during
+the claude repoint (see the claude family below), and it is the same trap the
+dev pair's move walks past: on central the password is the fleet's, on
+rpidash3 it is that instance's own.
 
 ## Family: kpidash (central, live)
 
@@ -103,6 +106,8 @@ first key arrived with the publisher wrappers in sprint 003.
 |---|---|---|---|---|
 | `kdash:selftest:{host}` | latest-value, expiring | either publisher wrapper, on demand | 300 s | [selftest](schemas/kdash-selftest.schema.json) |
 | `kdash:panel:{host}` | latest-value, ts-owned | kdeskdash, on demand (a button press) | none | [panel](schemas/kdash-panel.schema.json) |
+| `kdash:panelmode:{host}` | latest-value, ts-owned | any operator or dashboard, on demand | none | [panelmode](schemas/kdash-panelmode.schema.json) |
+| `kdash:panelshot:{host}` | latest-value, ts-owned | `kddss` and any operator, on demand | none | [panelshot](schemas/kdash-panelshot.schema.json) |
 | `kdash:stale:{host}:{deployer}` | latest-value, presence-owned | each deployer, on a skipped deploy | none (never) | [stale](schemas/kdash-stale.schema.json) |
 | `kdash:agentact:{host}:{sid}` | latest-value, expiring | klaude-top `--publish` (~2 s tick) | ~10 s | [agentact](schemas/kdash-agentact.schema.json) |
 
@@ -133,6 +138,50 @@ free ([rules.md](rules.md) payload rules), so the whole write is:
 
 ```sh
 kdash-pub set kdash:panel:kstudio '{"want":"desktop"}'
+```
+
+`panelmode` and `panelshot` are `panel`'s **siblings**, added in sprint 014 so
+kdeskdash can be commanded from central once its local Redis retires (program
+korg:2935). One family per *verb*, because a `ts` is a command's identity and
+two commands under one stamp would share one edge (CD-22). All three inherit
+CD-17's rule verbatim — act on `ts` advancing, never on the current value,
+never replay a command older than the 60 s window — and each keeps its own
+`acted_ts`.
+
+| key | says | to |
+|---|---|---|
+| `kdash:panel:{host}` | show the dashboard, or yield the display (`want`: `dash` \| `desktop`) | kstudiodash today |
+| `kdash:panelmode:{host}` | show this screen, optionally configured like this | kdeskdash today |
+| `kdash:panelshot:{host}` | capture the screen, optionally to this path | kdeskdash today |
+
+`want` is a **closed** enum and `mode` deliberately is not. They are two axes:
+`want` is the coarse question every dashboard host has (is the dashboard on
+the screen at all), `mode` is which screen *within* the dashboard, and its
+vocabulary is the dashboard's own (`clock`, `gol`, `golz`, `dev`, `calc` on
+kdeskdash). A dashboard ignores a mode it does not have; the contract
+validates the shape and never the meaning (CD-22).
+
+`panelmode`'s optional `settings` object is the same apply-the-fields-present
+injection the `kdeskdash:gol:settings` / `kdeskdash:golz:settings` HASHes
+carried, moved onto the wire: names and meanings belong to the mode, values
+are text as a HASH's were, and a name absent keeps whatever the mode would
+have used. It rides the mode command because settings are always *a mode's*
+settings — naming the mode already showing injects without switching.
+
+`panelshot`'s `path` is optional and **absolute**, so it can never resolve
+against the dashboard's working directory; the panel owns the rest of the
+policy and should refuse a path outside a directory it owns (CD-23).
+
+**C readers**: `kdash_panelmode()` and `kdash_panelshot()` in
+`include/kdash/kdash_feed.h`, one GET each on an ordinary central-stem handle.
+The edge rule is `kdash_cmd_actionable()` (`kdash_payload.h`) — the generic
+form of `kdash_panel_actionable()`, which now calls it, so all three families
+answer "is this a command I have already acted on" the same way.
+**Writer**: no new publisher code, exactly as `panel` needed none:
+
+```sh
+kdash-pub set kdash:panelmode:rpidash2 '{"mode":"golz","settings":{"density":"0.35"}}'
+kdash-pub set kdash:panelshot:rpidash2 '{"path":"/var/tmp/kdd.bmp"}'
 ```
 
 `stale` is the family's first **fleet-state** feed — data about the fleet
@@ -417,36 +466,63 @@ window (kdeskdash sprint 031), and this close-out (sprint 005). The old home
 still serves `kvscf:*` for the dev pair and always will (CD-8) — this family
 retired a *feed* from that instance, not the instance.
 
-## Family: kvscf (workstation-pair Redis, live — stays put per CD-8)
+## Family: kvscf (live, two homes — dev pair on central, work pair with its pair)
 
-Owner: kvscf (Windows publisher on the pair's workstation: cleo for the dev
-pair, kwork for the work pair). Read/commanded by the desk dashboard in
-front of that keyboard — a direct data + control exchange within one pair,
-which is why this family never moves to central (CD-8). Both panels now pin
-`KDESKDASH_KVSCF_REDIS_HOST/PORT` explicitly (rpidash2 at its own
-`127.0.0.1:6380`, rpidash3 at its own second instance); the endpoint used to
-default to the claude one, and the auth still inherits — but only when the two
+Owner: the Windows publisher on the pair's workstation — kctrldeck on cleo for
+the dev pair, kvscf on kwork for the work pair. Read and commanded by the desk
+dashboard in front of that keyboard: a direct data + control exchange within
+one pair. Read `kvscf` in this family's names as "whichever app publishes on
+that host"; the namespace stays put (korg WI 2479) because renaming it would
+touch every consumer for no gain.
+
+**Two homes since sprint 014** (CD-8 as amended, program korg:2935):
+
+| pair | home | auth |
+|---|---|---|
+| cleo ↔ rpidash2 (dev) | **central, `rpi53:6379`** | the fleet `REDISCLI_AUTH` |
+| kwork ↔ rpidash3 (work) | `rpidash3:6380` | that instance's own password |
+
+The work pair does not move and is not expected to: kwork is LAN-only and
+MS-managed, so it cannot reach central and must not be given the fleet
+password. Both panels pin `KDESKDASH_KVSCF_REDIS_HOST/PORT` explicitly
+(kdeskdash 031), which is what lets one panel be repointed without the other;
+the auth still inherits from the claude values, but **only** when the two
 resolve to the same `host:port`, because sending a password to a Redis that has
-none configured is an error rather than a shrug. Now that `claude:*` has moved
-(CD-7),
-kvscf keeps the pair endpoint — the shared default decoupled at that flip.
+none configured is an error rather than a shrug.
+
+The shapes are unchanged and stay grandfathered — this is a change of home for
+one pair's half, not a contract change:
 
 | Key / channel | Type / pattern | Notes |
 |---|---|---|
 | `kvscf:instances:{host}` | latest-value (JSON, large) | open VS Code windows on that host |
-| `kvscf:edge:{…}`, `kvscf:apps:{…}`, `kvscf:launcher:{…}` | latest-value | launcher/app surfaces |
+| `kvscf:edge:{host}`, `kvscf:apps:{host}`, `kvscf:launcher:{host}` | latest-value | launcher/app surfaces; a launcher button carries a stable `key`, never a command line |
 | `kvscf:focus:{host}` | PUB/SUB nudge | focus command; payload carries an auth token — the one nudge-pattern feed in the fleet |
+
+Two consequences of the dev pair's move, both on the consumer's side and both
+written down where the consumer slice will read them (CD-8):
+
+- **The host segment is now the only scoping.** Panels discover with `SCAN
+  kvscf:instances:*` and friends, which returned one workstation's keys because
+  only one workstation wrote to that instance. On central a panel must take its
+  pair host from **configuration, not discovery**.
+- **The token on `kvscf:focus:{host}` is now readable by every holder of the
+  fleet password.** Accepted with the move, because keeping the channel off
+  central would mean keeping the server the program exists to retire; the
+  answer is the rotatable per-host pairing token (korg WI 2479) and OQ-2, not
+  the topology (CD-23).
 
 ## Dashboard-local namespaces (visibility only, not governed)
 
 | Namespace | Host | Keys today |
 |---|---|---|
-| `kdeskdash:*` | each kdeskdash device | `active_mode`, `screenshot`, `gol:settings`, `golz:{wins,human_wins,zombie_wins,ties,gens_to_win,settings}`, `dev:left`, `dev:right` |
+| `kdeskdash:*` | each kdeskdash device | `active_mode`, `screenshot`, `gol:settings`, `golz:{wins,human_wins,zombie_wins,ties,gens_to_win,settings}`, `dev:left`, `dev:right` — **being retired** by program korg:2935: the durable half moves to a file on the panel, the control half to `kdash:panelmode` / `kdash:panelshot` above |
 | `kstudiodash:*` | kstudio | reserved — still nothing. kstudio runs no local Redis, which is why the panel-control feed is `kdash:panel:kstudio` on **central** and not a local key here |
 
 ## Reserved
 
 - `kdash:<family>:<…>` — the namespace for new shared feeds (rules.md).
-  `selftest`, `panel`, `stale` and `agentact` are the families in it so far.
+  `selftest`, `panel`, `panelmode`, `panelshot`, `stale` and `agentact` are
+  the families in it so far.
 - `ghcp:*` — outside that namespace by a named exception (CD-21), not by
   omission. New, frozen from day one, and not a migration candidate.

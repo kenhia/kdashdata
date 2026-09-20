@@ -34,9 +34,11 @@ Nothing in this repo runs as a service.
   have that problem; the failure mode is "central Redis unreachable", and the
   answer is CD-6 (degrade, don't block), not more Redis.
 
-One exception remains, by design: the kvscf family stays off-central (CD-8).
-The Claude-activity family was the other and no longer is — it completed its
-move to the central Redis in sprint 005 (CD-7).
+One exception remains, by design, and it is now half the size it was: the
+**work** pair's kvscf family stays off-central, because kwork cannot reach
+central (CD-8, as amended in sprint 014 — the dev pair's half moved). The
+Claude-activity family was the other and no longer is — it completed its move
+to the central Redis in sprint 005 (CD-7).
 
 ## CD-2 — Auth: one fleet password, `REDISCLI_AUTH` is the contract
 
@@ -200,15 +202,61 @@ Three things the program learned that outlive it:
   next `bin/apply` would have reverted both managed hosts and silently stopped
   the dual-write.
 
-## CD-8 — `kvscf:*` stays with its workstation pair
+## CD-8 — `kvscf:*` stays with its workstation pair — amended: the dev pair's half moves to central
 
-kvscf data is symbiotic between kvscf running on a workstation (cleo, kwork)
+kvscf data is symbiotic between the app running on a workstation (cleo, kwork)
 and the desk dashboard sitting in front of that workstation's keyboard
-(rpidash2, rpidash3): a direct data **and control** exchange within one
-desk pair, not fleet-shared state. It therefore does **not** move to the
-central Redis — each pair keeps its own endpoint (dev pair on
-`rpidash2:6380` today, work pair on its own instance). The nudge channel's
-auth token and the pair-local scoping are features of this shape, not debt.
+(rpidash2, rpidash3): a direct data **and control** exchange within one desk
+pair, not fleet-shared state. The original decision followed from that shape —
+each pair keeps its own endpoint, and the nudge channel's auth token and the
+pair-local scoping are features of it rather than debt.
+
+**Amended, sprint 014** (Ken, 2026-09-20; inventory on korg WI 2479 comments
+2649/2650, program korg:2935). The *shape* argument survives; the *topology*
+conclusion does not, because it was buying pair-local scoping at the price of
+a Redis server per pair. The fleet is going to two Redis servers, and this
+family splits cleanly along the line that actually matters — which machine can
+reach central:
+
+- **The dev pair moves.** `kvscf:*:cleo`, the `kvscf:focus:cleo` channel
+  included, moves to the central Redis. The keys are already host-scoped
+  (`instances`, `edge`, `apps`, `launcher`, `focus` all end in `<host>`), so
+  nothing collides, and both cleo and rpidash2 already hold the central
+  password.
+- **The work pair does not, and will not.** kwork is LAN-only and MS-managed:
+  it cannot reach central, and the fleet password must not be typed onto it.
+  `rpidash3:6380` keeps its own instance and its own password — not a
+  leftover, but the second of the fleet's two Redis servers.
+
+The family stays **grandfathered** (CD-3): same keys, same shapes, same
+`kvscf:` namespace, a different home for one pair's half of it. What changes is
+configuration — the panels' `KDESKDASH_KVSCF_REDIS_HOST/PORT` pin, explicit on
+both panels since kdeskdash 031, which is what makes this a config edit rather
+than a contract break.
+
+**Three costs, accepted with the decision rather than discovered after it.**
+
+- **The home desk launcher now depends on rpi53 being up.** A pair whose Redis
+  sat on the panel itself could not have an outage the pair survived; now it
+  can. The panel degrades rather than blocking (CD-6), and the desk keeps
+  working without it.
+- **The pairing token's audience widens from two machines to every holder of
+  the fleet password.** `kvscf:focus:<host>` carries the token in its payload,
+  so on central anyone who can `SUBSCRIBE` can read it and then publish a focus
+  or launch command to cleo. This is the one cost with no topology answer:
+  keeping the nudge channel on `rpidash2:6380` would mean keeping
+  `rpidash2:6380`, which is the whole thing the program exists to retire. The
+  answer is at the token level — korg WI 2479's per-host pairing tokens in the
+  secrets store, which is what makes this one rotatable — and at the ACL level
+  (OQ-2, and CD-23). What bounds it today: a launcher button carries a stable
+  `key` and no command line, so the executable mapping stays on cleo and
+  rewriting the published grid changes only what the panel draws.
+- **The pair-local Redis *was* the scoping.** Both panels discover with `SCAN
+  kvscf:instances:*` and friends, which returned one workstation's keys because
+  only one workstation wrote to that instance. On central the key's host
+  segment is the only scoping left, so the panel's pair host becomes
+  **configuration, not discovery**. That is a consumer obligation, written down
+  here because this is the page the consumer slice reads.
 
 ## CD-9 — Two dependencies, and no more: hiredis (system) + cJSON (vendored)
 
@@ -924,6 +972,105 @@ failing gate. It lives in `check-docs` because that is the only gate positioned
 to read both sides; it reads them as text, so it stays free of the network and
 git-credential cost CD-11 keeps out of that gate. The general rule, for the
 next family: **adding one is two edits, and `just check` now insists on both.**
+
+## CD-22 — One control family per verb, and the dashboard owns its own screen vocabulary
+
+Sprint 014 gave kdeskdash the command channel kstudiodash has had since sprint
+007, because a panel that keeps its durable state in a file (program
+korg:2935) still has to be reachable. Three commands were wanted — switch
+mode, take a screenshot, inject one-shot GoL/GoLZ settings — and the proposal
+left open whether to widen `kdash:panel:<host>` or add siblings. Siblings, for
+three reasons that each decide it independently.
+
+**One `ts` is one command's identity.** CD-17 made the stamp *the command*,
+not the record's age. A payload carrying two commands carries two identities
+under one stamp, so acting on either means re-acting on the other; per-field
+acted stamps would be sibling keys smuggled inside one payload. Each verb gets
+its own key, its own edge and its own `acted_ts`.
+
+**Widening `want` is a breaking change the rules forbid in place.** `want` is
+a closed enum — `dash` | `desktop` — with a live reader (kstudiodash
+`src/feeds.c`, `src/run.c`). Opening it to a desk panel's screen names would
+retype and re-mean a required field, which
+[rules.md](../contracts/rules.md) answers with a new family segment
+(`kdash:panel:v2:…`), never a mutation in place. That would move the one
+consumer this family has, to serve a second one that does not need it.
+
+**And they are two axes, not one.** `want` is the coarse question every
+dashboard *host* has: is the dashboard on the screen, or has it yielded the
+display? `mode` is which screen *within* the dashboard. kstudio answers only
+the first, a desk panel only the second, and a dashboard that one day answers
+both reads two keys that compose rather than one that has to mean both.
+
+So the family grew two siblings — each 3 segments, each ts-owned, each acting
+on CD-17's rule verbatim and with its own `acted_ts`:
+
+| key | verb |
+|---|---|
+| `kdash:panel:<host>` | show the dashboard, or yield the display (**unchanged**) |
+| `kdash:panelmode:<host>` | show this screen, optionally configured like this |
+| `kdash:panelshot:<host>` | capture the screen |
+
+**Vocabulary belongs to the dashboard; shape belongs to the contract.** This
+is the part that generalises. `mode` is not a closed enum and `settings` is
+not a field list, because enumerating three dashboards' screens and every
+mode's tuning knobs here would mean editing a fleet contract every time a
+panel gained a view or a slider. The schema validates the **shape** — a
+lowercase token for `mode`, an object of short text values for `settings` —
+and the dashboard validates the **meaning**: a mode it does not have is a
+command it ignores, a setting name it does not know is ignored per the
+additive rule, and every name *absent* keeps the value the mode would have
+used anyway. That last clause is not new behaviour; it is exactly what
+`HGETALL` plus apply-the-present-fields did on the two `kdeskdash:*:settings`
+hashes, carried onto the wire so it survives the local Redis being retired.
+
+Values are text rather than JSON numbers for the same reason: a HASH's values
+were text, the mode already parses text, and a number on the wire would need a
+formatting rule for two consumers to disagree about.
+
+**Settings ride the mode command rather than getting a third family.** They
+are always *a mode's* settings, and "show golz, seeded like this" is one
+command that the old two-key dance — plant the hash, then switch the mode —
+could only approximate. Naming the mode already showing is legal, and is how
+settings are injected without a switch. The cost, stated because it is a real
+capability lost: a hash could be planted *in advance* and picked up whenever
+that mode next started, and a 60 s edge window cannot express that. Planting
+in advance is what the mode command now is.
+
+**What was rejected**, so it is not re-proposed: a `kdash:panelstate:<host>`
+feed published by the panel so central could see which mode it is in. Nothing
+reads it — the reader imagined for it was a human at a `redis-cli` — and it
+would put a write path on a consumer for visibility alone, which is CD-5's
+property spent on nothing. It stays additive if a second reader ever appears;
+a new family costs no migration.
+
+## CD-23 — The central Redis password is a control-plane credential, and the answer is OQ-2
+
+Worth saying out loud at the point it became true rather than the point it
+bites. `kdash:panel:*` already meant that anyone holding `REDISCLI_AUTH` could
+switch kstudio's screen. Sprint 014 adds capture-the-screen with a
+caller-supplied path, and CD-8's amendment puts cleo's focus channel — token
+and all — on the same instance. The fleet password now commands panels and, by
+way of that token, opens windows on a workstation.
+
+This is **accepted, not mitigated per feed**, and the reasoning is that a
+per-feed guard cannot work: every one of these keys has to be writable by
+something, the writers are ordinary fleet hosts running `kdash-pub`, and a
+guard the publisher wrapper enforces is a guard `redis-cli` walks straight
+past. The real split is **OQ-2** — a Redis ACL with a write-capable publisher
+identity and a read-only consumer identity — which is where this belongs, and
+is why that question is still open rather than a nice-to-have.
+
+Two things do belong here, and both are on the consumer's side of the wire:
+
+- **A path from the wire is not a path to trust.** `kdash:panelshot:<host>`'s
+  `path` is absolute by contract, so it can never resolve against whatever the
+  dashboard's working directory happens to be, and the dashboard should refuse
+  one outside a directory it owns. The contract cannot enforce that — only the
+  panel knows which directories those are.
+- **None of this is a write path for the library.** libkdash reads these keys
+  and CD-5 is untouched: a panel acting on a command does its work locally and
+  never writes an ack.
 
 ## Open questions
 

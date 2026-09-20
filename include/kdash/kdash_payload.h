@@ -1,7 +1,8 @@
 /**
  * @file kdash_payload.h
- * Pure parsers for the schema'd payloads — the five kpidash feeds, the panel
- * control feed, and the three claude ones. No Redis, no sockets. Host-testable.
+ * Pure parsers for the schema'd payloads — the five kpidash feeds, the three
+ * panel control feeds, and the three claude ones. No Redis, no sockets.
+ * Host-testable.
  *
  * **Two payload shapes, two parser signatures.** Every kpidash feed is a JSON
  * document under one key, so those parsers take a buffer and a length. The
@@ -251,6 +252,100 @@ const char *kdash_panel_want_str(kdash_panel_want_t w);
  * asks this question still behaves correctly. */
 bool kdash_panel_actionable(const kdash_panel_t *cmd, double acted_ts,
                             long long now, long long window_s);
+
+/* The same question, family-agnostic: the two bullets above are the rule for
+ * every ts-owned COMMAND feed, and kdash_panel_actionable() is this function
+ * with a kdash_panel_t unwrapped for it. New control families call this
+ * directly rather than each growing a one-line wrapper — the point of CD-17
+ * was one right answer to "have I acted on this already", not one per family.
+ *
+ * `cmd_ts` of 0 — what a rejected parse or a KDASH_ABSENT read leaves — is
+ * never actionable. */
+bool kdash_cmd_actionable(double cmd_ts, double acted_ts, long long now,
+                          long long window_s);
+
+/* ---- kdash:panelmode:<host> ---- */
+
+/* Mode ids and setting names are bounded by the schema's own patterns, so
+ * these buffers are exactly big enough for a conforming record and a
+ * non-conforming one is rejected rather than truncated into place. */
+#define KDASH_MODE_MAX          32 /* 31 chars + NUL */
+#define KDASH_SETTING_NAME_MAX  32 /* 31 chars + NUL */
+#define KDASH_SETTING_VALUE_MAX 64 /* 63 chars + NUL */
+#define KDASH_SETTINGS_MAX      24 /* the schema's maxProperties */
+
+/* One entry of the command's optional `settings` object. Name and meaning
+ * belong to the MODE and never to this contract (CD-22); the value is TEXT,
+ * exactly as the Redis HASH this replaced delivered it, so there is no
+ * number-formatting rule for two consumers to disagree about. */
+typedef struct {
+    char name[KDASH_SETTING_NAME_MAX];
+    char value[KDASH_SETTING_VALUE_MAX];
+} kdash_setting_t;
+
+typedef struct {
+    /* Identity comes from the KEY, exactly as kdash_panel_t's does. */
+    char host[KDASH_TOKEN_MAX];
+
+    /* Required. The dashboard's own screen vocabulary — this library does not
+     * know which modes exist, and a mode a dashboard does not have is a
+     * command it ignores. */
+    char mode[KDASH_MODE_MAX];
+
+    /* Optional one-shot configuration for `mode`. Absent is the common case
+     * and is NOT an error: an empty list means "switch, change nothing". */
+    kdash_setting_t settings[KDASH_SETTINGS_MAX];
+    int  settings_count;
+    bool settings_truncated; /* more than KDASH_SETTINGS_MAX arrived      */
+    int  settings_skipped;   /* entries whose name or value broke the shape */
+
+    double ts; /* required AND positive, exactly as kdash_panel_t's is */
+} kdash_panelmode_t;
+
+/* Parses only the payload half; `out->host` is left untouched, as
+ * kdash_parse_panel() leaves it.
+ *
+ * `settings` is an OPTIONAL field, so the rules apply in their usual
+ * asymmetry: a `settings` that is not an object is treated as absent and the
+ * command still stands, and an individual entry whose name or value breaks the
+ * schema's shape is dropped and counted in `settings_skipped` rather than
+ * costing the whole command. A mode switch arriving with one unreadable knob
+ * is still a mode switch. */
+bool kdash_parse_panelmode(const char *json, size_t len,
+                           kdash_panelmode_t *out);
+
+/* Look one setting up by name; NULL when the command did not carry it.
+ *
+ * That NULL is the contract, not a miss to work around: every name ABSENT
+ * keeps whatever the mode would have used, which is what makes a partial
+ * injection safe and is exactly what HGETALL-and-apply-present-fields did
+ * before this feed existed. */
+const char *kdash_setting_get(const kdash_panelmode_t *cmd, const char *name);
+
+/* ---- kdash:panelshot:<host> ---- */
+
+#define KDASH_PATH_MAX 256 /* 255 chars + NUL, the schema's maxLength */
+
+typedef struct {
+    /* Identity comes from the KEY. */
+    char host[KDASH_TOKEN_MAX];
+
+    /* Optional; "" when absent, which means the dashboard's own default and is
+     * the ordinary case. When present it is ABSOLUTE — the schema enforces the
+     * leading '/', so it can never resolve against whatever the dashboard's
+     * working directory happens to be. The rest of the policy is the panel's:
+     * this key is writable by every holder of the central Redis password, so a
+     * dashboard should refuse a path outside a directory it owns (CD-23). */
+    char path[KDASH_PATH_MAX];
+
+    double ts; /* required AND positive */
+} kdash_panelshot_t;
+
+/* Parses only the payload half; `out->host` is left untouched. A `path` that
+ * is not an absolute string is treated as absent — the optional-field rule —
+ * so a malformed path costs the caller its default, never the capture. */
+bool kdash_parse_panelshot(const char *json, size_t len,
+                           kdash_panelshot_t *out);
 
 /* ---- claude:session:<host>:<sid> (HASH) ---- */
 

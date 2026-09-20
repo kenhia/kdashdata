@@ -99,12 +99,22 @@ contract called it legal. Sprint 013 (korg:2788, slice 3.5) taught both sides
 and added the gate that compares them — `check-docs` now holds
 `contracts/registry.md`'s families against both publisher allowlists in both
 directions, which is the one check neither per-language gate could ever make.
+Most recently, sprint 014 (korg:2931) opened the Redis-consolidation program
+(korg:2935, five servers to two) with its contract slice: CD-8 amended so the
+cleo↔rpidash2 `kvscf:*` exchange lives on central while the kwork pair keeps
+its own instance and password, and the panel-control family grown two siblings
+— `kdash:panelmode:{host}` and `kdash:panelshot:{host}`, one family per verb
+(CD-22) — so a panel with no local Redis can still be switched, configured and
+screenshotted. CD-23 records what that makes the fleet password.
 See `docs/architecture.md` (decisions
-CD-1…CD-21, open questions OQ-n), `contracts/rules.md`,
+CD-1…CD-23, open questions OQ-n), `contracts/rules.md`,
 `contracts/registry.md`, `include/kdash/kdash.h` for the consumer API, and
-`publishers/README.md` for the publish side. Next: kdeskdash's Copilot
-publisher, unblocked by 013 (korg:2755) and the k-homelab recipe behind it
-(korg:2756); kdeskdash adopting the `claude:*` readers (korg:2218, work item
+`publishers/README.md` for the publish side. Next: the rest of program
+korg:2935 — kdeskdash folds rpidash2's pair Redis into central (korg:2932),
+then panel state to a file and commands from central (korg:2933), then
+k-homelab retires the three servers (korg:2934). After that: kdeskdash's
+Copilot publisher, unblocked by 013 (korg:2755) and the k-homelab recipe behind
+it (korg:2756); kdeskdash adopting the `claude:*` readers (korg:2218, work item
 1783); or kstudiodash's first consumption of the library (korg:1728).
 
 This line is gated: `scripts/check.py` fails if it does not name the

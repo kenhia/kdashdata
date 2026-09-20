@@ -432,18 +432,175 @@ bool kdash_parse_panel(const char *json, size_t len, kdash_panel_t *out) {
     return ok;
 }
 
-bool kdash_panel_actionable(const kdash_panel_t *cmd, double acted_ts,
-                            long long now, long long window_s) {
+bool kdash_cmd_actionable(double cmd_ts, double acted_ts, long long now,
+                          long long window_s) {
     /* A zeroed record — what a rejected parse or an absent key leaves behind —
      * carries ts 0 and stops here. */
-    if (!cmd || cmd->ts <= 0.0)
+    if (cmd_ts <= 0.0)
         return false;
     /* Strictly newer: a republish of the same command is the same command, and
      * a stamp that went backwards cannot resurrect an older one. */
-    if (cmd->ts <= acted_ts)
+    if (cmd_ts <= acted_ts)
         return false;
     /* And the window, so a restart does not replay yesterday's switch. */
-    return !kdash_ts_stale(cmd->ts, now, window_s);
+    return !kdash_ts_stale(cmd_ts, now, window_s);
+}
+
+bool kdash_panel_actionable(const kdash_panel_t *cmd, double acted_ts,
+                            long long now, long long window_s) {
+    if (!cmd)
+        return false;
+    return kdash_cmd_actionable(cmd->ts, acted_ts, now, window_s);
+}
+
+/* ---- panel mode + screenshot commands ----------------------------------- */
+
+/* The schema's own patterns, in C. Deliberately narrower than the host-token
+ * contract: these are payload vocabulary, not key segments, and the schema is
+ * the source of truth for both. A name that does not conform is rejected
+ * rather than truncated into place — a truncated setting name sets the wrong
+ * knob, which is the same failure kdeskdash's launcher `key` learned to
+ * refuse. */
+static bool pattern_ok(const char *s, size_t n, size_t maxlen, bool dash_ok) {
+    if (!s || n == 0 || n > maxlen)
+        return false;
+    if (s[0] < 'a' || s[0] > 'z')
+        return false;
+    for (size_t i = 1; i < n; i++) {
+        char c = s[i];
+        if ((c >= 'a' && c <= 'z') || (c >= '0' && c <= '9') || c == '_')
+            continue;
+        if (dash_ok && c == '-')
+            continue;
+        return false;
+    }
+    return true;
+}
+
+/* `^[a-z][a-z0-9_-]{0,30}$` */
+static bool mode_ok(const char *s, size_t n) {
+    return pattern_ok(s, n, KDASH_MODE_MAX - 1, true);
+}
+
+/* `^[a-z][a-z0-9_]{0,30}$` */
+static bool setting_name_ok(const char *s, size_t n) {
+    return pattern_ok(s, n, KDASH_SETTING_NAME_MAX - 1, false);
+}
+
+/* The optional `settings` object. Absent, or present as anything but an
+ * object, is simply absent — the optional-field rule — because a mode switch
+ * carrying one unreadable knob is still a mode switch. */
+static void parse_settings(const cJSON *root, kdash_panelmode_t *out) {
+    const cJSON *obj = cJSON_GetObjectItemCaseSensitive(root, "settings");
+    if (!cJSON_IsObject(obj))
+        return;
+
+    const cJSON *e = NULL;
+    cJSON_ArrayForEach(e, obj) {
+        if (out->settings_count >= KDASH_SETTINGS_MAX) {
+            out->settings_truncated = true;
+            break;
+        }
+        const char *name = e->string;
+        size_t nlen = name ? strlen(name) : 0;
+        if (!setting_name_ok(name, nlen) || !cJSON_IsString(e) ||
+            !e->valuestring) {
+            out->settings_skipped++;
+            continue;
+        }
+        size_t vlen = strlen(e->valuestring);
+        if (vlen >= KDASH_SETTING_VALUE_MAX) {
+            out->settings_skipped++;
+            continue;
+        }
+
+        kdash_setting_t *s = &out->settings[out->settings_count];
+        memcpy(s->name, name, nlen);
+        s->name[nlen] = '\0';
+        memcpy(s->value, e->valuestring, vlen);
+        s->value[vlen] = '\0';
+        out->settings_count++;
+    }
+}
+
+bool kdash_parse_panelmode(const char *json, size_t len,
+                           kdash_panelmode_t *out) {
+    if (!out)
+        return false;
+    /* Identity lives on the key and the reader may have filled it already —
+     * so zero only the payload half, as kdash_parse_panel() does. */
+    out->mode[0] = '\0';
+    out->settings_count = 0;
+    out->settings_truncated = false;
+    out->settings_skipped = 0;
+    out->ts = 0;
+
+    cJSON *root = parse_object(json, len);
+    if (!root)
+        return false;
+
+    const cJSON *m = cJSON_GetObjectItemCaseSensitive(root, "mode");
+    bool ok = cJSON_IsString(m) && m->valuestring &&
+              mode_ok(m->valuestring, strlen(m->valuestring));
+    if (ok) {
+        size_t n = strlen(m->valuestring);
+        memcpy(out->mode, m->valuestring, n);
+        out->mode[n] = '\0';
+        /* Positive, not merely numeric: the stamp is this record's identity. */
+        ok = req_num(root, "ts", 0.0, &out->ts) && out->ts > 0.0;
+    }
+    if (ok)
+        parse_settings(root, out);
+
+    if (!ok) {
+        out->mode[0] = '\0';
+        out->ts = 0;
+    }
+
+    cJSON_Delete(root);
+    return ok;
+}
+
+const char *kdash_setting_get(const kdash_panelmode_t *cmd, const char *name) {
+    if (!cmd || !name)
+        return NULL;
+    for (int i = 0; i < cmd->settings_count; i++)
+        if (strcmp(cmd->settings[i].name, name) == 0)
+            return cmd->settings[i].value;
+    return NULL;
+}
+
+bool kdash_parse_panelshot(const char *json, size_t len,
+                           kdash_panelshot_t *out) {
+    if (!out)
+        return false;
+    out->path[0] = '\0';
+    out->ts = 0;
+
+    cJSON *root = parse_object(json, len);
+    if (!root)
+        return false;
+
+    bool ok = req_num(root, "ts", 0.0, &out->ts) && out->ts > 0.0;
+    if (ok) {
+        /* Optional, and absolute or nothing: a relative path would resolve
+         * against whatever the dashboard's working directory happens to be,
+         * so it is treated as absent and the caller keeps its default. */
+        const cJSON *pth = cJSON_GetObjectItemCaseSensitive(root, "path");
+        if (cJSON_IsString(pth) && pth->valuestring &&
+            pth->valuestring[0] == '/') {
+            size_t n = strlen(pth->valuestring);
+            if (n < KDASH_PATH_MAX) {
+                memcpy(out->path, pth->valuestring, n);
+                out->path[n] = '\0';
+            }
+        }
+    } else {
+        out->ts = 0;
+    }
+
+    cJSON_Delete(root);
+    return ok;
 }
 
 /* ---- claude: HASH field/value helpers ---------------------------------- */

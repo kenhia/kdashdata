@@ -335,6 +335,229 @@ int main(void) {
         }
     }
 
+    /* ---- kdash:panelmode ---- */
+    {
+        kdash_panelmode_t m;
+        memset(&m, 0, sizeof(m));
+        strcpy(m.host, "rpidash2");
+        CHECK(PARSE(kdash_parse_panelmode,
+                    "{\"mode\":\"golz\",\"settings\":{\"density\":\"0.35\","
+                    "\"speed_ms\":\"40\"},\"ts\":1756600000}",
+                    &m),
+              "full mode command");
+        CHECK(strcmp(m.mode, "golz") == 0, "mode \"%s\"", m.mode);
+        CHECK(m.ts == 1756600000.0, "ts");
+        CHECK(strcmp(m.host, "rpidash2") == 0, "key host stays authoritative");
+        CHECK(m.settings_count == 2, "two settings, got %d", m.settings_count);
+        CHECK(!m.settings_truncated && m.settings_skipped == 0, "nothing lost");
+
+        /* Absent means "keep what the mode would have used" — the whole point
+         * of the apply-the-fields-present injection this replaced. */
+        CHECK(kdash_setting_get(&m, "density") &&
+                  strcmp(kdash_setting_get(&m, "density"), "0.35") == 0,
+              "a setting is looked up by name");
+        CHECK(kdash_setting_get(&m, "trail") == NULL,
+              "a setting the command did not carry is NULL, not empty");
+        CHECK(kdash_setting_get(NULL, "density") == NULL, "NULL is safe");
+
+        /* Settings are optional; a switch that changes nothing is legal. */
+        CHECK(PARSE(kdash_parse_panelmode, "{\"mode\":\"clock\",\"ts\":1}", &m),
+              "mode alone is a command");
+        CHECK(m.settings_count == 0, "no settings is not an error");
+
+        /* An optional field that is malformed is treated as ABSENT: a mode
+         * switch carrying one unreadable knob is still a mode switch. */
+        CHECK(PARSE(kdash_parse_panelmode,
+                    "{\"mode\":\"clock\",\"settings\":7,\"ts\":1}", &m),
+              "a settings that is not an object does not cost the command");
+        CHECK(m.settings_count == 0, "and carries nothing");
+
+        /* Per-entry shape. A bad entry is skipped and counted, never
+         * truncated into place — a truncated name sets the wrong knob. */
+        CHECK(PARSE(kdash_parse_panelmode,
+                    "{\"mode\":\"gol\",\"settings\":{\"density\":\"0.2\","
+                    "\"Trail\":\"1\",\"speed-ms\":\"40\",\"rgb\":true},"
+                    "\"ts\":1}",
+                    &m),
+              "a command with three bad settings still stands");
+        CHECK(m.settings_count == 1, "one good setting, got %d",
+              m.settings_count);
+        CHECK(m.settings_skipped == 3, "three skipped, got %d",
+              m.settings_skipped);
+        CHECK(kdash_setting_get(&m, "rgb") == NULL,
+              "a non-string value is not a setting");
+
+        {
+            /* 63 chars is the schema's limit; 64 is rejected rather than
+             * silently shortened. */
+            char json[256];
+            char v63[64], v64[65];
+            memset(v63, 'x', 63); v63[63] = '\0';
+            memset(v64, 'x', 64); v64[64] = '\0';
+            snprintf(json, sizeof(json),
+                     "{\"mode\":\"gol\",\"settings\":{\"a\":\"%s\"},\"ts\":1}",
+                     v63);
+            CHECK(PARSE(kdash_parse_panelmode, json, &m), "63-char value");
+            CHECK(m.settings_count == 1, "kept");
+            snprintf(json, sizeof(json),
+                     "{\"mode\":\"gol\",\"settings\":{\"a\":\"%s\"},\"ts\":1}",
+                     v64);
+            CHECK(PARSE(kdash_parse_panelmode, json, &m), "64-char value");
+            CHECK(m.settings_count == 0 && m.settings_skipped == 1,
+                  "an oversize value is rejected, never truncated");
+        }
+
+        {
+            /* More settings than the record holds says so rather than
+             * quietly keeping the first N. */
+            char json[1024];
+            int n = snprintf(json, sizeof(json), "{\"mode\":\"gol\",\"settings\":{");
+            for (int i = 0; i < KDASH_SETTINGS_MAX + 2; i++)
+                n += snprintf(json + n, sizeof(json) - (size_t)n,
+                              "%s\"s%02d\":\"1\"", i ? "," : "", i);
+            snprintf(json + n, sizeof(json) - (size_t)n, "},\"ts\":1}");
+            CHECK(PARSE(kdash_parse_panelmode, json, &m), "oversized settings");
+            CHECK(m.settings_count == KDASH_SETTINGS_MAX, "capped at the max");
+            CHECK(m.settings_truncated, "and says it was truncated");
+        }
+
+        /* `mode` is the dashboard's vocabulary, but its SHAPE is the
+         * contract's: lowercase token, 1..31 chars, starting with a letter. */
+        CHECK(PARSE(kdash_parse_panelmode, "{\"mode\":\"a-b_c9\",\"ts\":1}", &m),
+              "the full character set");
+        CHECK(!PARSE(kdash_parse_panelmode, "{\"mode\":\"GOLZ\",\"ts\":1}", &m),
+              "mode is lowercase");
+        CHECK(!PARSE(kdash_parse_panelmode, "{\"mode\":\"9lives\",\"ts\":1}", &m),
+              "mode starts with a letter");
+        CHECK(!PARSE(kdash_parse_panelmode, "{\"mode\":\"\",\"ts\":1}", &m),
+              "an empty mode is no command");
+        CHECK(!PARSE(kdash_parse_panelmode, "{\"mode\":\"go lz\",\"ts\":1}", &m),
+              "no spaces");
+        CHECK(!PARSE(kdash_parse_panelmode, "{\"mode\":7,\"ts\":1}", &m),
+              "mode must be a string");
+        CHECK(!PARSE(kdash_parse_panelmode, "{\"ts\":1}", &m), "missing mode");
+        {
+            char json[128];
+            char m31[32], m32[33];
+            memset(m31, 'a', 31); m31[31] = '\0';
+            memset(m32, 'a', 32); m32[32] = '\0';
+            snprintf(json, sizeof(json), "{\"mode\":\"%s\",\"ts\":1}", m31);
+            CHECK(PARSE(kdash_parse_panelmode, json, &m), "31 chars fits");
+            snprintf(json, sizeof(json), "{\"mode\":\"%s\",\"ts\":1}", m32);
+            CHECK(!PARSE(kdash_parse_panelmode, json, &m),
+                  "32 is rejected, not truncated into a mode nobody named");
+        }
+
+        /* `ts` carries CD-17's identity rule unchanged. */
+        CHECK(!PARSE(kdash_parse_panelmode, "{\"mode\":\"clock\"}", &m),
+              "missing ts");
+        CHECK(!PARSE(kdash_parse_panelmode, "{\"mode\":\"clock\",\"ts\":0}", &m),
+              "ts 0 is no stamp");
+        CHECK(m.mode[0] == '\0', "a rejected record leaves no usable mode");
+        CHECK(!PARSE(kdash_parse_panelmode, "{\"mode\":\"clock\",\"ts\":-5}", &m),
+              "a negative ts is not a command");
+        CHECK(!PARSE(kdash_parse_panelmode, "[\"clock\"]", &m), "not an object");
+
+        CHECK(PARSE(kdash_parse_panelmode,
+                    "{\"mode\":\"clock\",\"ts\":1,\"by\":\"ken\"}", &m),
+              "unknown fields must be ignored, never rejected");
+    }
+
+    /* ---- kdash:panelshot ---- */
+    {
+        kdash_panelshot_t s;
+        memset(&s, 0, sizeof(s));
+        strcpy(s.host, "rpidash2");
+        CHECK(PARSE(kdash_parse_panelshot,
+                    "{\"path\":\"/var/tmp/kdd.bmp\",\"ts\":1756600000}", &s),
+              "full screenshot command");
+        CHECK(strcmp(s.path, "/var/tmp/kdd.bmp") == 0, "path \"%s\"", s.path);
+        CHECK(s.ts == 1756600000.0, "ts");
+        CHECK(strcmp(s.host, "rpidash2") == 0, "key host stays authoritative");
+
+        /* The path is optional — absent means the panel's own default, which
+         * is the ordinary case. */
+        CHECK(PARSE(kdash_parse_panelshot, "{\"ts\":1}", &s), "ts alone");
+        CHECK(s.path[0] == '\0', "absent path is empty, not a guess");
+
+        /* Absolute or absent. A relative path would resolve against whatever
+         * the dashboard's working directory happens to be. */
+        CHECK(PARSE(kdash_parse_panelshot, "{\"path\":\"kdd.bmp\",\"ts\":1}", &s),
+              "a relative path does not cost the capture");
+        CHECK(s.path[0] == '\0', "it is simply absent");
+        CHECK(PARSE(kdash_parse_panelshot, "{\"path\":7,\"ts\":1}", &s),
+              "a non-string path is absent too");
+        CHECK(s.path[0] == '\0', "and carries nothing");
+
+        {
+            char json[512];
+            char long_path[KDASH_PATH_MAX + 8];
+            long_path[0] = '/';
+            memset(long_path + 1, 'p', KDASH_PATH_MAX);
+            long_path[KDASH_PATH_MAX + 1] = '\0'; /* 256 chars: one too many */
+            snprintf(json, sizeof(json), "{\"path\":\"%s\",\"ts\":1}", long_path);
+            CHECK(PARSE(kdash_parse_panelshot, json, &s), "oversize path");
+            CHECK(s.path[0] == '\0',
+                  "an oversize path is dropped, never truncated to a real one");
+        }
+
+        CHECK(!PARSE(kdash_parse_panelshot, "{\"path\":\"/tmp/a.bmp\"}", &s),
+              "missing ts");
+        CHECK(!PARSE(kdash_parse_panelshot, "{\"ts\":0}", &s), "ts 0 is no stamp");
+        CHECK(!PARSE(kdash_parse_panelshot, "{\"ts\":\"now\"}", &s),
+              "a non-numeric ts is not a command");
+        CHECK(!PARSE(kdash_parse_panelshot, "[]", &s), "not an object");
+        CHECK(PARSE(kdash_parse_panelshot, "{\"ts\":1,\"why\":\"kddss\"}", &s),
+              "unknown fields must be ignored, never rejected");
+    }
+
+    /* ---- the edge rule, family-agnostic ---- */
+    {
+        const long long window = KDASH_PANEL_WINDOW_S;
+        const long long now = 1756600000;
+        const double cmd = (double)now - 2;
+
+        CHECK(kdash_cmd_actionable(cmd, 0, now, window),
+              "a fresh command nobody has acted on is actionable");
+        CHECK(!kdash_cmd_actionable(cmd, cmd, now, window),
+              "the same command must not be acted on twice");
+        CHECK(!kdash_cmd_actionable(0, 0, now, window),
+              "a zeroed record is never actionable");
+        CHECK(!kdash_cmd_actionable((double)now - window - 1, 0, now, window),
+              "a command older than the window is never replayed");
+        CHECK(kdash_cmd_actionable((double)now + 30, 0, now, window),
+              "a stamp in the future is not stale");
+
+        /* kdash_panel_actionable() is this function with the record
+         * unwrapped, so the two must agree on every input. */
+        {
+            kdash_panel_t p;
+            memset(&p, 0, sizeof(p));
+            p.ts = cmd;
+            CHECK(kdash_panel_actionable(&p, 0, now, window) ==
+                      kdash_cmd_actionable(p.ts, 0, now, window),
+                  "the typed helper and the generic one agree");
+        }
+
+        /* One acted stamp per VERB. A mode switch acted on at T must not
+         * suppress a screenshot asked for at the same instant — which is the
+         * whole reason these are separate keys (CD-22). */
+        {
+            kdash_panelmode_t m;
+            kdash_panelshot_t s;
+            memset(&m, 0, sizeof(m));
+            memset(&s, 0, sizeof(s));
+            m.ts = cmd;
+            s.ts = cmd;
+            double acted_mode = m.ts; /* the mode command has been acted on */
+            double acted_shot = 0;    /* the screenshot has not */
+            CHECK(!kdash_cmd_actionable(m.ts, acted_mode, now, window),
+                  "the mode command is spent");
+            CHECK(kdash_cmd_actionable(s.ts, acted_shot, now, window),
+                  "and the screenshot at the same stamp is still pending");
+        }
+    }
+
     /* ---- claude:session (HASH field/value pairs) ---- */
     {
         kdash_claude_session_t s;

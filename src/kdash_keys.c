@@ -199,14 +199,17 @@ bool kdash_claude_session_key_parse(const char *key, size_t keylen,
     return true;
 }
 
-bool kdash_panel_key(char *out, size_t outsz, const char *host) {
+/* `<prefix><host>`, with the token contract enforced first. The three panel
+ * control families differ only in their prefix, so they share this rather than
+ * each keeping its own copy of the same bounds check. */
+static bool prefixed_host_key(char *out, size_t outsz, const char *pfx,
+                              const char *host) {
     if (!out || !host)
         return false;
     size_t hlen = strlen(host);
     if (!kdash_token_ok(host, hlen))
         return false;
 
-    const char *pfx = KDASH_KEY_PANEL_PFX;
     size_t plen = strlen(pfx);
     if (plen + hlen + 1 > outsz)
         return false;
@@ -215,6 +218,18 @@ bool kdash_panel_key(char *out, size_t outsz, const char *host) {
     memcpy(out + plen, host, hlen);
     out[plen + hlen] = '\0';
     return true;
+}
+
+bool kdash_panel_key(char *out, size_t outsz, const char *host) {
+    return prefixed_host_key(out, outsz, KDASH_KEY_PANEL_PFX, host);
+}
+
+bool kdash_panelmode_key(char *out, size_t outsz, const char *host) {
+    return prefixed_host_key(out, outsz, KDASH_KEY_PANELMODE_PFX, host);
+}
+
+bool kdash_panelshot_key(char *out, size_t outsz, const char *host) {
+    return prefixed_host_key(out, outsz, KDASH_KEY_PANELSHOT_PFX, host);
 }
 
 bool kdash_apttemps_key_parse(const char *key, size_t keylen,

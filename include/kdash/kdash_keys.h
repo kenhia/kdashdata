@@ -16,6 +16,8 @@
  *   kpidash:services:<name>:<host>              exactly 4 segments, `_` = none
  *   kpidash:apttemps:<zone>                     exactly 3 segments
  *   kdash:panel:<host>                          exactly 3 segments
+ *   kdash:panelmode:<host>                      exactly 3 segments
+ *   kdash:panelshot:<host>                      exactly 3 segments
  *   claude:session:<host>:<sid>                 4 segments, last is opaque
  *   claude:limits                               one shared key
  *   claude:recent                               one shared key
@@ -40,8 +42,12 @@
 #define KDASH_KEY_SERVICES_PFX "kpidash:services:"
 #define KDASH_KEY_APTTEMPS_PFX "kpidash:apttemps:"
 
-/* The kdash namespace's control feed (registry.md): one key per panel. */
-#define KDASH_KEY_PANEL_PFX "kdash:panel:"
+/* The kdash namespace's control feeds (registry.md): one key per panel per
+ * VERB. Three families rather than three fields, because a `ts` is a command's
+ * identity and two commands under one stamp would share one edge (CD-22). */
+#define KDASH_KEY_PANEL_PFX     "kdash:panel:"
+#define KDASH_KEY_PANELMODE_PFX "kdash:panelmode:"
+#define KDASH_KEY_PANELSHOT_PFX "kdash:panelshot:"
 
 /* The claude family (registry.md). Two of the three are single fixed keys, so
  * they are literals rather than grammars; only the session family is parsed. */
@@ -117,6 +123,13 @@ bool kdash_apttemps_key_parse(const char *key, size_t keylen,
  * place a bad token could get in. Add the parse the day something enumerates
  * panels, not before. */
 bool kdash_panel_key(char *out, size_t outsz, const char *host);
+
+/* Build `kdash:panelmode:<host>` and `kdash:panelshot:<host>` (exactly 3
+ * segments each). Same contract as kdash_panel_key() in every respect — the
+ * host is revalidated, and there is deliberately no matching parse because a
+ * panel builds the key with its own name on it rather than discovering it. */
+bool kdash_panelmode_key(char *out, size_t outsz, const char *host);
+bool kdash_panelshot_key(char *out, size_t outsz, const char *host);
 
 /* Build `claude:session:<host>:<sid>`. Both tokens are revalidated first: a
  * reader constructs this key from segments it read back off a SCAN, so

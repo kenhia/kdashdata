@@ -1,0 +1,34 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/kenhia/kdashdata/contracts/schemas/kdash-panelmode.schema.json",
+  "title": "kdash panel mode command",
+  "description": "Payload of kdash:panelmode:{host} - latest-value, ts-owned, no TTL. Tells the dashboard running on {host} which of ITS OWN screens to show, and optionally what to configure that screen with. The key is exactly 3 segments and {host} is authoritative; the payload carries no echo of it. CD-17's rule is inherited verbatim: the consumer acts on a CHANGE of ts, never on the current value, and a command older than the reader's window (60 s, KDASH_PANEL_WINDOW_S) is never replayed at all. This is a SIBLING of kdash:panel:{host}, not a replacement - `want` there is the coarse axis every dashboard host has (is the dashboard on screen, or has it yielded the display), and `mode` here is the dashboard's own screen vocabulary. A dashboard that has both reads both; today kstudiodash uses only `want` and kdeskdash only `mode`.",
+  "type": "object",
+  "required": ["mode", "ts"],
+  "additionalProperties": true,
+  "properties": {
+    "mode": {
+      "type": "string",
+      "description": "Which of the dashboard's screens to show, named in the DASHBOARD's vocabulary (kdeskdash: clock, gol, golz, dev, calc). Deliberately not a closed enum: the contract cannot enumerate three dashboards' screens without needing an edit every time one gains a view, so the contract validates the SHAPE and the dashboard validates the MEANING - a mode it does not have is a command it ignores. Naming the mode already showing is legal and is how settings are injected without a switch.",
+      "pattern": "^[a-z][a-z0-9_-]{0,30}$"
+    },
+    "settings": {
+      "type": "object",
+      "description": "Optional one-shot configuration for `mode`, applied when this command is acted on. Names and meanings belong to the mode, not to this contract - the same opaque field/value text the pair of Redis HASHes (kdeskdash:gol:settings, kdeskdash:golz:settings) carried before this feed existed, moved onto the wire. Only the names present are overridden; every name absent keeps whatever the mode would have used, which is what makes a partial injection safe. A name the mode does not know is ignored, per the additive-evolution rule. `additionalProperties` constrains the VALUE type and never the name set, so a mode may grow a setting without this schema changing.",
+      "maxProperties": 24,
+      "propertyNames": {
+        "pattern": "^[a-z][a-z0-9_]{0,30}$"
+      },
+      "additionalProperties": {
+        "type": "string",
+        "maxLength": 63,
+        "description": "The value as TEXT, exactly as a Redis HASH would have delivered it (\"3\", \"0.35\", \"true\"). Strings only, so there is no number-formatting rule for two consumers to disagree about, and the mode keeps the single parse path it already has."
+      }
+    },
+    "ts": {
+      "type": "number",
+      "exclusiveMinimum": 0,
+      "description": "Unix seconds (float): the COMMAND's time, not the writer's heartbeat. Advancing it is what issues a new command, so it is required and positive - a stamp a consumer cannot compare is no command at all."
+    }
+  }
+}
