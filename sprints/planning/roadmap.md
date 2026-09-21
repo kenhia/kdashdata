@@ -28,21 +28,56 @@
   first feed that tells a dashboard to *do* something, and CD-17 on why a
   control feed is ts-owned state rather than a `GETDEL` one-shot. Unblocks
   kstudiodash 006.
+- Sprint 008 (korg:1915): `kdash:stale:<host>:<deployer>` — the feed for hosts
+  that are legitimately unreachable, and CD-18 on a presence-owned flag where
+  absence is the only all-clear.
+- Sprint 009 (korg:2217): the shared apartment-temperature bands, so a panel
+  stops porting thresholds by hand, plus the counted-reader contract (a partial
+  list is indistinguishable from a complete one, so these readers return -1).
+- Sprint 010 (korg:2427): the publishers join the fleet's per-host secrets file
+  ahead of the per-user files CD-12 shipped with (CD-19) — one slice of the
+  simplify-secrets program korg:2440.
+- Sprint 011 (korg:2679): komarchy — the laptop, in no deploy target and ten
+  days behind — becomes one and gets the CD-19 build.
+- Sprint 012 (korg:2747): the contracts the kxeneon Agents panel was blocked
+  on, code-free — `kdash:agentact`, a process monitor's verdict on an agent and
+  the first family keyed deliberately to join `claude:session` (CD-20), and
+  `ghcp:session` for Copilot CLI, outside `kdash:` by named exception and
+  mirroring `claude:session` field-for-field (CD-21). Slice 3 of korg:2751.
+- Sprint 013 (korg:2788): 012 legalised `ghcp` in prose and taught neither
+  publisher allowlist, so every `ghcp:*` write was refused while the contract
+  called it legal. Both sides taught, plus the gate that compares them — the
+  one check neither per-language gate could ever make.
+- Sprint 014 (korg:2931): the contract slice opening the Redis-consolidation
+  program (korg:2935, five servers to two) — CD-8 amended so the dev pair's
+  `kvscf:*` exchange lives on central, and the panel-control family grown two
+  siblings, one per verb (CD-22). CD-23 records what that makes the fleet
+  password.
+- Sprint 015 (korg:2978): what the contracts say, now enforced — every schema
+  carries `examples` it must accept and `x-counterexamples` it must reject
+  (CD-24); `kdash-pub` grew `get` and `scan` in both wrappers with absence as a
+  distinct exit code (CD-14 amended); and the repo declares its deploy behind a
+  self-skipping `publish` versioned from the binary's own inputs, so a
+  contract-only sprint no longer churns four hosts.
 
 ## Now
 
-- kstudiodash 005 (korg:1728) consumes kdashdata — slice 2 of program
-  korg:1785, and the live verification that contract + library match what a
-  real dashboard needs. Unblocked by sprint 006.
+- The rest of the Redis-consolidation program (korg:2935), which is kdeskdash's
+  and k-homelab's to carry: fold rpidash2's pair Redis into central
+  (korg:2932), then panel state to a file with commands from central
+  (korg:2933), then retire the three servers (korg:2934). Nothing in this repo
+  blocks it — sprint 014 landed the contract half.
 
 ## Next
 
-- kstudiodash 006 (korg:1729) resumes on its paused branch and consumes
-  `kdash_panel()`; the kdeskdash button that publishes the command is still an
-  unfiled third piece, and the pair belongs under a program.
-- kdeskdash adopts these readers (kdeskdash korg:1783), retiring the duplicate
-  claude logic sprint 006 knowingly left in place. Not urgent: migrating a
-  panel people look at daily is a different risk from adding a reader.
+- kdeskdash's Copilot publisher (korg:2755), unblocked by sprint 013, and the
+  k-homelab recipe behind it (korg:2756).
+- kdeskdash adopts the `claude:*` readers (korg:2218, work item 1783),
+  retiring the duplicate claude logic sprint 006 knowingly left in place. Not
+  urgent: migrating a panel people look at daily is a different risk from
+  adding a reader.
+- kstudiodash's first consumption of the library (korg:1728) — still the live
+  verification that contract and library match what a real dashboard needs.
 
 ## Later / Ideas
 
