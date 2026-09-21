@@ -29,7 +29,7 @@
       "type": "integer",
       "exclusiveMinimum": 0,
       "maximum": 100000000000,
-      "description": "Unix SECONDS of the last lifecycle event, per rules.md. Drives the reader's freshness ladder; a non-numeric value rejects the record. THE UNIT IS THE TRAP ON THIS FEED: Copilot's hook stdin delivers `timestamp` in MILLISECONDS (measured: 1789620973658), so the publisher must divide by 1000. A pass-through publishes a stamp roughly a thousand times further in the future than now, and because readers treat negative ages as clock skew and therefore fresh (rules.md, Payloads), every such record would read as permanently, convincingly fresh — a session that ended weeks ago still showing as live, with nothing anywhere reporting an error. THAT IS WHY THE BOUNDS ARE HERE AND NOT JUST IN THIS SENTENCE: 1e11 seconds is the year 5138, and every millisecond stamp after 1973 exceeds it, so a unit slip is a schema violation rather than a plausible-looking record. Documenting the trap and leaving the schema to accept it would have caught nobody. Integer, like the claude family's, rather than the float the kdash:* families use. (claude-session.schema.json's own `ts` carries no such bound; the two families are otherwise field-for-field identical, and that difference is deliberate — this family's writer converts units on every write and its is a new contract with no installed writer to break.)"
+      "description": "Unix SECONDS of the last lifecycle event, per rules.md. Drives the reader's freshness ladder; a non-numeric value rejects the record. THE UNIT IS THE TRAP ON THIS FEED: Copilot's hook stdin delivers `timestamp` in MILLISECONDS (measured: 1789620973658), so the publisher must divide by 1000. A pass-through publishes a stamp roughly a thousand times further in the future than now, and because readers treat negative ages as clock skew and therefore fresh (rules.md, Payloads), every such record would read as permanently, convincingly fresh — a session that ended weeks ago still showing as live, with nothing anywhere reporting an error. THAT IS WHY THE BOUNDS ARE HERE AND NOT JUST IN THIS SENTENCE: 1e11 seconds is the year 5138, and every millisecond stamp after 1973 exceeds it, so a unit slip is a schema violation rather than a plausible-looking record. Documenting the trap and leaving the schema to accept it would have caught nobody. Integer, like the claude family's, rather than the float the kdash:* families use. (claude-session.schema.json's own `ts` carries no such bound, and that is now SETTLED rather than pending: Ken ruled on 2026-09-16 that it stays unbounded, per CD-3. A grandfathered shape is documented as it is and migrated opportunistically, never tightened underneath a writer this repo does not own — `claude-pub.sh` is installed on kai, kubs0 and cleo, and a validator that starts rejecting is a semantics change to anyone validating. The bound is for NEW families, where it catches a new writer's unit slip before it publishes, which is exactly this family's case: its writer converts units on every write and it has no installed writer to break. So the two families are field-for-field identical except here, on purpose and for a recorded reason.)"
     },
     "started_ts": {
       "type": "integer",
@@ -45,5 +45,50 @@
       "type": "string",
       "description": "Session name. NORMALLY ABSENT for the same reason as `model` — no hook event carries one. An empty or absent title falls back to `project` in the view, which is the same fallback the claude family already uses, so this costs the consumer nothing."
     }
-  }
+  },
+  "examples": [
+    {
+      "host": "kai",
+      "project": "kdashdata",
+      "cwd": "/home/ken/src/tools/kdashdata",
+      "status": "working",
+      "ts": 1758500012,
+      "started_ts": 1758499000
+    },
+    {
+      "status": "working",
+      "ts": 1758500012
+    }
+  ],
+  "x-counterexamples": [
+    {
+      "record": {
+        "status": "working",
+        "ts": 1789620973658
+      },
+      "why": "THE hazard on this feed: Copilot's hook stdin delivers `timestamp` in milliseconds, and a pass-through publishes a stamp readers would treat as permanently fresh forever. 1e11 seconds is the year 5138, so every millisecond stamp after 1973 is a validation failure instead of a convincing record"
+    },
+    {
+      "record": {
+        "status": "working",
+        "started_ts": 1789620973658,
+        "ts": 1758500012
+      },
+      "why": "`started_ts` comes off the same millisecond source and is the same slip"
+    },
+    {
+      "record": {
+        "status": "working",
+        "ts": 0
+      },
+      "why": "exclusiveMinimum 0 — a zero stamp is an unset variable that reached the payload, not the epoch"
+    },
+    {
+      "record": {
+        "status": "done",
+        "ts": 1758500012
+      },
+      "why": "the enum mirrors claude:session field-for-field (CD-21); Copilot cannot currently FILL `awaiting`, but it may not invent a word outside the shared vocabulary either"
+    }
+  ]
 }

@@ -27,5 +27,59 @@
       "exclusiveMinimum": 0,
       "description": "Unix seconds (float) of the LAST write — the most recent skip, per the ts-everywhere rule in rules.md. Distinct from since: ts moves on every skipped run, since does not. Like since it is a skip-side stamp and not a last-contact time. Positive because both stamps here are rendered as durations, and a 0 renders as a plausible-looking 'stale since 1970' rather than as the missing stamp it is."
     }
-  }
+  },
+  "examples": [
+    {
+      "stale": true,
+      "since": 1757045440.0,
+      "reason": "komarchy unreachable (lid closed)",
+      "ts": 1758500012.4
+    }
+  ],
+  "x-counterexamples": [
+    {
+      "record": {
+        "stale": true,
+        "since": "2026-09-05T04:10:40Z",
+        "reason": "komarchy unreachable",
+        "ts": 1758500012.4
+      },
+      "why": "THE case this whole gate was filed for (WI 1926): both writers of this feed live in repos whose other timestamp is an ISO 8601 string, and k-homelab's `.state/last-seen` is literally this value. Published, it passes every wrapper, lands in Redis looking fine, and surfaces as a blank card two repos downstream"
+    },
+    {
+      "record": {
+        "stale": false,
+        "since": 1757045440.0,
+        "reason": "back",
+        "ts": 1758500012.4
+      },
+      "why": "presence IS the flag (CD-18): absence is the only all-clear, so a writer clears this feed by DELeting the key and never by publishing a negative"
+    },
+    {
+      "record": {
+        "stale": 1,
+        "since": 1757045440.0,
+        "reason": "skipped",
+        "ts": 1758500012.4
+      },
+      "why": "`1` is not `true`, however many languages agree that it is"
+    },
+    {
+      "record": {
+        "stale": true,
+        "since": 1757045440.0,
+        "reason": "",
+        "ts": 1758500012.4
+      },
+      "why": "the reason is what the card renders; an empty one is a red row nobody can act on"
+    },
+    {
+      "record": {
+        "stale": true,
+        "reason": "komarchy unreachable",
+        "ts": 1758500012.4
+      },
+      "why": "`since` is the field a read-modify-write must carry unchanged across every later skip — dropping it turns 'stale for three weeks' into 'stale for an hour'"
+    }
+  ]
 }

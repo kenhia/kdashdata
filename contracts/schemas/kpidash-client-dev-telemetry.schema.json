@@ -20,5 +20,57 @@
     "gpu_compute_pct": { "type": "number", "minimum": 0 },
     "gpu_vram_used_mb": { "type": "number", "minimum": 0 },
     "gpu_vram_total_mb": { "type": "number", "minimum": 0 }
-  }
+  },
+  "examples": [
+    {
+      "hostname": "kai",
+      "host": "kai",
+      "ts": 1758500012.4,
+      "cpu_pct": 12.5,
+      "top_core_pct": 61.0,
+      "ram_used_mb": 18432.0,
+      "ram_total_mb": 64256.0,
+      "gpu_compute_pct": 3.0,
+      "gpu_vram_used_mb": 1024.0,
+      "gpu_vram_total_mb": 32768.0
+    },
+    {
+      "hostname": "kubs0",
+      "ts": 1758500012.4,
+      "cpu_pct": 0,
+      "ram_used_mb": 2048,
+      "ram_total_mb": 16384
+    }
+  ],
+  "x-counterexamples": [
+    {
+      "record": {
+        "hostname": "kai",
+        "ts": 1758500012.4,
+        "cpu_pct": -1,
+        "ram_used_mb": 2048,
+        "ram_total_mb": 16384
+      },
+      "why": "a negative percentage is a sampling bug — two counters read in the wrong order — and it draws a bar going backwards"
+    },
+    {
+      "record": {
+        "hostname": "kai.local ",
+        "ts": 1758500012.4,
+        "cpu_pct": 1,
+        "ram_used_mb": 2048,
+        "ram_total_mb": 16384
+      },
+      "why": "a trailing space in a hostname is the classic shell-capture slip; the key grammar would refuse it and so does the payload"
+    },
+    {
+      "record": {
+        "hostname": "kai",
+        "ts": 1758500012.4,
+        "cpu_pct": 1,
+        "ram_used_mb": 2048
+      },
+      "why": "`ram_total_mb` is required because the used figure means nothing without it"
+    }
+  ]
 }

@@ -146,7 +146,11 @@ pub const USAGE: &[(&str, &str)] = &[
 /// everything there is a write that [`parse`] turns into a [`Command`] and
 /// `pipeline` runs with its reply ignored, and a read is neither of those.
 /// `--help` renders both.
-pub const READ_USAGE: &[(&str, &str)] = &[("hget", "hget <key> <field>")];
+pub const READ_USAGE: &[(&str, &str)] = &[
+    ("hget", "hget <key> <field>"),
+    ("get", "get <key>"),
+    ("scan", "scan <pattern>"),
+];
 
 /// True for a verb [`parse_query`] accepts.
 pub fn is_read_verb(verb: &str) -> bool {
@@ -298,12 +302,24 @@ pub enum Query {
     /// same answer — nothing — because Redis does not distinguish them and
     /// neither does the guard this serves.
     HGet { key: String, field: String },
+    /// One whole STRING key. **Absence is a distinct answer here**, unlike
+    /// [`Query::HGet`]: `kdash:stale:*` is presence-owned (CD-18), where
+    /// absence is the only all-clear and an empty value is not the same
+    /// thing. A caller that cannot tell them apart cannot implement the feed.
+    Get { key: String },
+    /// Every key matching a pattern. The identities are IN the key for
+    /// `kdash:stale:{host}:{deployer}`, so a reader that wants "which
+    /// deployers have skipped this host" is asking about keys, not values.
+    Scan { pattern: String },
 }
 
 impl Query {
+    /// What this query names: a key, or — for [`Query::Scan`] — the pattern
+    /// standing in for a set of them.
     pub fn key(&self) -> &str {
         match self {
-            Query::HGet { key, .. } => key,
+            Query::HGet { key, .. } | Query::Get { key } => key,
+            Query::Scan { pattern } => pattern,
         }
     }
 }
@@ -329,6 +345,32 @@ pub fn parse_query(words: &[impl AsRef<str>]) -> Result<Query, ParseError> {
             Ok(Query::HGet {
                 key: rest[0].into(),
                 field: rest[1].into(),
+            })
+        }
+        "get" => {
+            if rest.len() != 1 {
+                return Err(ParseError::Arity {
+                    verb: "get",
+                    usage: usage_for("get"),
+                });
+            }
+            keys::check_key(rest[0])?;
+            Ok(Query::Get {
+                key: rest[0].into(),
+            })
+        }
+        "scan" => {
+            if rest.len() != 1 {
+                return Err(ParseError::Arity {
+                    verb: "scan",
+                    usage: usage_for("scan"),
+                });
+            }
+            // A pattern, not a key — same grammar, `*`/`?` allowed inside a
+            // segment, and the namespace may not be globbed.
+            keys::check_pattern(rest[0])?;
+            Ok(Query::Scan {
+                pattern: rest[0].into(),
             })
         }
         other => Err(ParseError::UnknownVerb(other.to_string())),
@@ -458,6 +500,68 @@ mod tests {
                 field: "updated_at".into(),
             })
         );
+    }
+
+    #[test]
+    fn get_parses_one_key_and_scan_one_pattern() {
+        assert_eq!(
+            parse_query(&["get", "kdash:stale:komarchy:claude-hooks"]),
+            Ok(Query::Get {
+                key: "kdash:stale:komarchy:claude-hooks".into()
+            })
+        );
+        assert_eq!(
+            parse_query(&["scan", "kdash:stale:komarchy:*"]),
+            Ok(Query::Scan {
+                pattern: "kdash:stale:komarchy:*".into()
+            })
+        );
+        // `key()` answers for all three, so a caller logging "what did I ask
+        // about" needs no match of its own.
+        assert_eq!(
+            parse_query(&["scan", "kdash:stale:*:*"]).unwrap().key(),
+            "kdash:stale:*:*"
+        );
+    }
+
+    #[test]
+    fn get_takes_a_key_and_refuses_a_pattern() {
+        // The distinction `scan` exists for: GET of a glob would return
+        // nothing and look exactly like an absent key.
+        assert!(matches!(
+            parse_query(&["get", "kdash:stale:komarchy:*"]),
+            Err(ParseError::Key(KeyError::BadSegment(_)))
+        ));
+    }
+
+    #[test]
+    fn scan_may_not_glob_the_family_it_reads() {
+        assert!(matches!(
+            parse_query(&["scan", "*:*"]),
+            Err(ParseError::Key(KeyError::GlobbedNamespace(_)))
+        ));
+        assert!(matches!(
+            parse_query(&["scan", "weather:*"]),
+            Err(ParseError::Key(KeyError::UnknownNamespace(_)))
+        ));
+    }
+
+    #[test]
+    fn the_new_read_verbs_name_their_usage_line_on_a_bad_arity() {
+        for (words, verb) in [
+            (vec!["get"], "get"),
+            (vec!["get", "claude:limits", "extra"], "get"),
+            (vec!["scan"], "scan"),
+            (vec!["scan", "kdash:stale:*", "extra"], "scan"),
+        ] {
+            match parse_query(&words) {
+                Err(ParseError::Arity { verb: v, usage }) => {
+                    assert_eq!(v, verb, "{words:?}");
+                    assert!(usage.starts_with(verb), "{usage}");
+                }
+                other => panic!("{words:?} -> {other:?}"),
+            }
+        }
     }
 
     #[test]

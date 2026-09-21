@@ -13,5 +13,59 @@
     "ended_ts": { "type": "integer", "description": "Unix seconds the session ended" },
     "dur_s": { "type": "integer", "minimum": 0, "description": "Session duration in seconds; 0 means unknown, which is what a session whose start was never recorded reports" },
     "ts": { "type": "number", "description": "Unix seconds (float) stamped by the publisher wrapper (rules.md)" }
-  }
+  },
+  "examples": [
+    {
+      "host": "kai",
+      "project": "kdashdata",
+      "title": "overseen 2978",
+      "ended_ts": 1758499000,
+      "dur_s": 1820,
+      "ts": 1758499000.4
+    },
+    {
+      "host": "kubs0",
+      "project": "k-homelab",
+      "ended_ts": 1758490000,
+      "ts": 1758490000
+    }
+  ],
+  "x-counterexamples": [
+    {
+      "record": {
+        "host": "kai box",
+        "project": "kdashdata",
+        "ended_ts": 1758499000,
+        "ts": 1758499000
+      },
+      "why": "the host token grammar admits no spaces; a host segment that cannot go in a key cannot go in a payload either"
+    },
+    {
+      "record": {
+        "host": "kai",
+        "project": "",
+        "ended_ts": 1758499000,
+        "ts": 1758499000
+      },
+      "why": "`project` has minLength 1 because it is what the row is labelled with — an empty one renders as a nameless entry"
+    },
+    {
+      "record": {
+        "host": "kai",
+        "project": "kdashdata",
+        "ended_ts": 1758499000,
+        "dur_s": -5,
+        "ts": 1758499000
+      },
+      "why": "a negative duration means the two stamps were subtracted the wrong way round"
+    },
+    {
+      "record": {
+        "host": "kai",
+        "project": "kdashdata",
+        "ts": 1758499000
+      },
+      "why": "`ended_ts` is what orders the log; without it the entry cannot be placed"
+    }
+  ]
 }

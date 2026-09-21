@@ -23,5 +23,67 @@
     "scoped_count": { "type": "integer", "description": "How many scoped windows the source reported. Only one has ever been observed; this records the day that changes" },
     "scoped_updated_at": { "type": "integer", "description": "Unix seconds of the scoped observation — its OWN stamp. Absent or 0 means stampless, which the reader treats as always stale rather than letting it borrow the headline's freshness" },
     "scoped_expected_refresh_s": { "type": "integer", "description": "Cadence of the scoped writer (poll 300); same greying rule as the headline" }
-  }
+  },
+  "examples": [
+    {
+      "five_hour_pct": 42.0,
+      "seven_day_pct": 11.5,
+      "five_hour_resets_at": 1758513600,
+      "seven_day_resets_at": 1758950400,
+      "updated_at": 1758500012,
+      "expected_refresh_s": 300,
+      "host": "kai",
+      "source": "statusline",
+      "ts": 1758500012,
+      "scoped_model": "claude-opus-5",
+      "scoped_pct": 63.0,
+      "scoped_resets_at": 1758513600,
+      "scoped_active": 1,
+      "scoped_count": 2,
+      "scoped_updated_at": 1758500012,
+      "scoped_expected_refresh_s": 300
+    },
+    {
+      "five_hour_pct": 0,
+      "seven_day_pct": 0
+    }
+  ],
+  "x-counterexamples": [
+    {
+      "record": {
+        "five_hour_pct": "42.0",
+        "seven_day_pct": 11.5
+      },
+      "why": "every value of a HASH feed arrives off the wire as a string; the schema describes the DECODED record, so a reader that forgot to decode is off-contract rather than merely untidy"
+    },
+    {
+      "record": {
+        "five_hour_pct": 101,
+        "seven_day_pct": 11.5
+      },
+      "why": "a percentage above 100 is a derivation bug, not a very full quota"
+    },
+    {
+      "record": {
+        "five_hour_pct": 42.0,
+        "seven_day_pct": 11.5,
+        "source": "statusbar"
+      },
+      "why": "`source` is a closed enum; a near-miss spelling must reject rather than render as an unknown provenance"
+    },
+    {
+      "record": {
+        "five_hour_pct": 42.0,
+        "seven_day_pct": 11.5,
+        "scoped_active": false
+      },
+      "why": "`scoped_active` is 0/1, not a JSON boolean — and `false == 0` in more than one language, which is exactly why it is written down here"
+    },
+    {
+      "record": {
+        "seven_day_pct": 11.5
+      },
+      "why": "both percentages are required: a limits card with one number is a card that renders a blank half"
+    }
+  ]
 }

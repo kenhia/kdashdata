@@ -41,6 +41,14 @@ NAMESPACES = (
 
 _ALLOWED_EXTRA = frozenset("._-")
 
+#: The glob metacharacters a `scan` pattern may carry inside a segment.
+#:
+#: Redis patterns also understand `[abc]` classes and `\\` escapes. Both are
+#: deliberately refused: a character class is a footgun in a one-line shell
+#: argument, and neither buys a publisher anything these two do not. The rule
+#: a reader needs is "`*` and `?`, nothing else".
+GLOB_CHARS = frozenset("*?")
+
 
 class KeyError_(ValueError):
     """A key that violates the grammar. Named to avoid shadowing builtins."""
@@ -83,6 +91,59 @@ def check_key(key: str) -> None:
     # and `claude` are different keys to Redis, so accepting either would put
     # two families in one namespace.
     namespace = key.split(":", 1)[0]
+    if namespace not in NAMESPACES:
+        raise KeyError_(
+            f"namespace {namespace!r} is not one of {', '.join(NAMESPACES)} — "
+            "a feed with no schema in kdashdata is off-contract "
+            "(contracts/rules.md)"
+        )
+
+
+def pattern_segment_ok(segment: str) -> bool:
+    """`token_ok`'s charset plus `GLOB_CHARS`, held to a token's length.
+
+    A pattern segment stands in for a token, so it is bounded like one.
+    """
+    if not segment or len(segment) > TOKEN_MAX:
+        return False
+    return all(
+        c.isascii() and (c.isalnum() or c in _ALLOWED_EXTRA or c in GLOB_CHARS)
+        for c in segment
+    )
+
+
+def check_pattern(pattern: str) -> None:
+    """Raise `KeyError_` if `pattern` is not one a publisher may SCAN.
+
+    The same grammar as `check_key` with `*` and `?` allowed **inside** a
+    segment, and one extra rule that is the whole reason this is its own
+    function rather than a flag on `check_key`: **the namespace segment may
+    not be globbed.** Relaxing `check_key` to let `*` through anywhere would
+    legalise `*:*` — one argument that reads every family on a Redis this repo
+    shares with kvscf and the dashboards. A publisher's read is a read of its
+    own feed (CD-14, amended in sprint 015).
+    """
+    if not pattern:
+        raise KeyError_("pattern is empty")
+    if len(pattern) > KEY_MAX:
+        raise KeyError_(f"pattern is {len(pattern)} bytes, over the {KEY_MAX} limit")
+
+    for segment in pattern.split(":"):
+        if not segment:
+            raise KeyError_(f"pattern {pattern!r} has an empty `:` segment")
+        if not pattern_segment_ok(segment):
+            raise KeyError_(
+                f"pattern segment {segment!r} is not [A-Za-z0-9._-*?] of "
+                f"1..{TOKEN_MAX} chars"
+            )
+
+    namespace = pattern.split(":", 1)[0]
+    if GLOB_CHARS & set(namespace):
+        raise KeyError_(
+            f"pattern namespace {namespace!r} is globbed — name the family you "
+            "are reading. A pattern that crosses families reads keys this "
+            "publisher has no contract with, on a Redis it shares"
+        )
     if namespace not in NAMESPACES:
         raise KeyError_(
             f"namespace {namespace!r} is not one of {', '.join(NAMESPACES)} — "

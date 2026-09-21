@@ -109,6 +109,14 @@ kdash-pub setex kdash:selftest:kai 300 '{"host":"kai","publisher":"rust"}'
 just pub-endpoint    # where would this host publish, and can it?
 ```
 
+Plus the point reads a publisher needs to write *correctly* — `hget`, and
+(sprint 015) `get` and `scan`, the latter two in both wrappers. Nothing here
+consumes a feed; that is `libkdash`. On `get`, **absence is its own answer**:
+exit 0 with the value, 1 when the key is not set, 2 when the question could not
+be asked at all — because `kdash:stale` is presence-owned and reading an
+unreachable Redis as "absent" would restamp a `since` that must be carried
+forward unchanged. CD-14 has the reasoning.
+
 ```python
 from kdash_pub import Publisher
 Publisher("apt-temps").publish_latest("kpidash:apttemps:office", {"temp_c": 22.4})
@@ -122,9 +130,13 @@ Uses the [kprojects](https://github.com/kenhia/kprojects) minimal harness:
 `just check` is four gates, in increasing order of what they need installed:
 
 - `check-docs` — python3 only: every JSON file parses, every relative markdown
-  link resolves, every schema is listed in the registry, every `.ps1` is pure
-  ASCII (Windows PowerShell 5.1 reads a BOM-less script as the ANSI codepage),
-  and `CLAUDE.md`'s Status line names the newest `sprints/` record.
+  link resolves, every schema is listed in the registry **and validates its own
+  `examples` and `x-counterexamples`** (CD-24 — a narrow stdlib validator,
+  `scripts/jsonschema_mini.py`, which refuses any keyword it cannot check
+  rather than skipping it), the registry's families match both publisher
+  allowlists in both directions, every `.ps1` is pure ASCII (Windows PowerShell
+  5.1 reads a BOM-less script as the ANSI codepage), and `CLAUDE.md`'s Status
+  line names the newest `sprints/` record.
 - `check-python` — python3 only: the Python wrapper's pure core, which imports
   nothing but the stdlib precisely so this gate needs nothing installed.
 - `check-rust` — cargo: fmt, clippy, and the Rust wrapper's unit tests. A first

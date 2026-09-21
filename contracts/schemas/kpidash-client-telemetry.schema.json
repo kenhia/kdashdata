@@ -39,5 +39,115 @@
         }
       }
     }
-  }
+  },
+  "examples": [
+    {
+      "hostname": "kai",
+      "ts": 1758500012.4,
+      "cpu_pct": 12.5,
+      "top_core_pct": 61.0,
+      "ram_used_mb": 18432.0,
+      "ram_total_mb": 64256.0,
+      "gpu": {
+        "name": "RTX 5090",
+        "vram_used_mb": 1024.0,
+        "vram_total_mb": 32768.0,
+        "compute_pct": 3.0
+      },
+      "disks": [
+        {
+          "label": "/",
+          "type": "nvme",
+          "used_gb": 412.0,
+          "total_gb": 1863.0,
+          "pct": 22.1
+        },
+        {
+          "label": "/datastore",
+          "type": "hdd",
+          "used_gb": 3100.0,
+          "total_gb": 7452.0,
+          "pct": 41.6
+        }
+      ]
+    },
+    {
+      "hostname": "kubs0",
+      "ts": 1758500012.4,
+      "cpu_pct": 4.0,
+      "ram_used_mb": 2048.0,
+      "ram_total_mb": 16384.0,
+      "gpu": null,
+      "disks": []
+    }
+  ],
+  "x-counterexamples": [
+    {
+      "record": {
+        "hostname": "kai",
+        "ts": 1758500012.4,
+        "cpu_pct": 4.0,
+        "ram_used_mb": 2048.0,
+        "ram_total_mb": 16384.0,
+        "disks": [
+          {
+            "label": "/",
+            "used_gb": 412.0,
+            "total_gb": 1863.0
+          }
+        ]
+      },
+      "why": "a disk row without `pct` is a bar with no length; the four fields are required together because the card draws them together"
+    },
+    {
+      "record": {
+        "hostname": "kai",
+        "ts": 1758500012.4,
+        "cpu_pct": 4.0,
+        "ram_used_mb": 2048.0,
+        "ram_total_mb": 16384.0,
+        "disks": [
+          {
+            "label": "/",
+            "type": "usb",
+            "used_gb": 1.0,
+            "total_gb": 2.0,
+            "pct": 50.0
+          }
+        ]
+      },
+      "why": "the disk-type enum is closed and `other` is its escape hatch; inventing a word means the panel has no icon for it"
+    },
+    {
+      "record": {
+        "hostname": "kai",
+        "ts": 1758500012.4,
+        "cpu_pct": 4.0,
+        "ram_used_mb": 2048.0,
+        "ram_total_mb": 16384.0,
+        "disks": [
+          {
+            "label": "/",
+            "used_gb": 1.0,
+            "total_gb": 2.0,
+            "pct": 120.0
+          }
+        ]
+      },
+      "why": "a disk cannot be 120% full; the bound catches a used/total division done against the wrong denominator"
+    },
+    {
+      "record": {
+        "hostname": "kai",
+        "ts": 1758500012.4,
+        "cpu_pct": 4.0,
+        "ram_used_mb": 2048.0,
+        "ram_total_mb": 16384.0,
+        "gpu": {
+          "vram_used_mb": -1
+        }
+      },
+      "why": "`gpu` may be absent or explicitly null on a host with no card, but a present one is still checked field by field"
+    }
+  ]
 }

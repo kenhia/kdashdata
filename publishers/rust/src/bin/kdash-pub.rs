@@ -16,6 +16,8 @@
 //! kdash-pub --stem KDASH_CLAUDE_REDIS hset claude:session:kai:abc status working
 //! kdash-pub endpoint
 //! kdash-pub --stem KDASH_CLAUDE_REDIS hget claude:limits updated_at
+//! kdash-pub get kdash:stale:komarchy:claude-hooks      # 0 value / 1 absent / 2 unknown
+//! kdash-pub scan 'kdash:stale:komarchy:*'              # one key per line
 //! printf 'hset\tclaude:session:kai:abc\tstatus\tworking\nexpire\tclaude:session:kai:abc\t7200\n' \
 //!   | kdash-pub --best-effort batch
 //! ```
@@ -39,14 +41,43 @@
 //! field is an answer, not a fault — and 2 when Redis could not be reached, so
 //! `--best-effort` degrades a read to "unknown" the same way it degrades a
 //! write to "dropped".
+//!
+//! `get` and `scan` (sprint 015) do **not** share them, and the reason is the
+//! whole point of the two verbs:
+//!
+//! | code | `get <key>` | `scan <pattern>` |
+//! |---|---|---|
+//! | 0 | present — value on stdout | answered — one key per line, possibly none |
+//! | 1 | **absent** — nothing on stdout | (not used) |
+//! | 2 | could not ask: Redis unreachable, auth failed, *or the command was refused* | same |
+//!
+//! `hget` has no code meaning "absent", so 1 is free there for a bad command.
+//! `get` needs 1 for absent, so a refused command moves to 2 — where it is
+//! true, because no answer came back either way. `scan` follows `get` so the
+//! two new verbs read alike; its empty answer is exit 0, because "no keys
+//! matched" is complete rather than missing.
+//!
+//! **`--best-effort` does not touch `get` or `scan`.** It exists so a dead
+//! Redis cannot fail a hook, and turning a 2 into a 0 here would make "I could
+//! not ask" indistinguishable from "present and empty" on `get`, or from "no
+//! keys" on `scan`. These verbs are read-modify-write guards whose entire job
+//! is refusing to guess — `kdash:stale`'s `since` must be carried forward
+//! unchanged across every later skip (CD-18), and a caller that read an
+//! unreachable Redis as "absent" would restamp it, turning "stale for three
+//! weeks" into "stale for an hour" while looking like working code.
 
 use kdash_pub::endpoint::{self, Resolved, Stem};
-use kdash_pub::{command, Command, Publisher, Query};
+use kdash_pub::{command, Answer, Command, Publisher, Query};
 use std::io::{Read, Write};
 use std::process::ExitCode;
 
 const EXIT_USAGE: u8 = 1;
 const EXIT_DELIVERY: u8 = 2;
+/// `get`'s "the key is not there" — a clean answer, not a fault. Numerically
+/// [`EXIT_USAGE`], which is why `get` reports a refused command as
+/// [`EXIT_DELIVERY`] instead: one code cannot mean both "no" and "you asked
+/// wrong" on a verb whose exit status IS the answer.
+const EXIT_ABSENT: u8 = 1;
 
 /// Everything the argv front end decides, separated from doing any of it.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -66,7 +97,7 @@ enum Action {
     Publish(Vec<String>),
     /// Tab-separated commands from stdin, all in one round trip.
     Batch,
-    /// One read from argv (CD-14): `hget <key> <field>`.
+    /// One read from argv (CD-14): `hget`, `get` or `scan`.
     Read(Vec<String>),
     /// Print where this invocation would write, and connect to prove it.
     Endpoint,
@@ -208,7 +239,14 @@ fn help() -> String {
          ~/.config/kpidash-client/redis-auth.env.\n\
          \n\
          hget prints the value and a newline, or nothing at all when the field\n\
-         is absent — an absent field is an answer, not an error.\n",
+         is absent — an absent field is an answer, not an error.\n\
+         \n\
+         get prints the value and a newline and exits 0, or exits 1 with nothing\n\
+         printed when the key is absent; scan prints one matching key per line\n\
+         and exits 0 even when none matched. Both exit 2 when the question could\n\
+         not be asked at all — an unreachable Redis or a refused key — and\n\
+         --best-effort does NOT turn that into a 0, because for these two the\n\
+         exit code is the answer.\n",
         central = endpoint::CENTRAL_STEM,
         claude = endpoint::CLAUDE_STEM,
     )
@@ -261,12 +299,31 @@ fn publisher(invocation: &Invocation) -> Result<Publisher, String> {
     Ok(publisher)
 }
 
+/// True for the verbs whose EXIT CODE is the answer — `get` and `scan`.
+///
+/// Two things hang off this and both are the same rule: a refused command
+/// reports [`EXIT_DELIVERY`] rather than [`EXIT_USAGE`] (because 1 already
+/// means "absent"), and `--best-effort` leaves that 2 alone (because turning
+/// it into 0 would spell "I could not ask" the same as "here is the answer").
+fn answers_with_status(action: &Action) -> bool {
+    matches!(action, Action::Read(words)
+        if words.first().is_some_and(|v| v == "get" || v == "scan"))
+}
+
 fn run(invocation: Invocation) -> Result<(), (u8, String)> {
+    // On `get`/`scan` a refused command is a could-not-ask, not a usage error:
+    // exit 1 is taken by "absent", and a caller branching on it must never read
+    // "your key was rejected" as "the key is not set".
+    let refused = if answers_with_status(&invocation.action) {
+        EXIT_DELIVERY
+    } else {
+        EXIT_USAGE
+    };
     // Everything that can be decided without a socket is decided first, so a
     // contract error is reported as one even when Redis is down.
     let commands = build_commands(&invocation.action).map_err(|e| (EXIT_USAGE, e))?;
-    let query = build_query(&invocation.action).map_err(|e| (EXIT_USAGE, e))?;
-    let publisher = publisher(&invocation).map_err(|e| (EXIT_USAGE, e))?;
+    let query = build_query(&invocation.action).map_err(|e| (refused, e))?;
+    let publisher = publisher(&invocation).map_err(|e| (refused, e))?;
 
     if matches!(invocation.action, Action::Endpoint) {
         match publisher
@@ -308,16 +365,30 @@ fn run(invocation: Invocation) -> Result<(), (u8, String)> {
         );
     }
     if let Some(query) = &query {
-        // Nothing printed for an absent field — the caller's empty read is the
-        // "unknown" its guard is written to expect.
-        if let Some(value) = connection
-            .read_field(query)
-            .map_err(|e| (EXIT_DELIVERY, e.to_string()))?
-        {
-            let mut out = std::io::stdout().lock();
-            out.write_all(&value)
+        let answer = connection
+            .read(query)
+            .map_err(|e| (EXIT_DELIVERY, e.to_string()))?;
+        let mut out = std::io::stdout().lock();
+        match answer {
+            Answer::Value(Some(value)) => out
+                .write_all(&value)
                 .and_then(|()| out.write_all(b"\n"))
-                .map_err(|e| (EXIT_DELIVERY, format!("writing stdout: {e}")))?;
+                .map_err(|e| (EXIT_DELIVERY, format!("writing stdout: {e}")))?,
+            // `hget`: nothing printed, exit 0 — the caller's empty read is the
+            // "unknown" its guard is written to expect (CD-14).
+            Answer::Value(None) if matches!(query, Query::HGet { .. }) => {}
+            // `get`: absence is its own answer and must not be confused with a
+            // present-but-empty value, which is what exit 0 with no output
+            // would say.
+            Answer::Value(None) => {
+                return Err((EXIT_ABSENT, format!("{} is not set", query.key())))
+            }
+            Answer::Keys(keys) => {
+                for key in keys {
+                    writeln!(out, "{key}")
+                        .map_err(|e| (EXIT_DELIVERY, format!("writing stdout: {e}")))?;
+                }
+            }
         }
         return Ok(());
     }
@@ -349,7 +420,10 @@ fn main() -> ExitCode {
         _ => {}
     }
 
-    let best_effort = invocation.best_effort;
+    // `--best-effort` is for the hook path: a dead Redis must not fail a hook.
+    // It cannot apply to a verb whose exit code IS the answer — see the table
+    // at the top of this file.
+    let best_effort = invocation.best_effort && !answers_with_status(&invocation.action);
     match run(invocation) {
         Ok(()) => ExitCode::SUCCESS,
         Err((code, message)) => {
@@ -470,6 +544,57 @@ mod tests {
                 .unwrap()
                 .is_none()
         );
+    }
+
+    #[test]
+    fn the_new_read_verbs_reach_the_read_path() {
+        for (words, expected) in [
+            (
+                vec!["get", "kdash:stale:komarchy:claude-hooks"],
+                Query::Get {
+                    key: "kdash:stale:komarchy:claude-hooks".into(),
+                },
+            ),
+            (
+                vec!["scan", "kdash:stale:komarchy:*"],
+                Query::Scan {
+                    pattern: "kdash:stale:komarchy:*".into(),
+                },
+            ),
+        ] {
+            let invocation = args(&words).unwrap();
+            assert_eq!(
+                invocation.action,
+                Action::Read(words.iter().map(|w| w.to_string()).collect())
+            );
+            assert!(build_commands(&invocation.action).unwrap().is_empty());
+            assert_eq!(build_query(&invocation.action).unwrap(), Some(expected));
+        }
+    }
+
+    #[test]
+    fn only_the_verbs_whose_exit_code_is_an_answer_opt_out_of_best_effort() {
+        // The distinction this whole exit-code table exists for: `hget` says
+        // "absent" with exit 0, so --best-effort may safely fold a delivery
+        // failure into the same answer. `get` says it with exit 1, so folding
+        // would make "could not ask" read as "here is the value" — and for
+        // kdash:stale that restamps a `since` the caller was told to carry
+        // forward unchanged.
+        assert!(answers_with_status(
+            &args(&["get", "claude:limits"]).unwrap().action
+        ));
+        assert!(answers_with_status(
+            &args(&["scan", "kdash:stale:*:*"]).unwrap().action
+        ));
+        assert!(!answers_with_status(
+            &args(&["hget", "claude:limits", "updated_at"])
+                .unwrap()
+                .action
+        ));
+        assert!(!answers_with_status(
+            &args(&["del", "kdash:x:y"]).unwrap().action
+        ));
+        assert!(!answers_with_status(&args(&["batch"]).unwrap().action));
     }
 
     #[test]

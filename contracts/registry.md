@@ -63,9 +63,16 @@ migrated.
 
 Notes: key absence (TTL expired) = source offline for the expiring three.
 `services` keys are exactly 4 segments, `_` = "no host"; non-conforming keys
-are ignored. `services`/`apttemps` staleness is reader-owned via `ts`
-(60 s / 300 s windows in kpidash today). A red card means "nobody is
-publishing", not "that host is down" — check the publisher.
+are ignored. `services`/`apttemps` staleness is reader-owned via `ts`, and **the window
+is the consumer's, per service** — not a number this contract fixes. kpidash's
+default is 60 s (`apttemps` 300 s), and a *daily* publisher gets its own: since
+kpidash sprint 018 `kmon` has a 26 h window, and `kpidash:services:kmon:kai` is
+published once per nightly. Read kpidash's `docs/CLIENT-PROTOCOL.md` §8a
+("Freshness windows") for the live table rather than a number restated here.
+The payload deliberately carries **no cadence field** — the shape has two
+consumers and adding one was declined (handoff korg:2309); a publisher whose
+cadence is not the default tells its consumer, not its readers. A red card
+means "nobody is publishing", not "that host is down" — check the publisher.
 
 **Bands (`apttemps`).** What counts as cold / ok / warm / hot is part of the
 shared data model, not each panel's taste: `kdash_apttemps_band()` in
@@ -246,6 +253,28 @@ kdash-pub set kdash:stale:komarchy:k-homelab \
 kdash-pub del kdash:stale:komarchy:k-homelab
 ```
 
+**The read-modify-write is a third line, and it is `get` (sprint 015, CD-14
+amended).** `since` must be read back and carried unchanged across every later
+skip: a writer that restamps it turns "stale for three weeks" into "stale for
+an hour", which looks exactly like working code. The three outcomes are the
+contract — absence is the only all-clear here, so "I could not ask" must never
+be read as "not set":
+
+```sh
+if since=$(kdash-pub get "kdash:stale:$host:$deployer"); then
+    since=$(printf '%s' "$since" | python3 -c 'import json,sys; print(json.load(sys.stdin)["since"])')
+elif [ $? -eq 1 ]; then
+    since=$(date +%s)          # genuinely the first skip
+else
+    exit 2                     # Redis unreachable — do NOT restamp
+fi
+```
+
+Before these verbs a writer dropped to `redis-cli` for that one read, and to
+reach Redis at all had to reimplement the khlenv stem lookup and the CD-12
+credential order. Two copies existed and had already drifted (k-homelab's
+never tried `/etc/khomelab/secrets.env`) — see WI 1929 and k-homelab WI 2546.
+
 The wrappers validate the namespace and the token charset, **not** this
 family's segment count — `kdash:stale:komarchy` with the deployer left off
 publishes without complaint and no reader will ever look at it. Arity is the
@@ -258,7 +287,12 @@ counting an intermittent host against fleet health. No C reader ships with this
 contract — the feed is registered ahead of its consumers on purpose. The day a
 dashboard wants it through libkdash it needs a **SCAN over
 `kdash:stale:{host}:*`** and a parse (both identity segments come off the key),
-not the single GET the other two `kdash:*` feeds use.
+not the single GET the other two `kdash:*` feeds use. A non-C reader has that
+as `kdash-pub scan 'kdash:stale:<host>:*'` or Python `Publisher.scan(...)`
+(sprint 015) — and **no keys matched is exit 0 with no output**, distinct from
+"could not ask", which is exit 2. For a presence-owned feed those two are the
+difference between "this host is fine" and "nobody knows", so they are
+different answers rather than one empty one.
 
 `agentact` is the family's first **observed-from-outside** feed, and the first
 whose key is deliberately a *copy* of another family's (CD-20). Everything else
@@ -397,7 +431,11 @@ Three consequences the schema states and a reader must hold:
   caught the prose version letting one straight through: this family's whole
   documented hazard, and the documentation did not stop it. `claude:session`'s
   `ts` carries no such bound, which is the one place the two families
-  deliberately differ (see the follow-up on that family).
+  deliberately differ — and that is **settled**, not pending: Ken ruled on
+  2026-09-16 that it stays unbounded, per CD-3. A grandfathered shape is
+  documented as it is, never tightened underneath a writer this repo does not
+  own; the bound belongs to new families, where it catches a new writer's unit
+  slip before it publishes.
 - **`userPromptSubmitted` fires *before* `sessionStart`** — reproducibly, by
   about 4 ms, in `-p` mode. A publisher that treats `sessionStart` as "the
   first write" clobbers a record that already exists; taking `started_ts` from

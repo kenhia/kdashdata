@@ -44,6 +44,15 @@ pub const NAMESPACES: &[&str] = &[
     "kstudiodash",
 ];
 
+/// The glob metacharacters `scan` accepts inside a segment.
+///
+/// Redis patterns also understand `[abc]` classes and `\\` escapes. Both are
+/// deliberately refused: a character class is a footgun in a one-line shell
+/// argument, and neither buys a publisher anything the two here do not. The
+/// rule a reader needs is "`*` and `?`, nothing else", which is short enough
+/// to be right about.
+pub const GLOB_CHARS: &[char] = &['*', '?'];
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum KeyError {
     Empty,
@@ -51,6 +60,9 @@ pub enum KeyError {
     EmptySegment,
     BadSegment(String),
     UnknownNamespace(String),
+    /// A `scan` pattern whose FIRST segment is globbed. `*:*` would sweep
+    /// every family on a shared Redis, which is not a publisher's read.
+    GlobbedNamespace(String),
 }
 
 impl fmt::Display for KeyError {
@@ -68,6 +80,12 @@ impl fmt::Display for KeyError {
                 "namespace {ns:?} is not one of {} — a feed with no schema in \
                  kdashdata is off-contract (contracts/rules.md)",
                 NAMESPACES.join(", ")
+            ),
+            KeyError::GlobbedNamespace(ns) => write!(
+                f,
+                "pattern namespace {ns:?} is globbed — name the family you are \
+                 reading. A pattern that crosses families reads keys this \
+                 publisher has no contract with, on a Redis it shares"
             ),
         }
     }
@@ -117,9 +135,121 @@ pub fn check_key(key: &str) -> Result<(), KeyError> {
     Ok(())
 }
 
+/// Validate a `scan` pattern (CD-14, amended).
+///
+/// The same grammar as [`check_key`] with `*` and `?` allowed **inside** a
+/// segment, and with one extra rule that is the whole reason a pattern gets
+/// its own function rather than a flag: **the namespace segment may not be
+/// globbed.** `check_key` would refuse a pattern outright, and relaxing it to
+/// let `*` through anywhere would legalise `*:*` — one argument that reads
+/// every family on a Redis this repo shares with kvscf and the dashboards.
+/// A publisher's read is a read of its own feed.
+pub fn check_pattern(pattern: &str) -> Result<(), KeyError> {
+    if pattern.is_empty() {
+        return Err(KeyError::Empty);
+    }
+    if pattern.len() > KEY_MAX {
+        return Err(KeyError::TooLong(pattern.len()));
+    }
+
+    for segment in pattern.split(':') {
+        if segment.is_empty() {
+            return Err(KeyError::EmptySegment);
+        }
+        if !pattern_segment_ok(segment) {
+            return Err(KeyError::BadSegment(segment.to_string()));
+        }
+    }
+
+    let namespace = pattern.split(':').next().unwrap_or_default();
+    if namespace.contains(GLOB_CHARS) {
+        return Err(KeyError::GlobbedNamespace(namespace.to_string()));
+    }
+    if !NAMESPACES.contains(&namespace) {
+        return Err(KeyError::UnknownNamespace(namespace.to_string()));
+    }
+    Ok(())
+}
+
+/// [`token_ok`]'s charset plus [`GLOB_CHARS`]. Length is bounded the same way:
+/// a pattern segment stands in for a token, so it is held to a token's limit.
+fn pattern_segment_ok(segment: &str) -> bool {
+    !segment.is_empty()
+        && segment.len() <= TOKEN_MAX
+        && segment
+            .chars()
+            .all(|c| c.is_ascii() && (c.is_ascii_alphanumeric() || "._-*?".contains(c)))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn scan_patterns_glob_inside_a_segment() {
+        // kmon's read (korg:2213): every deployer that has skipped this host.
+        assert!(check_pattern("kdash:stale:komarchy:*").is_ok());
+        assert!(check_pattern("kdash:stale:*:*").is_ok());
+        assert!(check_pattern("claude:session:kai:*").is_ok());
+        assert!(check_pattern("ghcp:session:*").is_ok());
+        assert!(check_pattern("kdash:panel?:kai").is_ok());
+        // A pattern with no glob at all is a key, and a key is a legal pattern.
+        assert!(check_pattern("claude:limits").is_ok());
+    }
+
+    #[test]
+    fn a_pattern_may_not_glob_the_family_it_reads() {
+        // The one that matters: `*:*` on a Redis shared with kvscf and the
+        // dashboards is not a publisher's read of its own feed.
+        assert_eq!(
+            check_pattern("*:*"),
+            Err(KeyError::GlobbedNamespace("*".into()))
+        );
+        assert_eq!(
+            check_pattern("*"),
+            Err(KeyError::GlobbedNamespace("*".into()))
+        );
+        assert_eq!(
+            check_pattern("kdas?:stale:*"),
+            Err(KeyError::GlobbedNamespace("kdas?".into()))
+        );
+        assert_eq!(
+            check_pattern("weather:*"),
+            Err(KeyError::UnknownNamespace("weather".into()))
+        );
+    }
+
+    #[test]
+    fn a_pattern_is_otherwise_held_to_the_key_grammar() {
+        assert_eq!(check_pattern(""), Err(KeyError::Empty));
+        assert_eq!(check_pattern("kdash::*"), Err(KeyError::EmptySegment));
+        assert_eq!(check_pattern("kdash:stale:"), Err(KeyError::EmptySegment));
+        assert_eq!(
+            check_pattern("kdash:has space:*"),
+            Err(KeyError::BadSegment("has space".into()))
+        );
+        // Redis understands these; this grammar does not, on purpose.
+        assert_eq!(
+            check_pattern("kdash:stale:[ab]:*"),
+            Err(KeyError::BadSegment("[ab]".into()))
+        );
+        assert_eq!(
+            check_pattern("kdash:stale:a\\*:*"),
+            Err(KeyError::BadSegment("a\\*".into()))
+        );
+    }
+
+    #[test]
+    fn check_key_still_refuses_every_glob() {
+        // The two functions are separate so that this stays true: a WRITE
+        // never takes a pattern, whatever `scan` is allowed to say.
+        for globbed in ["kdash:stale:*", "kdash:panel?:kai", "*:*"] {
+            assert!(
+                matches!(check_key(globbed), Err(KeyError::BadSegment(_))),
+                "{globbed} should not be a writable key"
+            );
+        }
+    }
 
     #[test]
     fn tokens_follow_the_rules_md_charset() {

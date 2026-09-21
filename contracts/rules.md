@@ -84,6 +84,19 @@ staleness means something, loose enough that one missed write isn't a flap.
   rule expressed in schema form.
 - A feed exists when its schema file lands here; a publisher writing a key
   with no schema in kdashdata is off-contract.
+- **Every schema carries its own records** (CD-24), and `just check` runs
+  them: an `examples` array whose every entry MUST validate, and an
+  `x-counterexamples` array of `{"record": …, "why": "…"}` whose every entry
+  MUST be rejected. A new feed lands with both or the gate fails it. Put the
+  feed's sharpest documented hazard in the counterexamples — that is where a
+  writer meets it before making it.
+- Both arrays hold the **decoded** record. A HASH-shaped feed arrives off the
+  wire as strings for every field and the schema describes it decoded, so
+  `{"ts": "1758500012"}` is a counterexample, not an example.
+- The validator is `scripts/jsonschema_mini.py` — stdlib, and deliberately
+  narrow. It implements the keywords these schemas use and **refuses** any
+  other, so a schema that needs `anyOf` extends the validator (with a
+  counterexample proving the new check bites) rather than going unchecked.
 
 ## Versioning
 

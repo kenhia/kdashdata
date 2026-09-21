@@ -115,5 +115,110 @@
       "items": { "type": "number", "minimum": 0 },
       "description": "Optional bounded read-rate history, oldest first, same cap and same caveat as `cpu_hist`: klaude-top does not emit it yet."
     }
-  }
+  },
+  "examples": [
+    {
+      "verdict": "WORKING",
+      "ts": 1758500012.4,
+      "name": "overseen 2978",
+      "turn": "3",
+      "state": "R",
+      "pid": 41320,
+      "uptime": 812.5,
+      "cpu": 37.2,
+      "in": 1.5,
+      "out": 0.4,
+      "disk": 0.0,
+      "rss": 415744,
+      "threads": 24,
+      "kids": 3,
+      "sockets": 11,
+      "api_sockets": 2,
+      "quiet": 0.8,
+      "transcript_growth": 4096,
+      "transcript_age": 0.9,
+      "transcript": "/home/ken/.claude/projects/x/y.jsonl",
+      "cpu_hist": [
+        1.0,
+        12.5,
+        37.2
+      ],
+      "in_hist": [
+        0.0,
+        0.2,
+        1.5
+      ]
+    },
+    {
+      "verdict": "WAITING",
+      "ts": 1758500012.4,
+      "transcript_age": null
+    }
+  ],
+  "x-counterexamples": [
+    {
+      "record": {
+        "verdict": "RUNNING",
+        "ts": 1758500012.4
+      },
+      "why": "the verdict vocabulary is closed and is the monitor's whole output; a word outside it renders as an unknown state rather than failing where it was produced"
+    },
+    {
+      "record": {
+        "verdict": "WORKING",
+        "ts": 1789620973658
+      },
+      "why": "a millisecond stamp, bounded here for the same reason as ghcp:session — this family joins claude:session on a shared key (CD-20) and a fresh-forever row would sit next to a real one"
+    },
+    {
+      "record": {
+        "verdict": "WORKING",
+        "ts": 1758500012.4,
+        "cpu_hist": [
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0
+        ]
+      },
+      "why": "maxItems 24 — an uncapped array in a value republished every two seconds is how a Redis fills up quietly"
+    },
+    {
+      "record": {
+        "verdict": "WORKING",
+        "ts": 1758500012.4,
+        "transcript_age": -1
+      },
+      "why": "an age is a non-negative duration; a negative one is clock skew being published as fact"
+    },
+    {
+      "record": {
+        "verdict": "WORKING",
+        "ts": 1758500012.4,
+        "pid": 0
+      },
+      "why": "exclusiveMinimum 0 — pid 0 is not a process the monitor observed"
+    }
+  ]
 }

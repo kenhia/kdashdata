@@ -30,5 +30,59 @@
       "exclusiveMinimum": 0,
       "description": "Unix seconds (float): the COMMAND's time, not the writer's heartbeat. Advancing it is what issues a new command, so it is required and positive - a stamp a consumer cannot compare is no command at all."
     }
-  }
+  },
+  "examples": [
+    {
+      "mode": "agents",
+      "settings": {
+        "columns": "3",
+        "refresh_s": "0.35",
+        "compact": "true"
+      },
+      "ts": 1758500012.4
+    },
+    {
+      "mode": "clock",
+      "ts": 1758500012.4
+    }
+  ],
+  "x-counterexamples": [
+    {
+      "record": {
+        "mode": "agents",
+        "settings": {
+          "columns": 3
+        },
+        "ts": 1758500012.4
+      },
+      "why": "settings values are TEXT, exactly as a Redis HASH would have delivered them — strings only, so there is no number-formatting rule for two consumers to disagree about"
+    },
+    {
+      "record": {
+        "mode": "Agents",
+        "ts": 1758500012.4
+      },
+      "why": "the mode grammar is lower-case-first; a panel keying off a capitalised twin would silently have two modes"
+    },
+    {
+      "record": {
+        "mode": "agents",
+        "settings": {
+          "Columns": "3"
+        },
+        "ts": 1758500012.4
+      },
+      "why": "propertyNames applies the same grammar to setting keys, for the same reason"
+    },
+    {
+      "record": {
+        "mode": "agents",
+        "settings": {
+          "note": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+        },
+        "ts": 1758500012.4
+      },
+      "why": "maxLength 63 — a settings value is a knob, not a payload smuggled through the control feed"
+    }
+  ]
 }

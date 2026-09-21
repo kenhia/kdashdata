@@ -6,7 +6,9 @@ key that matches the grammar with a payload that matches the `ts` rule
 publishers. Shell publishers on a latency-sensitive path use the Rust CLI
 instead (`kdash-pub`, this repo's `publishers/rust/`) — see CD-11.
 
-**No rendering, no reading.** The consumer side is `libkdash`.
+**No rendering, and two reads.** The consumer side is `libkdash`; what lives
+here is `Publisher.get` and `Publisher.scan`, the point reads a publisher needs
+to guard or carry forward its own write (CD-14, amended in sprint 015).
 
     from kdash_pub import Publisher
 
