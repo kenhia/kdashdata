@@ -24,5 +24,32 @@
       "type": "string",
       "description": "os-release PRETTY_NAME, fallback platform.system()+release; optional"
     }
-  }
+  },
+  "examples": [
+    {
+      "hostname": "kai",
+      "last_seen_ts": 1758500012.4,
+      "uptime_seconds": 864000.0,
+      "os_name": "Ubuntu 24.04"
+    },
+    {
+      "hostname": "cleo",
+      "last_seen_ts": 1758500012.4
+    }
+  ],
+  "x-counterexamples": [
+    {
+      "record": {
+        "hostname": "",
+        "last_seen_ts": 1758500012.4
+      },
+      "why": "the host pattern requires 1..63 characters; an empty hostname is an unset variable that reached the payload"
+    },
+    {
+      "record": {
+        "hostname": "kai"
+      },
+      "why": "`last_seen_ts` is the whole point of a health key — without it the TTL is the only liveness signal and the payload says nothing"
+    }
+  ]
 }

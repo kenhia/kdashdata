@@ -1072,6 +1072,82 @@ Two things do belong here, and both are on the consumer's side of the wire:
   and CD-5 is untouched: a panel acting on a command does its work locally and
   never writes an ack.
 
+## CD-24 — A schema carries the records that prove it: `examples` pass, `x-counterexamples` must fail
+
+Until sprint 015 a schema in this repo was documentation that happened to be
+machine-readable. `just check` proved it **parsed** and was **registered**;
+`tests/test_payload.c` tested the C parsers, which exist only for feeds that
+have a C reader. Nothing anywhere held a payload to a schema, and the wrappers
+validate namespace and key grammar, not shape. A feed's schema and a feed's
+data had never met (WI 1926).
+
+The cost was not hypothetical. `kdash:stale:{host}:{deployer}` types `since`
+as a **number**; both of its writers live in repos whose other timestamp is an
+ISO 8601 string, and k-homelab's `.state/last-seen` is literally
+`2026-09-05T04:10:40Z`. A writer reaching for the format already in its hand
+would have published a string, passed every wrapper, landed in Redis looking
+fine, and surfaced as a blank card in kpidash two slices downstream — with the
+cause as far from the symptom as this repo can arrange.
+
+**The decision: option 2, and not the dependency.** Taking `jsonschema` would
+have caught everything and been three lines of work. It was declined because
+`check-docs` and `check-python` are stdlib-only *on purpose* — "this runs with
+nothing installed" is a property of this repo's gates, and spending it to make
+a gate is the thing the conventions specifically forbid ("add no dependency to
+make a gate"). The alternative is a small engine for the constructs actually in
+use, which is `scripts/jsonschema_mini.py`: about 250 lines, sixteen assertion
+keywords, no imports beyond `re`.
+
+**Where the records live: in the schema file.** Two arrays at the root.
+
+- `examples` — standard JSON Schema annotation, so a real validator reads them
+  too. Every entry MUST validate.
+- `x-counterexamples` — this repo's own, ignored by every real validator:
+  `{"record": …, "why": "…"}`. Every entry MUST be **rejected**, and the `why`
+  is required, because a negative case whose point nobody wrote down gets
+  deleted by the next person who cannot see it.
+
+Next to the schema rather than in a test file, because the two drift apart the
+moment they are in different directories — and because the counterexamples are
+the best documentation the schema has. `kdash-stale.schema.json` now carries
+the ISO-string record as a named counterexample; a writer reading the contract
+meets the trap before making it.
+
+**Records are DECODED records.** HASH-shaped feeds (`claude:*`, `ghcp:*`)
+arrive off the wire as strings for every field and the schemas describe them
+decoded (CD-15). Several counterexamples are exactly the undecoded wire form,
+which makes the rule concrete instead of a sentence in rules.md.
+
+**The engine refuses what it does not implement, and that is the safety
+property.** A keyword outside its sixteen — `anyOf`, `$ref`, `format` — raises
+rather than being skipped, and the walk that checks this is deliberately
+separate from validation: `validate` descends only into fields an example
+actually carries, so a rarely-filled property could otherwise grow an
+unimplemented keyword and go unchecked until somebody wrote an example for it.
+A validator that ignores what it does not understand reports success it has not
+earned. This repo has already met that failure once in prose — sprint 012
+legalised `ghcp:*` and both per-language gates stayed green while every write
+was refused (WI 2781) — and the answer there was the same one: make the check
+compare two things, and make an empty result a failure rather than a pass.
+
+Two semantics are written down because they are where a hand-rolled validator
+goes quietly wrong, and both have counterexamples in the corpus:
+
+- **`true` is not `1`.** Python's `True == 1`, so `{"const": true}` would
+  accept `1` and `{"enum": [0, 1]}` would accept `false`. Both shapes are live
+  here (`kdash:stale`'s `stale`, `claude:limits`' `scoped_active`).
+- **`$` means end of input.** JSON Schema patterns are ECMA-262 without `m`;
+  Python's `$` also matches before a trailing newline, so `"kai\n"` satisfies
+  `^[A-Za-z0-9._-]{1,63}$` under `re` and violates the host-token contract. A
+  trailing newline is the classic shell-capture slip, so the gap is closed
+  rather than tolerated.
+
+**What this is not.** It is not runtime validation: the wrappers still do not
+validate payloads against schemas, and nothing on a hook path grows a JSON
+Schema engine. It is a gate on the contracts, which is where a wrong shape is
+cheapest to catch. Whether a publisher should validate before writing is a
+separate question with a latency budget attached, and nothing here answers it.
+
 ## Open questions
 
 - **OQ-2 — Redis ACL writer/reader split** (see CD-2).

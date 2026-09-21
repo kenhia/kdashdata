@@ -1,16 +1,17 @@
 #!/usr/bin/env python3
 """Repo gate: JSON parses, markdown links resolve, every schema is
-registered, the registry's families match both publishers' allowlists, every
-PowerShell script is pure ASCII, and CLAUDE.md's Status line names the newest
-sprint record.
+registered and validates its own examples, the registry's families match both
+publishers' allowlists, every PowerShell script is pure ASCII, and CLAUDE.md's
+Status line names the newest sprint record.
 
 Stdlib only, by design — this repo carries contracts and docs, and its
 failure modes are a schema that doesn't parse, a stale cross-reference, a
 feed whose schema landed without anyone telling the registry about it,
 (since sprint 004) a non-ASCII byte in the deploy script cleo runs,
 (since sprint 009) an orientation file that has quietly stopped describing
-the repo, and (since sprint 013) a family legalised in prose that the code
-still refuses.
+the repo, (since sprint 013) a family legalised in prose that the code still
+refuses, and (since sprint 015) a schema that describes no record anybody ever
+checked.
 
 That last one is the reason this gate reaches into `publishers/` at all, and
 it is worth being explicit about: the per-language gates cannot catch it.
@@ -27,6 +28,8 @@ import json
 import re
 import sys
 from pathlib import Path
+
+from jsonschema_mini import check_schema_file
 
 ROOT = Path(__file__).resolve().parent.parent
 #: Build output and virtualenvs, which carry JSON of their own and are nobody's
@@ -198,12 +201,37 @@ def main() -> int:
     # registry never mentions is a feed nobody can find — the same class of
     # fault as a broken link, one level up.
     registry_text = REGISTRY.read_text(encoding="utf-8") if REGISTRY.exists() else ""
-    for schema in sorted(SCHEMA_DIR.glob("*.schema.json")):
+    schemas = sorted(SCHEMA_DIR.glob("*.schema.json"))
+    for schema in schemas:
         if f"schemas/{schema.name}" not in registry_text:
             errors.append(
                 f"contracts/registry.md: no link to schemas/{schema.name} — "
                 "every schema names a feed the registry must list"
             )
+
+    # CD-24. Until sprint 015 a schema here was documentation that happened to
+    # be machine-readable: `just check` proved it PARSED and was REGISTERED,
+    # and nothing anywhere held a record to it. So `kdash:stale`'s numeric
+    # `since` could have been published as the ISO string both its writers had
+    # in hand, passed every wrapper (they check namespace and charset, not
+    # shape), landed in Redis looking fine, and surfaced as a blank card two
+    # repos downstream (WI 1926).
+    #
+    # Each schema now carries its own `examples` (must validate) and
+    # `x-counterexamples` (must be rejected, each with the `why`). The
+    # validator is scripts/jsonschema_mini.py — stdlib, narrow, and it REFUSES
+    # a keyword it does not implement rather than skipping it.
+    if not schemas:
+        errors.append(
+            "contracts/schemas/: no *.schema.json found — this gate would pass "
+            "vacuously, so an empty result is a failure"
+        )
+    for schema in schemas:
+        try:
+            document = json.loads(schema.read_text(encoding="utf-8"))
+        except ValueError:
+            continue  # already reported by the JSON pass above
+        errors.extend(check_schema_file(schema.name, document))
 
     check_namespaces(registry_text, errors)
 
@@ -274,7 +302,8 @@ def main() -> int:
 
     print(
         "check: all JSON parses, all markdown links resolve, "
-        "all schemas registered, registry families match both publisher "
+        f"all {len(schemas)} schemas registered and validating their own "
+        "examples and counterexamples, registry families match both publisher "
         "allowlists, all .ps1 pure ASCII, "
         f"CLAUDE.md current to sprint {newest}"
     )

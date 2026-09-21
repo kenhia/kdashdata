@@ -63,9 +63,16 @@ migrated.
 
 Notes: key absence (TTL expired) = source offline for the expiring three.
 `services` keys are exactly 4 segments, `_` = "no host"; non-conforming keys
-are ignored. `services`/`apttemps` staleness is reader-owned via `ts`
-(60 s / 300 s windows in kpidash today). A red card means "nobody is
-publishing", not "that host is down" — check the publisher.
+are ignored. `services`/`apttemps` staleness is reader-owned via `ts`, and **the window
+is the consumer's, per service** — not a number this contract fixes. kpidash's
+default is 60 s (`apttemps` 300 s), and a *daily* publisher gets its own: since
+kpidash sprint 018 `kmon` has a 26 h window, and `kpidash:services:kmon:kai` is
+published once per nightly. Read kpidash's `docs/CLIENT-PROTOCOL.md` §8a
+("Freshness windows") for the live table rather than a number restated here.
+The payload deliberately carries **no cadence field** — the shape has two
+consumers and adding one was declined (handoff korg:2309); a publisher whose
+cadence is not the default tells its consumer, not its readers. A red card
+means "nobody is publishing", not "that host is down" — check the publisher.
 
 **Bands (`apttemps`).** What counts as cold / ok / warm / hot is part of the
 shared data model, not each panel's taste: `kdash_apttemps_band()` in
@@ -397,7 +404,11 @@ Three consequences the schema states and a reader must hold:
   caught the prose version letting one straight through: this family's whole
   documented hazard, and the documentation did not stop it. `claude:session`'s
   `ts` carries no such bound, which is the one place the two families
-  deliberately differ (see the follow-up on that family).
+  deliberately differ — and that is **settled**, not pending: Ken ruled on
+  2026-09-16 that it stays unbounded, per CD-3. A grandfathered shape is
+  documented as it is, never tightened underneath a writer this repo does not
+  own; the bound belongs to new families, where it catches a new writer's unit
+  slip before it publishes.
 - **`userPromptSubmitted` fires *before* `sessionStart`** — reproducibly, by
   about 4 ms, in `-p` mode. A publisher that treats `sessionStart` as "the
   first write" clobbers a record that already exists; taking `started_ts` from

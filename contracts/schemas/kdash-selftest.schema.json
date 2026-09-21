@@ -16,5 +16,36 @@
     },
     "version": { "type": "string", "description": "Version of the wrapper that wrote it" },
     "note": { "type": "string", "description": "Free text; what the run was checking" }
-  }
+  },
+  "examples": [
+    {
+      "ts": 1758500012.4,
+      "host": "kai",
+      "publisher": "rust",
+      "version": "0.1.0-8d13cce",
+      "note": "just pub-endpoint"
+    },
+    {
+      "ts": 1758500012.4,
+      "host": "kubs0",
+      "publisher": "python"
+    }
+  ],
+  "x-counterexamples": [
+    {
+      "record": {
+        "ts": 1758500012.4,
+        "host": "kai",
+        "publisher": "bash"
+      },
+      "why": "there are exactly two publisher wrappers (CD-11); a third name means the canary was written by something that is not one of them, which is the thing the canary exists to notice"
+    },
+    {
+      "record": {
+        "ts": 1758500012.4,
+        "publisher": "rust"
+      },
+      "why": "`host` is required — a canary that does not say which host proved its publish path proves nothing"
+    }
+  ]
 }

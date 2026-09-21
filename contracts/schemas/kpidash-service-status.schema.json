@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://github.com/kenhia/kdashdata/contracts/schemas/kpidash-service-status.schema.json",
   "title": "kpidash service status",
-  "description": "Payload of kpidash:services:{name}:{host} — latest-value, no TTL, reader-owned staleness via ts (60 s window in kpidash). Key is always 4 segments; {host} sentinel `_` means no host. Identity is (name, host); the key is authoritative over any payload echo.",
+  "description": "Payload of kpidash:services:{name}:{host} — latest-value, no TTL, reader-owned staleness via ts, where the window is the CONSUMER'S and is per service rather than a number this schema fixes: kpidash's default is 60 s, and a daily publisher gets its own (`kmon` has had 26 h since kpidash sprint 018, and publishes this key once per nightly). See kpidash's docs/CLIENT-PROTOCOL.md §8a. There is deliberately no cadence field in the payload — the shape has two consumers and adding one was declined (korg:2309). Key is always 4 segments; {host} sentinel `_` means no host. Identity is (name, host); the key is authoritative over any payload echo.",
   "type": "object",
   "required": ["ts", "state", "text"],
   "additionalProperties": true,
@@ -15,5 +15,44 @@
     "text": { "type": "string", "description": "Short status text shown on the card" },
     "host": { "type": "string", "description": "Echo of the key's host segment, display only" },
     "icon": { "type": "integer", "description": "Optional icon index (kpidash lv_font_icons_56)" }
-  }
+  },
+  "examples": [
+    {
+      "ts": 1758500012.4,
+      "state": "ok",
+      "text": "3 repos clean",
+      "host": "kai",
+      "icon": 5
+    },
+    {
+      "ts": 1758500012.4,
+      "state": "unknown",
+      "text": "no data yet"
+    }
+  ],
+  "x-counterexamples": [
+    {
+      "record": {
+        "ts": 1758500012.4,
+        "state": "OK",
+        "text": "up"
+      },
+      "why": "the state enum is lower-case and closed; a capitalised twin renders as an unknown state, which is the colour a reader least expects"
+    },
+    {
+      "record": {
+        "ts": 1758500012.4,
+        "state": "ok"
+      },
+      "why": "`text` is required — a service card with a colour and no words is a light nobody can act on"
+    },
+    {
+      "record": {
+        "ts": 1758500012.4,
+        "state": "degraded",
+        "text": "slow"
+      },
+      "why": "`unhealthy` is the word this contract uses for that; a synonym is a new state the consumer has no ladder for"
+    }
+  ]
 }

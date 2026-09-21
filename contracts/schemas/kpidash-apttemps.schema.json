@@ -11,5 +11,37 @@
     "temp_f": { "type": "number", "description": "Temperature °F, rendered to 1 decimal" },
     "humidity_pct": { "type": "number", "description": "Relative humidity, whole number" },
     "ts": { "type": "number", "description": "Unix seconds (float); drives staleness" }
-  }
+  },
+  "examples": [
+    {
+      "zone": "office",
+      "temp_f": 71.4,
+      "humidity_pct": 44.0,
+      "ts": 1758500012.4
+    },
+    {
+      "temp_f": 79.9,
+      "humidity_pct": 51.2,
+      "ts": 1758500012.4
+    }
+  ],
+  "x-counterexamples": [
+    {
+      "record": {
+        "zone": "office",
+        "temp_f": "71.4",
+        "humidity_pct": 44.0,
+        "ts": 1758500012.4
+      },
+      "why": "the band function takes a number; a string reading classifies as nothing and the zone renders as stale while the sensor is fine"
+    },
+    {
+      "record": {
+        "zone": "office",
+        "temp_f": 71.4,
+        "ts": 1758500012.4
+      },
+      "why": "both readings are required — the card shows them together and a half-record is a half-card"
+    }
+  ]
 }

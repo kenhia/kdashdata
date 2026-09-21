@@ -24,7 +24,7 @@
     },
     "ts": {
       "type": "integer",
-      "description": "Unix seconds of the last lifecycle event or keepalive. Drives the reader's freshness ladder (fresh -> idle at 15 min -> stale at 40 min); a non-numeric value rejects the record"
+      "description": "Unix seconds of the last lifecycle event or keepalive. Drives the reader's freshness ladder (fresh -> idle at 15 min -> stale at 40 min); a non-numeric value rejects the record. DELIBERATELY UNBOUNDED, and settled as such (Ken, 2026-09-16, per CD-3): ghcp-session.schema.json's mirror of this field bounds it at 1e11 to catch a millisecond slip, and this one does not, because tightening a grandfathered shape underneath `claude-pub.sh` — installed on kai, kubs0 and cleo, and not this repo's to change — is the migration CD-3 says never happens in place. The two families are otherwise field-for-field identical (CD-21)"
     },
     "started_ts": {
       "type": "integer",
@@ -38,5 +38,51 @@
       "type": "string",
       "description": "Claude's own session name. Lags by a few turns because Claude does not generate one immediately; an empty or absent title falls back to `project` in the view"
     }
-  }
+  },
+  "examples": [
+    {
+      "host": "kai",
+      "project": "kdashdata",
+      "cwd": "/home/ken/src/tools/kdashdata",
+      "status": "working",
+      "ts": 1758500012,
+      "started_ts": 1758499000,
+      "model": "claude-opus-5",
+      "title": "overseen 2978"
+    },
+    {
+      "status": "awaiting",
+      "ts": 1758500012
+    }
+  ],
+  "x-counterexamples": [
+    {
+      "record": {
+        "status": "idle",
+        "ts": 1758500012
+      },
+      "why": "the status enum is the whole liveness vocabulary and it is closed; `idle` is the READER's verdict from the freshness ladder, never something a publisher may assert"
+    },
+    {
+      "record": {
+        "status": "working",
+        "ts": "1758500012"
+      },
+      "why": "the decoded record has an integer `ts`; a reader that hands the wire string through cannot run the freshness ladder on it"
+    },
+    {
+      "record": {
+        "ts": 1758500012
+      },
+      "why": "`status` and `ts` are the resurrection-race guard — a record missing either is rejected outright rather than half-rendered"
+    },
+    {
+      "record": {
+        "host": "kai\n",
+        "status": "working",
+        "ts": 1758500012
+      },
+      "why": "a trailing newline is the classic shell-capture slip, and it is the one place a regex engine's `$` can let a bad host token through; the key's host segment would never accept it and neither does this"
+    }
+  ]
 }

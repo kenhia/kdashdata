@@ -18,5 +18,37 @@
       "exclusiveMinimum": 0,
       "description": "Unix seconds (float): the COMMAND's time, not the writer's heartbeat. Advancing it is what issues a new command, so it is required and positive - a stamp a consumer cannot compare is no command at all."
     }
-  }
+  },
+  "examples": [
+    {
+      "path": "/var/tmp/kdash/panelshot-kai.png",
+      "ts": 1758500012.4
+    },
+    {
+      "ts": 1758500012.4
+    }
+  ],
+  "x-counterexamples": [
+    {
+      "record": {
+        "path": "shots/panel.png",
+        "ts": 1758500012.4
+      },
+      "why": "the path is absolute or it is not a path — a relative one resolves against whatever cwd the panel happened to start in"
+    },
+    {
+      "record": {
+        "path": "/var/tmp/xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+        "ts": 1758500012.4
+      },
+      "why": "maxLength 255 keeps the value inside what every filesystem on the fleet will accept"
+    },
+    {
+      "record": {
+        "path": "/var/tmp/kdash/panelshot-kai.png",
+        "ts": 0
+      },
+      "why": "exclusiveMinimum 0 — this is a ts-owned command and a zero stamp names no moment"
+    }
+  ]
 }

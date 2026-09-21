@@ -17,5 +17,37 @@
       "exclusiveMinimum": 0,
       "description": "Unix seconds (float): the COMMAND's time, not the writer's heartbeat. Advancing it is what issues a new command, so it is required and positive - a stamp a consumer cannot compare is no command at all."
     }
-  }
+  },
+  "examples": [
+    {
+      "want": "dash",
+      "ts": 1758500012.4
+    },
+    {
+      "want": "desktop",
+      "ts": 1758500099.0
+    }
+  ],
+  "x-counterexamples": [
+    {
+      "record": {
+        "want": "dashboard",
+        "ts": 1758500012.4
+      },
+      "why": "the enum is closed: an unrecognised word rejects the record rather than being guessed at, because guessing here switches somebody's screen"
+    },
+    {
+      "record": {
+        "want": "dash",
+        "ts": 0
+      },
+      "why": "the consumer acts on a CHANGE of ts, so a zero stamp is both meaningless and older than every window"
+    },
+    {
+      "record": {
+        "want": "dash"
+      },
+      "why": "without `ts` there is no way to tell a new command from the one already obeyed"
+    }
+  ]
 }
