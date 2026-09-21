@@ -61,18 +61,75 @@ pub-wheel:
 # Distribution — sprint 004. `kdash-pub` is exec'd from Claude Code hooks on
 # kai, kubs0 and cleo, so it has to reach those hosts as a versioned artifact
 # rather than as whatever happens to sit in this checkout's target/.
+#
+# Sprint 015 made `publish` SELF-SKIPPING so `.sprint-deploy` can declare it
+# (WI 2798). See `publishers/README.md`, "The version, and why it skips".
 # ---------------------------------------------------------------------------
+
+# The host holding the package store. Overridable so a test can point it
+# somewhere harmless, which is also how `published`'s exit 2 was exercised.
+store_host := env("KNARR_STORE_HOST", "kubsdb")
+
+# The files that decide what the published BINARY contains.
+#
+# Not `HEAD`, and deliberately not everything: a commit touching only `docs/`,
+# `contracts/` or `sprints/` produces a byte-identical binary, and stamping it
+# with HEAD would republish it under a new label — churning the store's
+# `latest` and every fleet install for no change. Most kdashdata sprints are
+# contract-only, and `.sprint-deploy` now runs `publish` on every one of them.
+#
+# Not `publishers/python/**` either: that is a separate wheel with a separate
+# publish step, and its changes leave this binary identical.
+#
+# `publishers/rust/build.rs` holds the same list as `INPUTS` and must stay in
+# step with this one. Nothing compares the two strings — but `publish` re-reads
+# the built binary and refuses if its stamp and `just version` disagree, which
+# catches the drift one step later with a message that says so.
+inputs := "publishers/rust/src publishers/rust/build.rs publishers/rust/Cargo.toml publishers/rust/Cargo.lock"
 
 # Show the store label this checkout would publish under.
 #
-# build.rs emits the label verbatim as the second field, so this reads it
-# rather than reassembling it — see the comment there for why that matters.
+# Derived from git rather than from a built binary, so the publish predicate
+# can ask "is this already in the store?" WITHOUT a cross-compile first — the
+# no-op case must be cheap or nobody will leave it declared. `publish` closes
+# the loop by asserting the built binary's own stamp equals this.
 [doc("Show the store label this checkout would publish under")]
 version:
     #!/usr/bin/env bash
     set -euo pipefail
-    cargo build --release -q --manifest-path publishers/rust/Cargo.toml
-    ./publishers/rust/target/release/kdash-pub --version | awk '{ print $2 }'
+    sha="$(git log -1 --format=%h -- {{inputs}})"
+    if [[ -z "$sha" ]]; then
+        echo "version: no commit touches the artifact inputs ({{inputs}}) — is this a git checkout?" >&2
+        exit 1
+    fi
+    dirty=""
+    if [[ -n "$(git status --porcelain)" ]]; then dirty="-dirty"; fi
+    crate="$(sed -n 's/^version = "\(.*\)"/\1/p' publishers/rust/Cargo.toml | head -1)"
+    printf '%s-%s%s\n' "$crate" "$sha" "$dirty"
+
+# Is <version> already in the package store? THREE outcomes, never two.
+#
+#   0  present     1  absent     2  could not ask
+#
+# The remote answers with a WORD rather than with an exit code, and that is the
+# whole point. A downed store host, a missing host key and a genuinely absent
+# version all make `ssh … test -d` exit non-zero, and reading any of them as
+# "absent" would republish over a store nobody could see — a false claim about
+# the world, not a failed command. `publish` treats 2 as a refusal.
+[doc("Is <version> already in the store? 0 = yes, 1 = no, 2 = could not ask")]
+published version:
+    #!/usr/bin/env bash
+    set -uo pipefail
+    remote='if [ -d "${KPKG_ROOT:-/datastore/packages}/artifacts/kdash-pub/{{version}}" ]; then echo present; else echo absent; fi'
+    if ! ans="$(ssh -n -o BatchMode=yes -o ConnectTimeout=10 {{store_host}} "$remote" 2>&1)"; then
+        echo "published: cannot reach {{store_host}} to ask about {{version}}: $ans" >&2
+        exit 2
+    fi
+    case "$ans" in
+        present) echo "present: {{version}} is in the store"; exit 0 ;;
+        absent)  echo "absent: {{version}} is not in the store"; exit 1 ;;
+        *)       echo "published: unexpected answer from {{store_host}}: ${ans:-(nothing)}" >&2; exit 2 ;;
+    esac
 
 # Publish a release build to the homelab package store (kubsdb :4880).
 #
@@ -92,13 +149,44 @@ version:
 # A first build needs network and git access to the private khlenv repo (CD-11).
 # That is a builder concern only — the deploy targets receive finished binaries.
 [doc("Publish linux+windows binaries to the package store as one version")]
-publish:
+publish *ARGS:
     #!/usr/bin/env bash
     set -euo pipefail
+    dry=""
+    for a in {{ARGS}}; do
+        case "$a" in
+            --dry-run) dry=1 ;;
+            *) echo "publish: unknown argument '$a' (only --dry-run)" >&2; exit 2 ;;
+        esac
+    done
     if [[ -n "$(git status --porcelain)" ]]; then
         echo "publish: refusing to publish from a dirty tree — a published version must name a commit" >&2
         exit 1
     fi
+    # The no-op contract sprint-ship's Phase 7 expects of a declared publish
+    # step: decide whether the artifact's inputs actually changed since the
+    # last published version and, when they did not, do nothing and SAY so,
+    # exiting 0. A contract-only sprint runs this and it does nothing, loudly —
+    # which is what makes `recipe: publish` safe to declare unconditionally.
+    #
+    # `unknown` is not `absent`: refuse rather than publish blind.
+    #
+    # Output is captured because `just` prints its own "error: Recipe ...
+    # failed" whenever a recipe exits non-zero, and here exit 1 is a normal
+    # answer rather than a fault. The real diagnosis is re-emitted on the one
+    # branch that is a fault.
+    v="$(just version)"
+    set +e
+    ans="$(just published "$v" 2>&1)"
+    rc=$?
+    set -e
+    case "$rc" in
+        0) echo "nothing to publish: $v already in the store"; exit 0 ;;
+        1) echo "publish: $v is not in the store — publishing" ;;
+        *) echo "publish: could not determine whether $v is in the store — refusing to guess" >&2
+           grep -v '^error: Recipe' <<<"$ans" >&2
+           exit 1 ;;
+    esac
     # Two separate prerequisites with two separate fixes, so say which is
     # missing rather than letting cargo report one confusing error for both.
     # kdashdata declares no rust-toolchain.toml (nothing here builds on a
@@ -113,10 +201,25 @@ publish:
         echo "           sudo apt install gcc-mingw-w64-x86-64" >&2
         exit 1
     fi
+    if [[ -n "$dry" ]]; then
+        echo "publish: --dry-run — would build linux + windows and publish $v"
+        echo "publish: would run: kpkg artifact$([[ "$(git rev-parse --abbrev-ref HEAD)" != "main" ]] && echo ' --no-latest') kdash-pub $v <linux> <windows>"
+        exit 0
+    fi
     cargo build --release --manifest-path publishers/rust/Cargo.toml
     cargo build --release --manifest-path publishers/rust/Cargo.toml --target x86_64-pc-windows-gnu
+    # The stamp and the store label are ONE fact. `just version` reassembles it
+    # from git so the predicate above needs no build; build.rs derives it again
+    # inside the binary. If the two lists ever drift apart, this is where it is
+    # caught — before anything reaches the store, and with a message naming the
+    # two places to reconcile.
     stamp="$(./publishers/rust/target/release/kdash-pub --version)"
-    v="$(printf '%s\n' "$stamp" | awk '{ print $2 }')"
+    built="$(printf '%s\n' "$stamp" | awk '{ print $2 }')"
+    if [[ "$built" != "$v" ]]; then
+        echo "publish: the binary stamped '$built' but this checkout's label is '$v'." >&2
+        echo "         the justfile's 'inputs' and build.rs's INPUTS have drifted apart." >&2
+        exit 1
+    fi
     case "$v" in
         *dirty*|*unknown*)
             echo "publish: binary stamped '$stamp' — that names no reproducible commit" >&2

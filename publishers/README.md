@@ -98,7 +98,9 @@ exec by absolute path, so it ships as a package-store artifact — CD-13.
 
 ```sh
 just version        # the store label this checkout would publish under
+just published <v>  # is <v> already in the store? 0 = yes, 1 = no, 2 = unknown
 just publish        # linux + windows cross-build, ONE version, from main
+just publish --dry-run
 just deploy         # knarr -> /usr/local/bin/kdash-pub on kai and kubs0
 just deploy-cleo    # store-resolving install -> C:\tools\bin\kdash-pub.exe
 just deploy-komarchy  # the laptop — knarr, but only with the lid open
@@ -109,6 +111,47 @@ just deploy-all     # all four publisher hosts, which is the point
 off `main` it publishes without moving `latest`. The install paths are a
 contract: the CD-7 hook scripts exec them absolutely, because a hook context's
 `PATH` is not the interactive one.
+
+### The version, and why it skips
+
+The label is `<crate version>-<short sha of the last commit touching the
+binary's inputs>`, where the inputs are `publishers/rust/src`, `build.rs`,
+`Cargo.toml` and `Cargo.lock` — **not `HEAD`**. The build is a release
+`cargo build` of a fixed source tree, so a commit touching only `docs/`,
+`contracts/` or `sprints/` produces a byte-identical binary; stamping it with
+`HEAD` would publish that binary under a new label and churn the store's
+`latest` and every fleet install for no change. Most kdashdata sprints are
+contract-only — sprint 012 was schema and docs with no publisher change — and
+[`.sprint-deploy`](../.sprint-deploy) now runs `publish` on every ship, so this
+is the rule that makes the declaration safe. klaude-top and kdeskdash derive
+theirs the same way, by Ken's decision of 2026-09-17, so the three recipes read
+alike.
+
+`publishers/python/**` is deliberately **not** an input: it is a separate wheel
+with a separate publish step, and changing it leaves this binary identical.
+
+**Changed only build flags? Bump the crate version.** The input set names
+source, not the recipe that builds it — so editing the `cargo build` line in
+the `justfile` changes the binary without moving the stamp, and `publish` would
+then correctly skip a build that genuinely differs. `publishers/rust/Cargo.toml`
+is in the input set precisely so this has a one-line remedy.
+
+`just publish` asks the store whether that version already exists and, if it
+does, prints `nothing to publish: <version> already in the store` and exits
+**0**. A sprint that changed no inputs runs it and it does nothing, loudly.
+
+`just published` **refuses to guess.** A downed store host, a missing host key
+and a genuinely absent version all make `ssh … test -d` exit non-zero, and
+reading any of those as "absent" would republish over a store nobody could see
+— a false claim about the world rather than a failed command. So the remote
+answers with a *word*, and an unreachable store is exit 2, which `publish`
+treats as a refusal rather than a green light.
+
+The store label and the binary's own `--version` stamp are **one fact**:
+`just version` reassembles it from git (so the predicate needs no
+cross-compile), `build.rs` derives it again inside the binary, and `publish`
+compares the two and refuses if they disagree. That is what keeps the two
+input lists from drifting apart silently.
 
 Verify a rollout by naming the hosts — `kdash-pub --version` on kai, kubs0,
 cleo **and** komarchy — never by iterating the hosts the runner happened to

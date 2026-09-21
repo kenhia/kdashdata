@@ -105,11 +105,22 @@ cleo↔rpidash2 `kvscf:*` exchange lives on central while the kwork pair keeps
 its own instance and password, and the panel-control family grown two siblings
 — `kdash:panelmode:{host}` and `kdash:panelshot:{host}`, one family per verb
 (CD-22) — so a panel with no local Redis can still be switched, configured and
-screenshotted. CD-23 records what that makes the fleet password.
+screenshotted. CD-23 records what that makes the fleet password. Sprint 015
+(korg:2978) then closed the gap between what the contracts say and what
+anything enforces: every schema now carries `examples` it must accept and
+`x-counterexamples` it must reject, run by a stdlib validator in `just check`
+that refuses any keyword it cannot check (CD-24); `kdash-pub` grew the `get`
+and `scan` verbs the `kdash:stale` read-modify-write needed, in both wrappers,
+with absence as a distinct exit code so an unreachable Redis is never read as
+an all-clear (CD-14 amended); and the repo finally declares its deploy in
+`.sprint-deploy`, behind a self-skipping `publish` whose version comes from the
+binary's own inputs rather than `HEAD`, so a contract-only sprint no longer
+churns four hosts.
 See `docs/architecture.md` (decisions
-CD-1…CD-23, open questions OQ-n), `contracts/rules.md`,
+CD-1…CD-24, open questions OQ-n), `contracts/rules.md`,
 `contracts/registry.md`, `include/kdash/kdash.h` for the consumer API, and
-`publishers/README.md` for the publish side. Next: the rest of program
+`publishers/README.md` for the publish side and the version-and-skip rule.
+Next: the rest of program
 korg:2935 — kdeskdash folds rpidash2's pair Redis into central (korg:2932),
 then panel state to a file and commands from central (korg:2933), then
 k-homelab retires the three servers (korg:2934). After that: kdeskdash's
@@ -135,9 +146,11 @@ Conventions and constraints:
   `docs/` and `contracts/` once sprint 001 lands.
 - `just check` is four gates: `check-docs` (python3 stdlib only,
   `scripts/check.py` — every JSON file parses, every relative markdown link
-  resolves, every schema is listed in the registry, every `.ps1` is pure
-  ASCII, and this file's Status line names the newest sprint record),
-  `check-python` (the
+  resolves, every schema is listed in the registry **and validates its own
+  `examples` and `x-counterexamples`** via `scripts/jsonschema_mini.py`
+  (CD-24), the registry's families match both publisher allowlists, every
+  `.ps1` is pure ASCII, and this file's Status line names the newest sprint
+  record), `check-python` (the
   Python wrapper's pure core, stdlib only), `check-rust` (fmt, clippy, unit
   tests — a first build needs network and git access to the private khlenv
   repo), plus a CMake build of the C library and its ctest unit tests.

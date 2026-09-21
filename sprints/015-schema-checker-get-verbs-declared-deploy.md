@@ -203,3 +203,84 @@ Removing the `kdash_auth` copies in agent-skills, k-homelab and (soon) kmon.
 Those are other repos' contracts; k-homelab WI 2546 already covers its half.
 These verbs are what makes that cleanup possible, not part of shipping them —
 the proposal's notes say the same.
+
+## 2798 — the repo finally says it deploys
+
+kdashdata publishes `kdash-pub` to the package store and installs it on four
+hosts, and declared nothing — so `/sprint-ship`'s Phase 7 was skipped silently
+on every ship. Sprints 010, 011 and 013 all deployed because a human or an
+overseer asked in that session, never because the repo said so.
+
+The item was Branch B when it was filed, and the decisions it was waiting on
+have since been made. **Ken's 2026-09-17 "one rule" on klaude-top WI 2782 and
+kdeskdash WI 2801 is extended here by analogy** — stated plainly because it is
+an extension, not a quotation: the version comes from the **last commit
+touching the artifact's inputs**, not `HEAD`.
+
+### The four questions the item asked, answered
+
+**1. What counts as a change?** Path-based, and narrower than the item's own
+sketch: `publishers/rust/src`, `build.rs`, `Cargo.toml`, `Cargo.lock`.
+`publishers/python/**` is deliberately **out** — it is a separate wheel with a
+separate publish step, and changing it leaves this binary identical, so
+including it would republish a shared binary to four hosts for a change that
+is not in it. The READMEs and `tests/` are out for the same reason. See the
+flag for the overseer below.
+
+**2. What does a no-op print, and what does it exit?**
+`nothing to publish: <version> already in the store`, exit 0 — the same
+sentence klaude-top prints, so the three recipes read alike.
+
+**3. Does `deploy-all` run when `publish` no-ops?** **Yes, always.** A host can
+be behind `latest` without this sprint changing anything — komarchy was ten
+days behind in sprint 011 — so "publish no-op'd, therefore skip the deploy" is
+not right. It installs `latest`, unchanged in that case, and knarr's confirm
+step still reports what each host runs.
+
+**4. komarchy inside an automated ship.** A normal skip. `deploy-all` already
+probes it **from the host doing the deploying**, prints the skip, and exits 0;
+nothing about that needed changing.
+
+### The store predicate refuses to guess
+
+Three outcomes, and the remote answers with a **word** rather than an exit
+code: a downed store host, a missing host key and a genuinely absent version
+all make `ssh … test -d` exit non-zero, and reading any of them as "absent"
+would republish over a store nobody could see — a false claim about the world,
+not a failed command. `publish` treats could-not-ask as a refusal.
+
+### One fact, derived twice, and the assertion that keeps it one
+
+`just version` reassembles the label from git so the predicate can run
+**without a cross-compile** — a no-op nobody would leave declared if it cost a
+two-target build. `build.rs` derives it again inside the binary, because
+knarr's confirm step re-reads the *installed* binary's `--version`. Two
+derivations of one fact is exactly the drift the old comment in `version`
+warned about, so `publish` now **compares them and refuses** if they disagree,
+naming both places to reconcile. That is stronger than the assumption it
+replaces: it checks rather than trusts.
+
+### Acceptance
+
+| check | result |
+| --- | --- |
+| `just version` is input-scoped | `0.1.0-a044678` — moves with an input commit, not with `HEAD` (proved below) |
+| `just published <stored version>` | `present: … is in the store`, exit **0** |
+| `just published <this branch's version>` | `absent: … is not in the store`, exit **1** |
+| `just published` with an unresolvable store host | `cannot reach … Name or service not known`, exit **2** |
+| `just publish` from a dirty tree | refuses, exit 1 |
+| `just publish --bad-arg` | rejects, exit 2 |
+| `just publish --dry-run` | names the version and the `--no-latest` branch guard, touches nothing |
+| `just publish` where the version is already stored | `nothing to publish: … already in the store`, exit **0** |
+| `just check` | green — all four gates |
+
+The double run from merged `main` is left to the ship's Phase 7 **by design**:
+that is a **trigger, not a soak** — the ship fires it, in the same session,
+and it is the end-to-end test of this sprint's own deliverable. No soak work
+item was created.
+
+### Repaired in passing
+
+A backtick inside a double-quoted `echo` in the new drift message would have
+run `just version` as a command substitution every time the error printed.
+Caught before it shipped; the message is plain words now.
