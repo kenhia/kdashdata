@@ -271,13 +271,40 @@ replaces: it checks rather than trusts.
 | `just publish` from a dirty tree | refuses, exit 1 |
 | `just publish --bad-arg` | rejects, exit 2 |
 | `just publish --dry-run` | names the version and the `--no-latest` branch guard, touches nothing |
-| `just publish` where the version is already stored | `nothing to publish: … already in the store`, exit **0** |
+| **the double run** — `just publish` twice from the same clean tree | first publishes `0.1.0-30e0f92`; second says `nothing to publish: 0.1.0-30e0f92 already in the store`, exit **0** |
+| `latest` after a branch publish | still `0.1.0-8d13cce` — the `--no-latest` guard held |
 | `just check` | green — all four gates |
 
-The double run from merged `main` is left to the ship's Phase 7 **by design**:
-that is a **trigger, not a soak** — the ship fires it, in the same session,
-and it is the end-to-end test of this sprint's own deliverable. No soak work
-item was created.
+The version rule was proved the only way that actually proves it: a **docs-only
+commit** on top of the branch moved `HEAD` from `30e0f92` to `8571901` and
+left `just version` reading `0.1.0-30e0f92`. Reverted afterwards.
+
+**How the double run came to be run here, honestly.** The intent was to
+exercise the no-op arm *without* touching the store, by pointing `inputs` at a
+path whose last commit was already published — `just --set inputs … publish`.
+That does not work, and the reason is worth writing down: `publish` calls
+`just version` as a **fresh `just` subprocess**, which does not inherit a
+`--set` override. So the override was silently ignored, the real version was
+computed, and a branch build went to the store.
+
+It went in correctly — off `main`, so `--no-latest` applied and the fleet
+pointer never moved, which is the case the recipe's own comment sanctions ("a
+branch build may exist in the store to prove a path, but must never become
+what the fleet resolves as `latest`"). And it handed over the genuine
+end-to-end acceptance: the second run took the no-op arm for real. **The
+artifact `0.1.0-30e0f92` is left in the store**; `kpkg` has `add`, `artifact`,
+`index` and `list` and no remove verb, so deleting it would mean `rm -rf` on a
+shared store outside any documented procedure — not worth it for a directory
+`latest` does not point at. Named in the wrap-up.
+
+That `--set` does not reach the inner `just version` is arguably the right
+behaviour — the published label cannot be overridden from the command line —
+and it matches klaude-top's shape. Left as is, recorded here so the next
+person probing this does not lose the same twenty minutes.
+
+Phase 7 of the ship will now run the same two steps from merged `main`, which
+is the deliverable proving itself. That is a **trigger, not a soak**, and no
+soak work item was created.
 
 ### Repaired in passing
 
