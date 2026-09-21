@@ -311,3 +311,43 @@ soak work item was created.
 A backtick inside a double-quoted `echo` in the new drift message would have
 run `just version` as a command substitution every time the error printed.
 Caught before it shipped; the message is plain words now.
+
+## Deployed
+
+**2026-09-21 14:27 PDT**, by `/sprint-ship` Phase 7 running this repo's own
+`.sprint-deploy` — the **first time** that declaration has ever executed, and
+the end-to-end test of WI 2798's deliverable. Both steps ran from merged
+`main` (`1a7962d`), not from the feature branch.
+
+**`just publish`** → `0.1.0-1a7962d`, linux + windows as one version, and
+`latest -> 0.1.0-1a7962d`. The predicate decided correctly on its own:
+`0.1.0-1a7962d is not in the store — publishing`. The version derives from the
+squash commit because that commit touches `publishers/rust/`, which is what the
+input set is for.
+
+**`just deploy-all`** → all four publisher hosts named, three installed:
+
+| host | result |
+| --- | --- |
+| kai | knarr, confirm `kdash-pub 0.1.0-1a7962d` |
+| kubs0 | knarr, confirm `kdash-pub 0.1.0-1a7962d` |
+| cleo | store-resolving install to `C:\tools\bin\kdash-pub.exe`, sha256 ok, confirm `0.1.0-1a7962d` |
+| komarchy | **SKIPPED** — did not answer. Lid closed is its normal state, the skip was printed, and the probe ran from kai, the host doing the deploying. Run `just deploy-komarchy` with the lid open to finish the rollout. |
+
+**Verified live — the sprint's own change, not just that a binary landed.**
+The new read verbs were exercised on each host, *from that host*, so the answer
+is about the installed binary rather than about kai's ability to reach it:
+
+| | kai | kubs0 | cleo |
+| --- | --- | --- | --- |
+| `--version` | `0.1.0-1a7962d` | `0.1.0-1a7962d` | `0.1.0-1a7962d` |
+| `get` an absent key | rc 1 | rc 1 | rc 1 |
+| `scan` matching nothing | rc 0, no output | rc 0, no output | — |
+| `scan '*:*'` (refused) | rc 2 | rc 2 | rc 2 |
+
+`rc 1` on the absent `get` is the stronger signal of the two: it means the
+binary resolved khlenv, authenticated and **asked** — a host that could not
+reach Redis would have answered `rc 2`. So the CD-19 auth route and the CD-14
+exit contract are both live on all three.
+
+No data migration, so nothing to diff before and after.
