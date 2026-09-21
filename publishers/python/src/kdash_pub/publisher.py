@@ -1,4 +1,5 @@
-"""The I/O shell: resolve, authenticate, write.
+"""The I/O shell: resolve, authenticate, write — and the two reads a publisher
+needs to write correctly.
 
 Everything that could be decided without a socket has been (`keys`, `payload`,
 `endpoint.resolve_with`); this module is the thin part that talks to Redis.
@@ -15,6 +16,10 @@ from typing import Any, Mapping
 
 from . import auth, endpoint, keys, payload
 from .endpoint import Stem
+
+#: SCAN's per-iteration hint. Large enough that these small keyspaces finish in
+#: one or two round trips, small enough not to be a stall of its own.
+SCAN_COUNT = 500
 
 
 class Publisher:
@@ -120,6 +125,57 @@ class Publisher:
         that knows which of them applies (CD-19).
         """
         return self._auth
+
+    # --- the reads a publisher needs (CD-14, amended sprint 015) -----------
+    #
+    # Not a consumer API. Anything that wants a FEED — sessions, a staleness
+    # verdict, anything rendered — uses libkdash. These two exist because a
+    # publisher cannot write correctly without them: `kdash:stale`'s `since`
+    # must be read back and carried forward unchanged on every later skip
+    # (CD-18), and the identities of that feed are in the KEY, so "which
+    # deployers have skipped this host" is a question about keys.
+
+    def get(self, key: str) -> str | None:
+        """One STRING key, or `None` when it is not set.
+
+        **`None` and `""` are different answers and the caller must be able to
+        tell them apart.** For a presence-owned feed absence is the only
+        all-clear (CD-18), so a reader that folds the two together cannot
+        implement the contract. `decode_responses=True` on the client means
+        this is `str`, not bytes.
+
+        Note what this does NOT do: it raises on a Redis that cannot be
+        reached, rather than returning `None`. "I could not ask" is not "the
+        key is not set", and a caller that restamps `since` because Redis
+        blinked turns "stale for three weeks" into "stale for an hour" while
+        looking exactly like working code.
+        """
+        keys.check_key(key)
+        return self.connect().get(key)
+
+    def scan(self, pattern: str) -> list[str]:
+        """Every key matching `pattern`, deduplicated and sorted.
+
+        SCAN, cursor to cursor, never KEYS: `KEYS` blocks the server for the
+        whole sweep and this Redis is shared with the dashboards rendering
+        from it. SCAN gives no uniqueness guarantee across iterations, hence
+        the dedupe; the sort is so a caller comparing two runs compares
+        contents rather than Redis's internal order.
+
+        An empty list is a complete answer — "no keys matched" — and is not
+        the same as a failure, which raises. That distinction is the point:
+        an empty result and a suppressed failure are otherwise
+        indistinguishable.
+        """
+        keys.check_pattern(pattern)
+        client = self.connect()
+        found: set[str] = set()
+        cursor = 0
+        while True:
+            cursor, batch = client.scan(cursor=cursor, match=pattern, count=SCAN_COUNT)
+            found.update(batch)
+            if cursor == 0:
+                return sorted(found)
 
     # --- the publish patterns (contracts/rules.md) -------------------------
 

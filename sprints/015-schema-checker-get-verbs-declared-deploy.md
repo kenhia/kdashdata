@@ -121,3 +121,85 @@ The control is the repo as it stands: green.
 the gate leaves a `__pycache__` the repo did not ignore. `.gitignore`'s
 `publishers/python/**/__pycache__/` became a plain `__pycache__/`. Caused by
 this change, one line, proved by a clean `git status`.
+
+## 1929 — `get` and `scan`, and absence as an answer
+
+CD-14 said a second read verb "needs a reason of the same shape: a publisher
+that cannot write correctly without it". `kdash:stale:{host}:{deployer}`
+supplied two. It is a **read-modify-write** — `since` must be carried unchanged
+across every later skip, and a writer that restamps it turns "stale for three
+weeks" into "stale for an hour", which looks exactly like working code — and
+its identities are in the **key**, so "which deployers have skipped this host"
+is a question about key names.
+
+So: `get <key>` and `scan <pattern>`, in the Rust CLI **and** the Python
+wrapper. Python gets them on the evidence CD-14 asked for: kmon's nightly
+(korg:2213) reads `kdash:stale:{host}:*` and is Python.
+
+### Absence is a distinct answer, and it drove the exit codes
+
+`hget` folds "absent field" and "absent key" into one empty answer, because
+Redis does and the `claude:limits` guard does not care. `get` cannot:
+`kdash:stale` is presence-owned (CD-18) and **absence is the only all-clear**,
+so a caller that cannot tell "not set" from "set to empty" cannot implement the
+feed. Hence a deliberate divergence, recorded as an amendment to CD-14:
+
+| code | `get` | `scan` | `hget` (unchanged) |
+|---|---|---|---|
+| 0 | present — value on stdout | answered, possibly no keys | present, or absent with no output |
+| 1 | **absent** | (not used) | the command was wrong |
+| 2 | could not ask — incl. a refused command | same | delivery failed |
+
+`hget` has no code meaning "absent", so 1 is free there for a bad command.
+`get` needs 1, so a refused command moves to 2 — where it is true, because no
+answer came back either way. These are `just published`'s three outcomes on
+purpose (present / absent / could-not-ask), so one idiom covers both.
+
+**`--best-effort` does not touch `get` or `scan`.** Folding 2 into 0 would
+spell "I could not ask" exactly like "here is the answer" — and a caller that
+read an unreachable Redis as "absent" would restamp `since`. `hget` and every
+write keep the flag unchanged.
+
+### A pattern is not a key
+
+`check_pattern` is its own function on both sides rather than a flag on
+`check_key`, and the reason is one rule: **the namespace segment may not be
+globbed.** Relaxing `check_key` to let `*` through anywhere would have
+legalised `*:*` — one argument that reads every family on a Redis shared with
+kvscf and the dashboards. Redis's `[abc]` classes and `\` escapes are refused
+too. `scan` uses SCAN cursor-to-cursor (never KEYS, which blocks the server for
+the whole sweep), deduplicated and sorted.
+
+### Acceptance — live, against the central Redis from kai
+
+The gates are pure code by design, so the read path was exercised for real
+against `rpi53:6379` (auth from `/etc/khomelab/secrets.env`, CD-19), using
+`kdash:selftest:kai` — the key that exists to be a canary — and cleaned up
+after.
+
+| case | result |
+| --- | --- |
+| `get` an absent key | rc 1, nothing on stdout |
+| `get` a present key | rc 0, the value |
+| **`get` a present-but-EMPTY key** | rc 0, stdout exactly `0a` — one newline |
+| the same key after `del` | rc 1, **zero bytes** |
+| `scan 'kdash:selftest:*'` | rc 0, the one key |
+| `scan` matching nothing | rc 0, no output |
+| `scan '*:*'` / `get weather:now` / `get 'kdash:stale:*'` | rc 2 each, each naming why |
+| `--best-effort` against a dead endpoint: `get` / `scan` | rc **2** — not masked |
+| `--best-effort` against a dead endpoint: `hget` / `del` | rc **0** — unchanged |
+
+The empty-vs-absent pair is the one WI 1929 was filed on, and it is
+distinguishable twice over: by exit code, and by stdout being one byte versus
+none.
+
+Unit tests: 75 Rust (up from 71) and 59 Python (up from 55). Negative-tested —
+the namespace-glob rule was disabled on each side in turn and the matching test
+failed on both.
+
+### Not done here, deliberately
+
+Removing the `kdash_auth` copies in agent-skills, k-homelab and (soon) kmon.
+Those are other repos' contracts; k-homelab WI 2546 already covers its half.
+These verbs are what makes that cleanup possible, not part of shipping them —
+the proposal's notes say the same.

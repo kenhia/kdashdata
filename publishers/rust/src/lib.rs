@@ -20,11 +20,12 @@
 //! # }
 //! ```
 //!
-//! **No rendering, and one read.** The consumer side is `libkdash` (this
+//! **No rendering, and three reads.** The consumer side is `libkdash` (this
 //! repo's `include/kdash/`): the data model, the freshness ladder, the
-//! skip-a-bad-record discipline. This crate writes — plus the single point
-//! read a publisher needs to guard its own write against clobbering a fresher
-//! observation (CD-14). One field, no model, no policy.
+//! skip-a-bad-record discipline. This crate writes — plus the point reads a
+//! publisher needs to guard its own write against clobbering a fresher
+//! observation, or to carry a field forward unchanged (CD-14, amended in
+//! sprint 015). Bytes and key names, no model, no policy.
 //!
 //! ## What it does not do
 //!
@@ -96,6 +97,26 @@ impl From<redis::RedisError> for Error {
         Error::Redis(e)
     }
 }
+
+/// What a [`Connection::read`] came back with.
+///
+/// Two shapes because the two questions are different: `hget`/`get` ask about
+/// one key's contents, `scan` asks which keys exist. Keeping them apart in the
+/// type is what stops a caller reading "no keys matched" as "empty value" —
+/// which for a presence-owned feed (CD-18) is the difference between "this
+/// host is fine" and "this host has been stale for three weeks".
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Answer {
+    /// The value, or `None` for an absent key or field.
+    Value(Option<Vec<u8>>),
+    /// Every key matching the pattern, deduplicated and sorted. Empty is a
+    /// complete answer, not a failure.
+    Keys(Vec<String>),
+}
+
+/// SCAN's per-iteration hint. Large enough that these small keyspaces finish
+/// in one or two round trips, small enough not to be a stall of its own.
+const SCAN_COUNT: usize = 500;
 
 /// Unix seconds as a `ts` field wants them.
 pub fn now() -> f64 {
@@ -269,22 +290,58 @@ impl Connection {
         )?)
     }
 
-    /// One validated read (CD-14).
-    ///
-    /// `Ok(None)` covers both an absent field and an absent key: Redis does
-    /// not distinguish them, and the guard this exists for treats either as
-    /// "unknown" and publishes.
+    /// One validated read (CD-14, amended in sprint 015).
     ///
     /// Bytes rather than `String` because a value is whatever some writer put
     /// there. Decoding here would report a non-UTF-8 value as a *delivery*
     /// failure, which is the wrong thing to tell a caller about a Redis that
     /// answered perfectly well.
-    pub fn read_field(&mut self, query: &Query) -> Result<Option<Vec<u8>>, Error> {
-        let Query::HGet { key, field } = query;
-        Ok(redis::cmd("HGET")
-            .arg(key)
-            .arg(field)
-            .query::<Option<Vec<u8>>>(&mut self.inner)?)
+    pub fn read(&mut self, query: &Query) -> Result<Answer, Error> {
+        match query {
+            // `Ok(None)` covers both an absent field and an absent key: Redis
+            // does not distinguish them, and the guard this exists for treats
+            // either as "unknown" and publishes.
+            Query::HGet { key, field } => Ok(Answer::Value(
+                redis::cmd("HGET")
+                    .arg(key)
+                    .arg(field)
+                    .query::<Option<Vec<u8>>>(&mut self.inner)?,
+            )),
+            Query::Get { key } => Ok(Answer::Value(
+                redis::cmd("GET")
+                    .arg(key)
+                    .query::<Option<Vec<u8>>>(&mut self.inner)?,
+            )),
+            Query::Scan { pattern } => Ok(Answer::Keys(self.scan(pattern)?)),
+        }
+    }
+
+    /// SCAN, cursor to cursor, never KEYS.
+    ///
+    /// `KEYS` blocks the server for the whole sweep, and this Redis is shared
+    /// with the dashboards that render from it — a publisher's convenience is
+    /// not worth a visible stall on somebody's panel.
+    ///
+    /// SCAN gives no uniqueness guarantee across iterations, so the result is
+    /// deduplicated; it is sorted because a caller comparing two runs should
+    /// be comparing contents, not Redis's internal order.
+    fn scan(&mut self, pattern: &str) -> Result<Vec<String>, Error> {
+        let mut cursor: u64 = 0;
+        let mut found: std::collections::BTreeSet<String> = Default::default();
+        loop {
+            let (next, batch): (u64, Vec<String>) = redis::cmd("SCAN")
+                .arg(cursor)
+                .arg("MATCH")
+                .arg(pattern)
+                .arg("COUNT")
+                .arg(SCAN_COUNT)
+                .query(&mut self.inner)?;
+            found.extend(batch);
+            cursor = next;
+            if cursor == 0 {
+                return Ok(found.into_iter().collect());
+            }
+        }
     }
 
     /// One validated command.

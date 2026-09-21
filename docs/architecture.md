@@ -505,7 +505,7 @@ This is a recipe standing in for a knarr feature, the same shape as
 host; when it lands, komarchy folds back into `deploy`'s list and both the
 extra recipe and the probe go away.
 
-## CD-14 — `kdash-pub` has exactly one read verb, and it is a publisher's
+## CD-14 — `kdash-pub`'s read verbs are a publisher's, and absence is an answer — amended: `get` and `scan` (sprint 015)
 
 Sprint 003 drew the boundary as "no reading": the consumer side is `libkdash`,
 and that stays true for *consumption*. The data model, the freshness ladder and
@@ -545,6 +545,87 @@ The boundary that replaces "no reading":
 The Python wrapper does not have this and does not need it; it gains one when
 something it publishes needs a guard, on the same evidence-first footing as the
 rest of this repo's wrapper surface.
+
+### Amended, sprint 015 — `get` and `scan`, and the Python wrapper gets both
+
+The clause above asked for "a reason of the same shape: a publisher that
+cannot write correctly without it", and `kdash:stale:{host}:{deployer}`
+(CD-18) supplied two of them. That feed is a **read-modify-write**: `since`
+must be read back and carried unchanged across every later skip, because a
+writer that restamps it turns "stale for three weeks" into "stale for an
+hour" — a failure that looks exactly like working code. And its identities are
+in the **key**, so "which deployers have skipped this host" is a question
+about key names, not values.
+
+Without the verbs, every such writer dropped to `redis-cli` for the one read
+and had to re-derive the khlenv stem lookup and the CD-12 credential order to
+get there. Two copies existed (agent-skills, k-homelab) and had **already
+drifted**: k-homelab's `kdash_auth` never tried `/etc/khomelab/secrets.env`,
+which `kdash-pub` has tried since CD-19, and worked only because the
+deprecated per-user file still existed. "Copied in shape" did not survive the
+first change to the order — which is the whole argument sprint 003 made on the
+write side and was upheld for.
+
+**`get <key>`** — one STRING key. **`scan <pattern>`** — every matching key.
+Both in the Rust CLI and, this time, in the Python wrapper too, on the
+evidence the clause asked for: kmon's nightly (korg:2213) reads
+`kdash:stale:{host}:*` and is Python.
+
+**Absence is a distinct answer, and that is the whole design.** `hget`
+collapses "absent field" and "absent key" into one empty answer because Redis
+does not distinguish them and the `claude:limits` guard does not care. `get`
+cannot: for a **presence-owned** feed absence is the only all-clear (CD-18),
+so a caller that cannot tell `None` from `""` cannot implement the contract.
+Hence a different exit convention for the new verbs, and it is a deliberate
+divergence rather than an oversight:
+
+| code | `get <key>` | `scan <pattern>` | `hget` (unchanged) |
+|---|---|---|---|
+| 0 | present — value on stdout | answered — one key per line, possibly none | present, or absent with no output |
+| 1 | **absent** — nothing on stdout | (not used) | the command was wrong |
+| 2 | could not ask: unreachable, auth failed, **or the command was refused** | same | delivery failed |
+
+`hget` has no code meaning "absent", so 1 is free there for a bad command.
+`get` needs 1 for absent, so a refused command moves to 2 — where it is true,
+because no answer came back either way. `scan` follows `get` so the two new
+verbs read alike; its empty answer is exit 0, because "no keys matched" is
+complete rather than missing. This is the same three-outcome shape as
+`just published` (present / absent / could-not-ask), deliberately, so one
+idiom covers both.
+
+**`--best-effort` does not apply to `get` or `scan`.** It exists so a dead
+Redis cannot fail a hook, and it works on `hget` because 0-with-no-output
+already means "unknown" there. On `get` it would spell "I could not ask" the
+same as "present and empty"; on `scan`, the same as "no keys matched". These
+verbs are guards whose entire job is refusing to guess, and a caller that read
+an unreachable Redis as "absent" would restamp `since`. The general rule this
+is one instance of: **an empty result and a suppressed failure are
+indistinguishable unless something asserts the difference** — here, the exit
+code does.
+
+**`scan` uses SCAN, never KEYS**, cursor to cursor, results deduplicated
+(SCAN gives no uniqueness guarantee across iterations) and sorted. `KEYS`
+blocks the server for the whole sweep and this Redis is shared with the
+dashboards rendering from it.
+
+**A pattern is not a key, and gets its own grammar.** `check_pattern` allows
+`*` and `?` inside a segment and refuses everything else `check_key` refuses —
+and adds one rule: **the namespace segment may not be globbed.** Relaxing
+`check_key` instead would have legalised `*:*`: one argument that reads every
+family on a Redis this repo shares with kvscf and the dashboards. A
+publisher's read is a read of its own feed. Redis's `[abc]` classes and `\`
+escapes are refused too — a character class is a footgun in a one-line shell
+argument and buys a publisher nothing.
+
+**What has not changed.** Still not a consumer API: anything that wants a
+*feed* — sessions, a staleness verdict, anything rendered — uses `libkdash`.
+Still the same key grammar through the same choke point. Still no model, no
+freshness policy, no decoding: `get` returns bytes, `scan` returns names.
+
+**Not done here, and deliberately:** removing the `kdash_auth` copies in
+agent-skills and k-homelab. They are other repos' contracts, and k-homelab
+WI 2546 already covers its half. That is the cleanup these verbs make
+possible, not part of shipping them.
 
 ## CD-15 — HASH-shaped feeds parse from a field/value list, not a buffer
 
