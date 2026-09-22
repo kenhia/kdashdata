@@ -208,3 +208,55 @@ front of it and is in "Repaired in passing" above.
 Out of scope by the proposal's own sequencing: knarr's allowed-absent host
 (korg:3052) is what lets `just deploy-komarchy` and `deploy-all`'s probe fold
 back into `deploy`. Not touched here.
+
+## Deployed
+
+**What:** `kdash-pub 0.1.0-b73b5f4` — the merge commit, carrying the new
+`check` verb. The C library is not deployed from here; dashboards consume it as
+a submodule and pin their own head.
+
+**When:** 2026-09-21 21:58 PDT, from kai, by `.sprint-deploy`'s two declared
+steps in order: `just publish` then `just deploy-all`.
+
+**Where:**
+
+| step | result |
+|---|---|
+| `just publish` | `0.1.0-b73b5f4` absent from the store → published linux + windows as one version; `latest` moved |
+| `just deploy-all` | kai, kubs0 (knarr) · cleo (PowerShell installer) · **komarchy — awake, and took it** |
+
+`publish` did **not** no-op this time, correctly: this sprint changed
+`publishers/rust/src`, which is in `inputs`. The binary's own stamp and the
+store label agreed, as `publish` asserts before uploading.
+
+komarchy was awake, so `deploy-all`'s probe ran the deploy rather than printing
+the skip. All four publisher hosts are on the same version — named rather than
+iterated, per the recipe's own rule:
+
+```
+kai        kdash-pub 0.1.0-b73b5f4 (2026-09-21)
+kubs0      kdash-pub 0.1.0-b73b5f4 (2026-09-21)
+komarchy   kdash-pub 0.1.0-b73b5f4 (2026-09-21)
+cleo       kdash-pub 0.1.0-b73b5f4 (2026-09-21)
+```
+
+**Verified live — with the thing this sprint added.** `--version` proves a file
+landed; it does not prove the sprint's work runs. So the smoke test was
+`kdash-pub --app kdashdata check` on each deployed binary, which is both the
+new verb and the strongest per-host check this repo now has:
+
+| host | `check` | auth route it reported |
+|---|---|---|
+| kai | **0** | per-host secrets file (`/etc/khomelab/secrets.env`) |
+| kubs0 | **0** | per-host secrets file |
+| komarchy | **0** | per-host secrets file |
+| cleo | **0** | `REDISCLI_AUTH` (the top rung of the CD-19 ladder) |
+
+No host answered from a deprecated per-user file — the CD-19 warning fired
+nowhere.
+
+**Worth recording, because it is the point of WI 2492:** this is the first
+rollout where all four hosts have been *shown* to authenticate rather than
+merely shown to resolve an endpoint. Every previous ship verified with
+`--version` and `endpoint`, and `endpoint` returns 0 without a credential.
+Sprint 016's own verb is what made its own deploy checkable.
