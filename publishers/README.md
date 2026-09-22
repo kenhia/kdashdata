@@ -65,6 +65,57 @@ else
 fi
 ```
 
+## The two probes, and the one that does not prove what it looks like
+
+`endpoint` and `check` ask the same question one clause apart, and the gap
+between them is the whole reason there are two (CD-25):
+
+| verb | question | what exit 0 means |
+|---|---|---|
+| `endpoint` | **where** would this host write? | resolved, and a socket opened |
+| `check` | **would the write be accepted?** | ...and a command came back |
+
+`endpoint` issues **no command**, and Redis only checks AUTH when AUTH is
+*sent*. So a *wrong* password fails at connect — but `--no-auth` against a
+server that requires one connects happily and fails `NOAUTH` on the first real
+command. Measured on kubs0 2026-09-12 and again on kai 2026-09-21 (WI 2492),
+against the authenticated `rpi53:6379`:
+
+```sh
+kdash-pub --app kdashdata endpoint              # 0  — correct
+kdash-pub --app kdashdata --no-auth endpoint    # 0  — and it cannot write a single key
+kdash-pub --app kdashdata --no-auth check       # 2  — NOAUTH: Authentication required
+```
+
+That is not a bug in `endpoint`: "where would this write" is a fair question
+with a fair answer, and it is the cheap one. But it is a **sharp edge**, and a
+caller using `endpoint` to mean "this host can publish" needs a paired
+negative control to mean anything by it. `check` is that question asked
+directly:
+
+```sh
+kdash-pub check
+#   0  accepted — resolved, connected, and a PING came back
+#   1  deliberately nowhere — khlenv holds an explicit null for this stem
+#   2  could not ask — unreachable, auth failed, or the command was refused
+```
+
+Exit 1 is `get`'s shape: a clean negative that is not a fault. A host khlenv
+says publishes nowhere is *correctly configured*, and reporting that as an
+unreachable Redis would be the same conflation the `get` table exists to
+prevent — which is also why **`--best-effort` does not touch `check`** either.
+
+What exit 0 proves is narrow on purpose: the endpoint resolved, the socket
+opened, and the server accepted an **authenticated** command. It does not
+prove this connection may *write* — that would need a write, and a probe that
+writes is not a probe.
+
+**The Python wrapper has no equivalent and needs none**, for a reason worth
+knowing: `Publisher.connect()` is lazier still — redis-py builds a pool and
+opens no socket — but it was never sold as a probe. Every path that reaches
+Redis (`get`, `scan`, `publish_*`) issues a real command and authenticates for
+real, so there is no false claim to fix.
+
 **A pattern is not a key.** `scan` takes `*` and `?` inside a segment and
 nothing else — no `[abc]` classes, no escapes — and **the namespace may not be
 globbed**, so `*:*` is refused. A publisher's read is a read of its own feed,
@@ -155,12 +206,14 @@ input lists from drifting apart silently.
 
 Verify a rollout by naming the hosts — `kdash-pub --version` on kai, kubs0,
 cleo **and** komarchy — never by iterating the hosts the runner happened to
-reach. `kdash-pub --app kdashdata endpoint` is the stronger per-host check: it
+reach. `kdash-pub --app kdashdata check` is the stronger per-host check: it
 proves khlenv resolution and the CD-12 auth route work on that host, not just
-that a file landed. On a host with a systemd user manager, run it *through*
-one — `systemd-run --user --collect --wait --pipe kdash-pub --app kdashdata
-endpoint` — because a login shell's groups and a user manager's groups are
-different facts, and the per-host secrets file is readable by group.
+that a file landed. Use `check` and not `endpoint` here, and the reason is the
+section above — `endpoint` issues no command, so it cannot tell a working auth
+route from no credential at all. On a host with a systemd user manager, run it
+*through* one — `systemd-run --user --collect --wait --pipe kdash-pub --app
+kdashdata check` — because a login shell's groups and a user manager's groups
+are different facts, and the per-host secrets file is readable by group.
 
 komarchy is the host this rule is easiest to lose: it is asleep most of the
 time, so it is the one that silently keeps an old binary. It ran
@@ -172,7 +225,8 @@ how CD-19 came to be shipped everywhere except the laptop.
 ```sh
 just check-python   # stdlib only — runs with neither redis nor khlenv installed
 just check-rust     # fmt, clippy, unit tests
-just pub-endpoint   # live: where would this host publish, and can it?
+just pub-endpoint   # live: where would this host publish?
+just pub-check      # live: ...and would the write be accepted? (CD-25)
 just pub get kdash:selftest:$(hostname -s)    # live: the read path, end to end
 ```
 

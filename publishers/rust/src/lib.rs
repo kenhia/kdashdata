@@ -56,6 +56,13 @@ pub enum Error {
     Parse(ParseError),
     /// khlenv holds an explicit null for this stem: deliberately no endpoint.
     NoEndpoint(String),
+    /// The server answered, and answered something else. Its own variant
+    /// because [`Connection::check`] exists to tell "it works" from "it did
+    /// not answer", and an answer nobody expected is neither.
+    UnexpectedReply {
+        command: &'static str,
+        reply: String,
+    },
     Redis(redis::RedisError),
 }
 
@@ -69,6 +76,11 @@ impl fmt::Display for Error {
                 f,
                 "khlenv holds an explicit null for {stem} — deliberately no \
                  endpoint, so there is nothing to publish to"
+            ),
+            Error::UnexpectedReply { command, reply } => write!(
+                f,
+                "{command} answered {reply:?} — this endpoint answers, but not \
+                 like a Redis"
             ),
             Error::Redis(e) => write!(f, "redis: {e}"),
         }
@@ -288,6 +300,34 @@ impl Connection {
             &["setex", key, &ttl.to_string(), payload],
             now(),
         )?)
+    }
+
+    /// Round-trip one command, so success means the server ACCEPTED it.
+    ///
+    /// This is the half [`Publisher::connect`] cannot give you, and the gap is
+    /// not theoretical (WI 2492, measured on kubs0 2026-09-12 and again on kai
+    /// 2026-09-21). Redis checks AUTH when AUTH is *sent*, so a wrong password
+    /// fails at connect — but sending **none** to a server that requires one
+    /// opens the socket happily and fails `NOAUTH` only on the first real
+    /// command. A connect is therefore not evidence that a write would land;
+    /// a command that came back is.
+    ///
+    /// `PING` because it is the cheapest command that goes through the auth
+    /// gate and changes nothing. What that proves is stated narrowly on
+    /// purpose: the endpoint resolved, the socket opened, and the server
+    /// accepted an authenticated command. It does not prove this connection
+    /// may *write* — that would need a write, and a probe that writes is not a
+    /// probe.
+    pub fn check(&mut self) -> Result<(), Error> {
+        let reply: String = redis::cmd("PING").query(&mut self.inner)?;
+        if reply == "PONG" {
+            Ok(())
+        } else {
+            Err(Error::UnexpectedReply {
+                command: "PING",
+                reply,
+            })
+        }
     }
 
     /// One validated read (CD-14, amended in sprint 015).

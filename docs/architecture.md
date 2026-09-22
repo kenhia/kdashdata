@@ -280,7 +280,7 @@ speaks khlenv's HTTP protocol directly rather than taking libcurl for one
 unencrypted GET (see CD-4); a resolver whose whole debugging story is
 `curl -i` does not justify a dependency.
 
-## CD-10 — The library is a pure core plus a thin I/O shell
+## CD-10 — The library is a pure core plus a thin I/O shell — amended: one test-only seam in the shell (sprint 016)
 
 The consumer library splits in two, and the split is load-bearing rather
 than tidy:
@@ -304,6 +304,61 @@ the real fleet (`just dump`).
 The library has **no rendering of any kind** and never will: no LVGL, no
 layout, no colours. Three dashboards with three different screens share a
 data model, not a look.
+
+### Amended, sprint 016 — the I/O shell gets one seam, for one contract
+
+"What is left untested by `just check` is the socket code" was the deliberate
+trade above, and for three sprints it quietly covered something it should not
+have. Sprint 009 gave the counted readers — `kdash_services()`,
+`kdash_apttemps()`, `kdash_claude_sessions()` — a contract with real
+consequences:
+
+> `-1` means the read did not complete. `out` is zeroed and `*skipped` is 0.
+> A non-negative return is a **complete** list.
+
+That rule is the whole reason those readers were rewritten: a partial list is
+indistinguishable from a complete one at the call site, and on every panel
+that consumes these feeds the missing rows render as absent *things* —
+services that are not running, zones whose sensor died, sessions that ended.
+It is CD-18's argument one layer down.
+
+And **nothing could exercise it.** Triggering it means losing the endpoint
+between the SCAN and one of the per-key reads that follow; against the live
+fleet that means killing a service three dashboards read, and `just check`
+runs no Redis at all. So it was enforced by inspection plus a live
+no-regression run, and the next person to touch those loops had no way to find
+out they had broken the failure path (WI 2246).
+
+So: `src/kdash_feed.c`'s Redis calls go through four function pointers
+(`src/kdash_feed_internal.h`), and `tests/test_feed.c` swaps them for a fake
+that answers from a table and fails the Nth read on demand. **This is a
+narrowing of the rule above, not an exception to it**, and the boundary is
+what keeps it honest:
+
+- **One unit.** `kdash_conn.c` — the connect, the backoff, the timeouts — is
+  untouched and still verified live. The seam covers the reader loops, which
+  is where the contract lives.
+- **Nothing public.** The seam is not in `include/kdash/`, so a dashboard
+  links exactly the API it linked before. The real implementation is installed
+  at load with no initialisation call, so a consumer that never hears of it
+  gets hiredis.
+- **Not a mock framework.** Four pointers, one fake, one suite. The pure
+  core's tests remain the bulk of the gate, and the answer to "should this be
+  testable?" for any *other* piece of the shell is still CD-10's original one:
+  verify it live.
+
+The alternative considered and rejected was a RESP-speaking fake Redis over a
+unix socket, which would have bought the whole class rather than this one
+contract — and cost an M-sized test server that is itself untested. The seam
+is S, and it is the option that puts the `-1` rule inside `just check`.
+
+**It paid for itself on the first run.** Writing the tests found that both
+kpidash readers and `kdash_claude_sessions()` returned `-1` from the
+*SCAN-failure* path without zeroing `out` — half of a contract the header
+already stated in full, and worst in `kdash_claude_sessions()`, which parses
+each key straight into `out` as the SCAN yields it and so could leave rows
+carrying a host and a sid and no payload at all. Repaired in the same sprint,
+and now covered.
 
 ## CD-11 — Publisher wrappers: two languages, one derivation, and they take the khlenv client
 
@@ -1228,6 +1283,65 @@ validate payloads against schemas, and nothing on a hook path grows a JSON
 Schema engine. It is a gate on the contracts, which is where a wrong shape is
 cheapest to catch. Whether a publisher should validate before writing is a
 separate question with a latency budget attached, and nothing here answers it.
+
+## CD-25 — `endpoint` answers *where*, `check` answers *whether* — and they stay two verbs
+
+`kdash-pub endpoint` resolves the endpoint, opens a socket, and stops. It
+issues **no command**. Redis checks AUTH when AUTH is *sent*, so a wrong
+password is caught right there — but sending **none** to a server that
+requires one opens the socket happily and fails `NOAUTH` only on the first
+real command.
+
+Measured on kubs0 2026-09-12 and again on kai 2026-09-21 (WI 2492), against
+the authenticated `rpi53:6379`:
+
+| invocation | `endpoint` | `check` |
+|---|---|---|
+| password from the per-host file | 0 | 0 |
+| `REDISCLI_AUTH=<wrong>` | 2 | 2 |
+| `--no-auth` — no credential sent at all | **0** | **2** (`NOAUTH`) |
+
+That third row is the problem, and it matters because `endpoint` is what this
+repo points at for live verification: `CLAUDE.md` said the socket paths "are
+verified live with `just dump` and `just pub-endpoint`", and program korg:2440
+asks each consumer to prove it authenticates from the new file. A probe that
+returns 0 without a credential is the "an empty result and a suppressed
+failure are indistinguishable" trap — it needs a paired negative control to
+mean anything, and every caller had to know that.
+
+**The decision is to add a verb, not to change one.** Making `endpoint`
+round-trip a command would change what exit 0 means for every existing caller
+and turn a resolve-and-connect probe into a reachability-and-auth probe — a
+behaviour change to a published CLI, which is a contract call. Adding `check`
+is not, and it leaves the cheap question askable:
+
+- **`endpoint`** — where would this host write? One resolve, one connect,
+  `host:port` on stdout. Unchanged since sprint 003, and still the right call
+  when that is the question. Its limit is now stated in `--help`, in the
+  binary's own module docs, and in `publishers/README.md`, because a sharp
+  edge documented only in a decision record is documented nowhere a caller
+  stands.
+- **`check`** — would a write be accepted? Everything `endpoint` does, plus a
+  `PING`. Exit **0** accepted, **1** khlenv holds an explicit null for this
+  stem (deliberately nowhere — an answer, not a fault), **2** could not ask.
+  `--best-effort` leaves all three alone, exactly as it does for `get` and
+  `scan` and for the same reason: on a verb whose exit status *is* the answer,
+  folding "I could not ask" into 0 is how a probe starts lying.
+
+What `check` proves is stated narrowly on purpose: the endpoint resolved, the
+socket opened, and the server **accepted an authenticated command**. It does
+not prove this connection may *write* — that would need a write, and a probe
+that writes is not a probe. `PING` because it is the cheapest command that
+goes through the auth gate and changes nothing.
+
+**The Python wrapper needs no equivalent, for a different reason than it
+looks.** `Publisher.connect()` has the same property and worse — redis-py's
+client is lazy, so it opens no socket at all and asserts nothing — but it was
+never sold as a probe. Every path that reaches Redis (`get`, `scan`,
+`publish_latest`, `publish_expiring`, `publish_event`) issues a real command
+and so authenticates for real. There is no false claim to fix; adding a probe
+would be inventing one. The docstring now says `connect()` opens no socket,
+which is the part that was overstated.
 
 ## Open questions
 

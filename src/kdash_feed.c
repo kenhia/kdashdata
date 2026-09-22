@@ -10,17 +10,54 @@
 #include <string.h>
 
 #include "kdash_conn_internal.h"
+#include "kdash_feed_internal.h"
 
 /* Longest payload we will pull for one record. The biggest of the five is a
  * telemetry sample with a disks array; kpidash's are well under 2 KB. */
 #define VALUE_MAX 8192
 
+/* ---- the I/O seam -------------------------------------------------------- */
+/*
+ * Every reader below reaches Redis through `feed_io`, never through hiredis
+ * directly -- which is what lets a test fail the Nth read of a SCAN'd list and
+ * hold the counted readers to their own -1 contract. The rationale, the
+ * boundary and the CD-10 narrowing are in kdash_feed_internal.h; this is just
+ * the wiring.
+ *
+ * Forward-declared rather than defined here so the real implementations stay
+ * next to the code that reads like their documentation.
+ */
+static bool real_scan_keys(kdash_conn_t *c, const char *match,
+                           kdash_scan_visit_fn visit, void *vctx);
+static kdash_status_t real_get_string(kdash_conn_t *c, const char *key,
+                                      redisReply **out);
+static kdash_status_t real_get_hash(kdash_conn_t *c, const char *key,
+                                    redisReply **out);
+
+static const kdash_feed_io_t REAL_IO = {
+    .scan_keys = real_scan_keys,
+    .get_string = real_get_string,
+    .get_hash = real_get_hash,
+    .free_reply = freeReplyObject,
+};
+
+/* Installed at load, so a consumer that never hears of the seam gets hiredis
+ * without calling anything. */
+static const kdash_feed_io_t *feed_io = &REAL_IO;
+
+const kdash_feed_io_t *kdash_feed_io(void) { return feed_io; }
+const kdash_feed_io_t *kdash_feed_io_real(void) { return &REAL_IO; }
+
+void kdash_feed_set_io(const kdash_feed_io_t *io) {
+    feed_io = io ? io : &REAL_IO;
+}
+
 /* ---- shared helpers ------------------------------------------------------ */
 
 /* GET one key. KDASH_OK hands back a borrowed reply the caller must free;
  * every other status has already freed (or never took) one. */
-static kdash_status_t get_string(kdash_conn_t *c, const char *key,
-                                 redisReply **out) {
+static kdash_status_t real_get_string(kdash_conn_t *c, const char *key,
+                                      redisReply **out) {
     *out = NULL;
     if (!kdash_conn_ensure(c))
         return KDASH_UNAVAIL;
@@ -44,10 +81,8 @@ static kdash_status_t get_string(kdash_conn_t *c, const char *key,
 /* Run one bounded SCAN pass, handing every matching key to `visit`. Returns
  * false when the endpoint was unreachable. `visit` returns false to stop the
  * pass early (its output buffer is full). */
-typedef bool (*scan_visit_fn)(const char *key, size_t keylen, void *ctx);
-
-static bool scan_keys(kdash_conn_t *c, const char *match, scan_visit_fn visit,
-                      void *vctx) {
+static bool real_scan_keys(kdash_conn_t *c, const char *match,
+                           kdash_scan_visit_fn visit, void *vctx) {
     if (!kdash_conn_ensure(c))
         return false;
 
@@ -154,7 +189,7 @@ static kdash_status_t get_client_feed(kdash_conn_t *c, const char *host,
         return KDASH_ABSENT; /* a host that fails the contract has no key */
 
     redisReply *r = NULL;
-    kdash_status_t st = get_string(c, key, &r);
+    kdash_status_t st = feed_io->get_string(c, key, &r);
     if (st != KDASH_OK)
         return st;
 
@@ -162,7 +197,7 @@ static kdash_status_t get_client_feed(kdash_conn_t *c, const char *host,
     if (len > VALUE_MAX)
         len = VALUE_MAX;
     bool ok = parse(r->str, len, out);
-    freeReplyObject(r);
+    feed_io->free_reply(r);
     return ok ? KDASH_OK : KDASH_ABSENT;
 }
 
@@ -235,8 +270,14 @@ int kdash_services(kdash_conn_t *c, kdash_service_t *out, int max,
         return 0;
 
     keyset_t ks = {.max = max};
-    if (!scan_keys(c, KDASH_KEY_SERVICES_PFX "*:*", collect_key, &ks))
+    if (!feed_io->scan_keys(c, KDASH_KEY_SERVICES_PFX "*:*", collect_key, &ks)) {
+        /* The SCAN itself did not complete. Same contract as the mid-list drop
+         * below, so the same state: -1, `out` zeroed, `*skipped` 0. Until
+         * sprint 016 this path returned -1 with `out` untouched, which the
+         * header already promised it would not (WI 2246). */
+        memset(out, 0, (size_t)max * sizeof(*out));
         return -1;
+    }
 
     int n = 0;
     for (int i = 0; i < ks.n && n < max; i++) {
@@ -253,7 +294,7 @@ int kdash_services(kdash_conn_t *c, kdash_service_t *out, int max,
         }
 
         redisReply *r = NULL;
-        kdash_status_t st = get_string(c, ks.keys[i], &r);
+        kdash_status_t st = feed_io->get_string(c, ks.keys[i], &r);
         if (st == KDASH_UNAVAIL) {
             /* The endpoint went away mid-read. Handing back the rows gathered
              * so far would be a partial list indistinguishable from a complete
@@ -272,7 +313,7 @@ int kdash_services(kdash_conn_t *c, kdash_service_t *out, int max,
         if (len > VALUE_MAX)
             len = VALUE_MAX;
         bool ok = kdash_parse_service(r->str, len, s);
-        freeReplyObject(r);
+        feed_io->free_reply(r);
         if (ok)
             n++;
         else
@@ -292,8 +333,12 @@ int kdash_apttemps(kdash_conn_t *c, kdash_apttemps_t *out, int max,
         return 0;
 
     keyset_t ks = {.max = max};
-    if (!scan_keys(c, KDASH_KEY_APTTEMPS_PFX "*", collect_key, &ks))
+    if (!feed_io->scan_keys(c, KDASH_KEY_APTTEMPS_PFX "*", collect_key, &ks)) {
+        /* See kdash_services(): a SCAN that did not complete leaves the same
+         * state as a mid-list drop. */
+        memset(out, 0, (size_t)max * sizeof(*out));
         return -1;
+    }
 
     int n = 0;
     for (int i = 0; i < ks.n && n < max; i++) {
@@ -307,7 +352,7 @@ int kdash_apttemps(kdash_conn_t *c, kdash_apttemps_t *out, int max,
         }
 
         redisReply *r = NULL;
-        kdash_status_t st = get_string(c, ks.keys[i], &r);
+        kdash_status_t st = feed_io->get_string(c, ks.keys[i], &r);
         if (st == KDASH_UNAVAIL) {
             /* The endpoint went away mid-read. Handing back the rows gathered
              * so far would be a partial list indistinguishable from a complete
@@ -326,7 +371,7 @@ int kdash_apttemps(kdash_conn_t *c, kdash_apttemps_t *out, int max,
         if (len > VALUE_MAX)
             len = VALUE_MAX;
         bool ok = kdash_parse_apttemps(r->str, len, a);
-        freeReplyObject(r);
+        feed_io->free_reply(r);
         if (ok)
             n++;
         else
@@ -365,7 +410,7 @@ static kdash_status_t panel_cmd_get(kdash_conn_t *c, const char *host,
     memcpy(host_out, host, hlen);
     host_out[hlen] = '\0';
 
-    return get_string(c, key, r);
+    return feed_io->get_string(c, key, r);
 }
 
 kdash_status_t kdash_panel(kdash_conn_t *c, const char *host,
@@ -387,7 +432,7 @@ kdash_status_t kdash_panel(kdash_conn_t *c, const char *host,
     if (len > VALUE_MAX)
         len = VALUE_MAX;
     bool ok = kdash_parse_panel(r->str, len, out);
-    freeReplyObject(r);
+    feed_io->free_reply(r);
     if (!ok) {
         memset(out, 0, sizeof(*out));
         return KDASH_ABSENT;
@@ -414,7 +459,7 @@ kdash_status_t kdash_panelmode(kdash_conn_t *c, const char *host,
     if (len > VALUE_MAX)
         len = VALUE_MAX;
     bool ok = kdash_parse_panelmode(r->str, len, out);
-    freeReplyObject(r);
+    feed_io->free_reply(r);
     if (!ok) {
         memset(out, 0, sizeof(*out));
         return KDASH_ABSENT;
@@ -441,7 +486,7 @@ kdash_status_t kdash_panelshot(kdash_conn_t *c, const char *host,
     if (len > VALUE_MAX)
         len = VALUE_MAX;
     bool ok = kdash_parse_panelshot(r->str, len, out);
-    freeReplyObject(r);
+    feed_io->free_reply(r);
     if (!ok) {
         memset(out, 0, sizeof(*out));
         return KDASH_ABSENT;
@@ -485,8 +530,8 @@ static int reply_to_pairs(const redisReply *r, const char *fields[],
 
 /* HGETALL one key. KDASH_OK hands back a borrowed reply the caller must free;
  * a missing hash is an empty array, i.e. KDASH_ABSENT. */
-static kdash_status_t get_hash(kdash_conn_t *c, const char *key,
-                               redisReply **out) {
+static kdash_status_t real_get_hash(kdash_conn_t *c, const char *key,
+                                    redisReply **out) {
     *out = NULL;
     if (!kdash_conn_ensure(c))
         return KDASH_UNAVAIL;
@@ -546,8 +591,16 @@ int kdash_claude_sessions(kdash_conn_t *c, kdash_claude_session_t *out, int max,
      * same discovery as a resumable step machine because an LVGL timer drives
      * it there. The commands port; the pacing does not. */
     claude_keys_t ks = {.out = out, .max = max};
-    if (!scan_keys(c, KDASH_KEY_CLAUDE_SESSION_PFX "*", collect_session_key, &ks))
+    if (!feed_io->scan_keys(c, KDASH_KEY_CLAUDE_SESSION_PFX "*",
+                            collect_session_key, &ks)) {
+        /* Worse here than for the two kpidash readers, which is why it is
+         * worth naming: this visitor parses each key straight into `out` as it
+         * arrives, so a SCAN that fails after an earlier batch leaves rows
+         * holding a host and a sid and no payload at all. Zeroed, like every
+         * other -1. */
+        memset(out, 0, (size_t)max * sizeof(*out));
         return -1;
+    }
 
     int discovered = ks.n;
     int n = 0;
@@ -565,7 +618,7 @@ int kdash_claude_sessions(kdash_conn_t *c, kdash_claude_session_t *out, int max,
         }
 
         redisReply *r = NULL;
-        kdash_status_t st = get_hash(c, key, &r);
+        kdash_status_t st = feed_io->get_hash(c, key, &r);
         if (st == KDASH_UNAVAIL) {
             /* The endpoint went away mid-read. Handing back the rows gathered
              * so far would be a partial list indistinguishable from a complete
@@ -586,7 +639,7 @@ int kdash_claude_sessions(kdash_conn_t *c, kdash_claude_session_t *out, int max,
         int pairs = reply_to_pairs(r, fields, values, CLAUDE_FIELD_MAX);
         bool ok = pairs > 0 && kdash_parse_claude_session(host, sid, fields,
                                                           values, pairs, &out[n]);
-        freeReplyObject(r);
+        feed_io->free_reply(r);
         if (ok)
             n++;
         else
@@ -610,7 +663,7 @@ kdash_status_t kdash_claude_limits(kdash_conn_t *c, kdash_claude_limits_t *out) 
         return KDASH_ABSENT;
 
     redisReply *r = NULL;
-    kdash_status_t st = get_hash(c, KDASH_KEY_CLAUDE_LIMITS, &r);
+    kdash_status_t st = feed_io->get_hash(c, KDASH_KEY_CLAUDE_LIMITS, &r);
     if (st != KDASH_OK)
         return st;
 
@@ -618,7 +671,7 @@ kdash_status_t kdash_claude_limits(kdash_conn_t *c, kdash_claude_limits_t *out) 
     const char *values[CLAUDE_FIELD_MAX];
     int pairs = reply_to_pairs(r, fields, values, CLAUDE_FIELD_MAX);
     bool ok = pairs > 0 && kdash_parse_claude_limits(fields, values, pairs, out);
-    freeReplyObject(r);
+    feed_io->free_reply(r);
     return ok ? KDASH_OK : KDASH_ABSENT;
 }
 

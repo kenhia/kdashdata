@@ -76,11 +76,22 @@ class Publisher:
         return endpoint.resolve(self.app, self.stem)
 
     def connect(self) -> Any:
-        """A live `redis.Redis`, re-resolving the endpoint on every call.
+        """A `redis.Redis` bound to the current endpoint, re-resolved on every
+        call.
 
-        The connection is cached only until the endpoint answer changes: a
-        moved Redis is therefore picked up on the next publish, not on the next
+        The client is cached only until the endpoint answer changes: a moved
+        Redis is therefore picked up on the next publish, not on the next
         restart.
+
+        **This opens no socket and proves nothing.** redis-py builds a
+        connection pool and connects on the first command, so a successful
+        `connect()` says only that an endpoint was resolved — not that it is
+        reachable, and not that the password is right. That is fine here
+        because nothing treats it as a probe: every method below issues a real
+        command and so authenticates for real. The Rust CLI needed a `check`
+        verb for exactly this gap (CD-25) because its `endpoint` verb *was*
+        being read as a probe; there is no equivalent claim on this side to
+        fix.
         """
         import redis  # imported here so the pure half stays dependency-free
 

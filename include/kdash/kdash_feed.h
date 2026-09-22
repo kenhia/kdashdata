@@ -79,7 +79,17 @@ kdash_status_t kdash_dev_telemetry(kdash_conn_t *c, const char *host,
  * of a feed must not render the gap as an all-clear.
  *
  * `kdash_clients()` and `kdash_claude_recent()` are single round trips and
- * cannot fail this way, so the rule is vacuous for them. */
+ * cannot fail this way, so the rule is vacuous for them.
+ *
+ * **The rule is under test as of sprint 016.** It could not be until then:
+ * triggering it means losing the endpoint BETWEEN the SCAN and a per-key read,
+ * which against the live fleet Redis would mean killing a service three
+ * dashboards read. `src/kdash_feed_internal.h` puts that I/O behind four
+ * function pointers so `tests/test_feed.c` can fail the Nth read and hold
+ * these three to every clause above -- including the one a SCAN failure used
+ * to break, which is how the gap was found (WI 2246). The seam is internal and
+ * changes nothing a consumer links against; the CD-10 narrowing it represents
+ * is recorded in docs/architecture.md. */
 
 /* SCAN kpidash:services:*:* and read every conforming card. Keys that are not
  * exactly 4 segments are ignored (the additive-evolution rule); the `_` host

@@ -148,7 +148,7 @@ endif()
 if(KDASH_BUILD_TESTS AND NOT CMAKE_CROSSCOMPILING)
     enable_testing()
 
-    foreach(t keys freshness payload endpoint)
+    foreach(t keys freshness payload endpoint feed)
         add_executable(test_${t} tests/test_${t}.c)
         target_compile_options(test_${t} PRIVATE -Wall -Wextra)
         add_test(NAME test_${t} COMMAND test_${t})
@@ -162,4 +162,10 @@ if(KDASH_BUILD_TESTS AND NOT CMAKE_CROSSCOMPILING)
     # holds sockets, so they link the full library. They make no connection:
     # the socket path is verified live against khlenv, not in ctest.
     target_link_libraries(test_endpoint kdash)
+    # test_feed swaps kdash_feed.c's I/O seam for a fake, so it links the full
+    # library and needs the internal header the seam is declared in. It opens
+    # no socket either: every Redis call it makes goes to the fake. The seam,
+    # and why CD-10 was narrowed to allow it, is in src/kdash_feed_internal.h.
+    target_link_libraries(test_feed kdash)
+    target_include_directories(test_feed PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
 endif()
