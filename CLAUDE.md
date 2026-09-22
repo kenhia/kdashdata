@@ -115,9 +115,20 @@ with absence as a distinct exit code so an unreachable Redis is never read as
 an all-clear (CD-14 amended); and the repo finally declares its deploy in
 `.sprint-deploy`, behind a self-skipping `publish` whose version comes from the
 binary's own inputs rather than `HEAD`, so a contract-only sprint no longer
-churns four hosts.
+churns four hosts. Most recently sprint 016 (korg:3046) made two claims the
+repo had been making on trust actually checkable. The counted readers' `-1`
+contract — read did not complete, `out` zeroed, `*skipped` 0 — was
+untestable, because triggering it means losing the endpoint mid-SCAN on a
+Redis three dashboards read; `kdash_feed.c`'s I/O now sits behind four
+function pointers so `tests/test_feed.c` can fail the Nth read, which is a
+deliberate narrowing of CD-10 and found on its first run that all three
+readers returned `-1` from the SCAN-failure path without zeroing `out`.
+And `kdash-pub endpoint` opens a socket without issuing a command, so
+`--no-auth` exited 0 against a Redis that requires a password; `endpoint` is
+unchanged and documents that edge, while the new `check` verb round-trips a
+PING — 0 accepted / 1 khlenv says nowhere / 2 could not ask (CD-25).
 See `docs/architecture.md` (decisions
-CD-1…CD-24, open questions OQ-n), `contracts/rules.md`,
+CD-1…CD-25, open questions OQ-n), `contracts/rules.md`,
 `contracts/registry.md`, `include/kdash/kdash.h` for the consumer API, and
 `publishers/README.md` for the publish side and the version-and-skip rule.
 Next: the rest of program
@@ -130,7 +141,9 @@ it (korg:2756); kdeskdash adopting the `claude:*` readers (korg:2218, work item
 
 This line is gated: `scripts/check.py` fails if it does not name the
 newest `sprints/` record, so a sprint cannot ship leaving it behind again
-(it had been four sprints stale — work item 1928).
+(it had been four sprints stale — work item 1928). Since sprint 016 the same
+check covers `.github/copilot-instructions.md`, whose own copy of this section
+had been stale since sprint 001 precisely because nothing looked at it.
 
 Conventions and constraints:
 
@@ -149,11 +162,17 @@ Conventions and constraints:
   resolves, every schema is listed in the registry **and validates its own
   `examples` and `x-counterexamples`** via `scripts/jsonschema_mini.py`
   (CD-24), the registry's families match both publisher allowlists, every
-  `.ps1` is pure ASCII, and this file's Status line names the newest sprint
+  `.ps1` is pure ASCII, and both orientation files' Status lines — this one
+  and `.github/copilot-instructions.md` — name the newest sprint
   record), `check-python` (the
   Python wrapper's pure core, stdlib only), `check-rust` (fmt, clippy, unit
   tests — a first build needs network and git access to the private khlenv
   repo), plus a CMake build of the C library and its ctest unit tests.
-  Every gate covers pure code only (no Redis, no network); the socket paths
-  are verified live with `just dump` and `just pub-endpoint`, which need
-  `REDISCLI_AUTH` or the CD-12 env file.
+  Every gate covers pure code only (no Redis, no network) — with one named
+  narrowing: `test_feed` swaps `kdash_feed.c`'s Redis calls for a fake so the
+  counted readers' `-1` contract is exercised rather than asserted (CD-10 as
+  amended in sprint 016). The socket paths themselves are verified live with
+  `just dump` and `just pub-check`, which need `REDISCLI_AUTH` or the CD-12
+  env file. Prefer `pub-check` to `pub-endpoint` for "can this host publish":
+  `endpoint` issues no command and so cannot tell a working auth route from
+  no credential at all (CD-25).

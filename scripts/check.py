@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """Repo gate: JSON parses, markdown links resolve, every schema is
 registered and validates its own examples, the registry's families match both
-publishers' allowlists, every PowerShell script is pure ASCII, and CLAUDE.md's
-Status line names the newest sprint record.
+publishers' allowlists, every PowerShell script is pure ASCII, and BOTH
+orientation files' Status lines name the newest sprint record.
 
 Stdlib only, by design — this repo carries contracts and docs, and its
 failure modes are a schema that doesn't parse, a stale cross-reference, a
@@ -52,7 +52,12 @@ RUST_NS_RE = re.compile(r"pub const NAMESPACES: &\[&str\] = &\[(.*?)\];", re.DOT
 PYTHON_NS_RE = re.compile(r"^NAMESPACES = \((.*?)\)", re.DOTALL | re.MULTILINE)
 STRING_RE = re.compile(r'"([^"]*)"')
 SPRINTS = ROOT / "sprints"
-CLAUDE_MD = ROOT / "CLAUDE.md"
+#: Both orientation files, which carry the same `## Project` section for two
+#: different agents. Only the first was checked until sprint 016, and the
+#: second had been describing sprint 001 ever since sprint 001 -- naming a
+#: "Next" that shipped fourteen sprints earlier. An unchecked mirror is not a
+#: mirror; it is a second, confidently wrong answer.
+ORIENTATION = (ROOT / "CLAUDE.md", ROOT / ".github" / "copilot-instructions.md")
 #: `007-panel-control-feed.md`, or a `007-panel-control-feed/` directory — the
 #: harness allows either spelling for a sprint record.
 SPRINT_RE = re.compile(r"^(\d{3})-")
@@ -266,31 +271,32 @@ def main() -> int:
     )
     if newest is None:
         errors.append("sprints/: no NNN-named sprint record found")
-    elif CLAUDE_MD.exists():
-        claude_text = CLAUDE_MD.read_text(encoding="utf-8")
-        status = next(
-            (ln for ln in claude_text.splitlines() if ln.startswith("Status:")),
-            None,
-        )
-        if status is None:
-            errors.append("CLAUDE.md: no `Status:` line to check")
-        else:
+    else:
+        for path in ORIENTATION:
+            rel = path.relative_to(ROOT)
+            if not path.exists():
+                errors.append(f"{rel}: missing — an orientation file this gate checks")
+                continue
+            text = path.read_text(encoding="utf-8")
             # The whole paragraph, not just its first line — the Status line
             # wraps, and every sprint it names sits on a later one.
             para, seen = [], False
-            for ln in claude_text.splitlines():
+            for ln in text.splitlines():
                 if ln.startswith("Status:"):
                     seen = True
                 if seen:
                     if not ln.strip():
                         break
                     para.append(ln)
+            if not seen:
+                errors.append(f"{rel}: no `Status:` line to check")
+                continue
             # Case-insensitive: "Sprint 013 taught both sides" opening a
             # sentence is correct prose, and a gate that rejects it is asking
             # for a grammatical error to satisfy a string compare.
             if f"sprint {newest}" not in "\n".join(para).lower():
                 errors.append(
-                    f"CLAUDE.md: the Status paragraph does not mention "
+                    f"{rel}: the Status paragraph does not mention "
                     f"`sprint {newest}`, the newest sprints/ record — it "
                     "describes a repo that no longer exists (see WI 1928)"
                 )
@@ -305,7 +311,7 @@ def main() -> int:
         f"all {len(schemas)} schemas registered and validating their own "
         "examples and counterexamples, registry families match both publisher "
         "allowlists, all .ps1 pure ASCII, "
-        f"CLAUDE.md current to sprint {newest}"
+        f"both orientation files current to sprint {newest}"
     )
     return 0
 

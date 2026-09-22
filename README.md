@@ -106,8 +106,15 @@ implementations because the publishers are two shapes — a native
 
 ```sh
 kdash-pub setex kdash:selftest:kai 300 '{"host":"kai","publisher":"rust"}'
-just pub-endpoint    # where would this host publish, and can it?
+just pub-endpoint    # where would this host publish?
+just pub-check       # ...and would the write be accepted? (sprint 016, CD-25)
 ```
+
+Those two are deliberately separate. `endpoint` opens a socket and issues no
+command, and Redis only checks AUTH when AUTH is *sent* — so `--no-auth`
+against the authenticated central Redis exits **0** for a configuration that
+cannot write a single key. `check` round-trips a `PING`, so exit 0 means the
+server accepted an authenticated command. CD-25 has the measurements.
 
 Plus the point reads a publisher needs to write *correctly* — `hget`, and
 (sprint 015) `get` and `scan`, the latter two in both wrappers. Nothing here
@@ -144,9 +151,12 @@ Uses the [kprojects](https://github.com/kenhia/kprojects) minimal harness:
 - the C library build plus ctest — the pure core (key grammar, freshness,
   payload parsing) with no Redis and no network.
 
-None of the four opens a socket. The socket code is verified live instead:
-`just dump` reads the real central Redis (needs `REDISCLI_AUTH`), and
-`just pub-endpoint` plus the publisher self-test prove the write path.
+None of the four opens a socket — with one named narrowing: `test_feed` swaps
+`kdash_feed.c`'s Redis calls for a fake so the counted readers' `-1` contract
+is exercised rather than asserted (sprint 016, CD-10 as amended). The rest of
+the socket code is verified live: `just dump` reads the real central Redis
+(needs `REDISCLI_AUTH`), and `just pub-check` plus the publisher self-test
+prove the write path.
 
 Building the C library needs `libhiredis-dev`; the aarch64 cross build
 additionally needs `gcc-aarch64-linux-gnu` and a Pi sysroot at `~/pi-sysroot`

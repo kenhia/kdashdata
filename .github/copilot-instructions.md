@@ -70,10 +70,80 @@ rendering; aarch64 and x86_64); (3) thin publisher wrappers, Rust and Python.
 The dashboards and their publisher daemons live in their own repos and
 consume this one — nothing here runs as a service.
 
-Status: contract v0 landed (sprint 001, korg:1733) — see
-`docs/architecture.md` (decisions CD-1…CD-6, open questions OQ-n),
-`contracts/rules.md` and `contracts/registry.md`. Next: the shared C
-consumer library (sprint 002).
+Status: contract v0 landed (sprint 001, korg:1733); the shared C consumer
+library landed (sprint 002, korg:1751); the publisher wrappers landed
+(sprint 003, korg:1752). The CD-7 relocation program (korg:1755) is
+**complete**: `kdash-pub` distribution through the package store (sprint 004,
+korg:1764), then the close-out that retired `claude:*`'s old home, flipped the
+registry and landed the family's schemas (sprint 005, korg:1754). Since then
+the library grew the readers and feeds its consumers were blocked on — typed
+`claude:*` readers (sprint 006, korg:1784), the `kdash:panel:<host>` control
+feed (sprint 007, korg:1817), the `kdash:stale:<host>:<deployer>` feed for
+intermittently reachable hosts (sprint 008, korg:1915), and the shared
+apartment-temperature bands plus the counted-reader contract (sprint 009,
+korg:2217). The publishers then joined the fleet's per-host secrets file, ahead
+of the per-user files CD-12 shipped with (sprint 010, korg:2427 — one slice of
+the simplify-secrets program korg:2440), and komarchy — the laptop, which had
+been in no deploy target and was ten days behind on `kdash-pub` — became one
+and got that build (sprint 011, korg:2679). Most recently the contracts the
+kxeneon Agents panel is blocked on landed, code-free: `kdash:agentact` — a
+process monitor's verdict on an agent, the first family keyed deliberately to
+join `claude:session` (CD-20) — and `ghcp:session` for Copilot CLI, a new
+family outside the `kdash:` namespace by named exception and mirroring
+`claude:session` field-for-field so every consumer's ladder applies unchanged
+(CD-21) (sprint 012, korg:2747 — slice 3 of the Agents-panel program
+korg:2751). That contract then caught the publishers out: 012 legalised `ghcp`
+in the schema, the registry and the rules and taught neither `NAMESPACES`
+allowlist, so every `ghcp:*` write was refused as off-contract while the
+contract called it legal. Sprint 013 (korg:2788, slice 3.5) taught both sides
+and added the gate that compares them — `check-docs` now holds
+`contracts/registry.md`'s families against both publisher allowlists in both
+directions, which is the one check neither per-language gate could ever make.
+Most recently, sprint 014 (korg:2931) opened the Redis-consolidation program
+(korg:2935, five servers to two) with its contract slice: CD-8 amended so the
+cleo↔rpidash2 `kvscf:*` exchange lives on central while the kwork pair keeps
+its own instance and password, and the panel-control family grown two siblings
+— `kdash:panelmode:{host}` and `kdash:panelshot:{host}`, one family per verb
+(CD-22) — so a panel with no local Redis can still be switched, configured and
+screenshotted. CD-23 records what that makes the fleet password. Sprint 015
+(korg:2978) then closed the gap between what the contracts say and what
+anything enforces: every schema now carries `examples` it must accept and
+`x-counterexamples` it must reject, run by a stdlib validator in `just check`
+that refuses any keyword it cannot check (CD-24); `kdash-pub` grew the `get`
+and `scan` verbs the `kdash:stale` read-modify-write needed, in both wrappers,
+with absence as a distinct exit code so an unreachable Redis is never read as
+an all-clear (CD-14 amended); and the repo finally declares its deploy in
+`.sprint-deploy`, behind a self-skipping `publish` whose version comes from the
+binary's own inputs rather than `HEAD`, so a contract-only sprint no longer
+churns four hosts. Most recently sprint 016 (korg:3046) made two claims the
+repo had been making on trust actually checkable. The counted readers' `-1`
+contract — read did not complete, `out` zeroed, `*skipped` 0 — was
+untestable, because triggering it means losing the endpoint mid-SCAN on a
+Redis three dashboards read; `kdash_feed.c`'s I/O now sits behind four
+function pointers so `tests/test_feed.c` can fail the Nth read, which is a
+deliberate narrowing of CD-10 and found on its first run that all three
+readers returned `-1` from the SCAN-failure path without zeroing `out`.
+And `kdash-pub endpoint` opens a socket without issuing a command, so
+`--no-auth` exited 0 against a Redis that requires a password; `endpoint` is
+unchanged and documents that edge, while the new `check` verb round-trips a
+PING — 0 accepted / 1 khlenv says nowhere / 2 could not ask (CD-25).
+See `docs/architecture.md` (decisions
+CD-1…CD-25, open questions OQ-n), `contracts/rules.md`,
+`contracts/registry.md`, `include/kdash/kdash.h` for the consumer API, and
+`publishers/README.md` for the publish side and the version-and-skip rule.
+Next: the rest of program
+korg:2935 — kdeskdash folds rpidash2's pair Redis into central (korg:2932),
+then panel state to a file and commands from central (korg:2933), then
+k-homelab retires the three servers (korg:2934). After that: kdeskdash's
+Copilot publisher, unblocked by 013 (korg:2755) and the k-homelab recipe behind
+it (korg:2756); kdeskdash adopting the `claude:*` readers (korg:2218, work item
+1783); or kstudiodash's first consumption of the library (korg:1728).
+
+This line is gated: `scripts/check.py` fails if it does not name the
+newest `sprints/` record, so a sprint cannot ship leaving it behind again
+(it had been four sprints stale — work item 1928). Since sprint 016 the same
+check covers `.github/copilot-instructions.md`, whose own copy of this section
+had been stale since sprint 001 precisely because nothing looked at it.
 
 Conventions and constraints:
 
@@ -87,5 +157,22 @@ Conventions and constraints:
   real consumer exists.
 - korg project: kdashdata. Read first: `sprints/planning/roadmap.md`, then
   `docs/` and `contracts/` once sprint 001 lands.
-- `just check` is a python3-stdlib gate (`scripts/check.py`): every JSON
-  file parses, every relative markdown link resolves.
+- `just check` is four gates: `check-docs` (python3 stdlib only,
+  `scripts/check.py` — every JSON file parses, every relative markdown link
+  resolves, every schema is listed in the registry **and validates its own
+  `examples` and `x-counterexamples`** via `scripts/jsonschema_mini.py`
+  (CD-24), the registry's families match both publisher allowlists, every
+  `.ps1` is pure ASCII, and both orientation files' Status lines — this one
+  and `.github/copilot-instructions.md` — name the newest sprint
+  record), `check-python` (the
+  Python wrapper's pure core, stdlib only), `check-rust` (fmt, clippy, unit
+  tests — a first build needs network and git access to the private khlenv
+  repo), plus a CMake build of the C library and its ctest unit tests.
+  Every gate covers pure code only (no Redis, no network) — with one named
+  narrowing: `test_feed` swaps `kdash_feed.c`'s Redis calls for a fake so the
+  counted readers' `-1` contract is exercised rather than asserted (CD-10 as
+  amended in sprint 016). The socket paths themselves are verified live with
+  `just dump` and `just pub-check`, which need `REDISCLI_AUTH` or the CD-12
+  env file. Prefer `pub-check` to `pub-endpoint` for "can this host publish":
+  `endpoint` issues no command and so cannot tell a working auth route from
+  no credential at all (CD-25).

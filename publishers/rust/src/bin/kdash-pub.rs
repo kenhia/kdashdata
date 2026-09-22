@@ -14,7 +14,8 @@
 //! kdash-pub set kpidash:services:demo:kai '{"state":"ok","text":"up"}'
 //! kdash-pub setex kdash:demo:health 5 '{"alive":true}'
 //! kdash-pub --stem KDASH_CLAUDE_REDIS hset claude:session:kai:abc status working
-//! kdash-pub endpoint
+//! kdash-pub endpoint                                  # where would this write?
+//! kdash-pub check                                     # ...and would it be accepted?
 //! kdash-pub --stem KDASH_CLAUDE_REDIS hget claude:limits updated_at
 //! kdash-pub get kdash:stale:komarchy:claude-hooks      # 0 value / 1 absent / 2 unknown
 //! kdash-pub scan 'kdash:stale:komarchy:*'              # one key per line
@@ -57,8 +58,36 @@
 //! two new verbs read alike; its empty answer is exit 0, because "no keys
 //! matched" is complete rather than missing.
 //!
-//! **`--best-effort` does not touch `get` or `scan`.** It exists so a dead
-//! Redis cannot fail a hook, and turning a 2 into a 0 here would make "I could
+//! `check` (sprint 016) is the third verb on that pattern, and it exists
+//! because **`endpoint` answers a narrower question than it looks like it
+//! answers**:
+//!
+//! > `endpoint` resolves the endpoint and opens a socket. It issues **no
+//! > command**. Redis checks AUTH when AUTH is *sent*, so a wrong password
+//! > fails right here — but `--no-auth` against a server that requires one
+//! > connects happily and fails `NOAUTH` on the first real command. So
+//! > `kdash-pub --no-auth endpoint` exits **0** against the authenticated
+//! > central Redis, for a configuration that cannot write a single key.
+//! > Measured on kubs0 2026-09-12 and again on kai 2026-09-21 (WI 2492).
+//!
+//! That is not a bug in `endpoint` — "where would this write" is a fair
+//! question with a fair answer, and it is the cheap one a caller wants when
+//! that is all it is asking. `check` is the other question, and it round-trips
+//! a `PING` so exit 0 means the server accepted an authenticated command:
+//!
+//! | code | `check` |
+//! |---|---|
+//! | 0 | resolved, connected, and a command came back |
+//! | 1 | **deliberately nowhere** — khlenv holds an explicit null for this stem |
+//! | 2 | could not: unreachable, auth failed, or the command was refused |
+//!
+//! Exit 1 is the same shape `get` uses: a clean negative answer that is not a
+//! fault. A host khlenv says publishes nowhere is *correctly configured*, and
+//! reporting it as an unreachable Redis would be the same conflation this
+//! whole table exists to prevent.
+//!
+//! **`--best-effort` does not touch `get`, `scan` or `check`.** It exists so a
+//! dead Redis cannot fail a hook, and turning a 2 into a 0 here would make "I could
 //! not ask" indistinguishable from "present and empty" on `get`, or from "no
 //! keys" on `scan`. These verbs are read-modify-write guards whose entire job
 //! is refusing to guess — `kdash:stale`'s `since` must be carried forward
@@ -78,6 +107,11 @@ const EXIT_DELIVERY: u8 = 2;
 /// [`EXIT_DELIVERY`] instead: one code cannot mean both "no" and "you asked
 /// wrong" on a verb whose exit status IS the answer.
 const EXIT_ABSENT: u8 = 1;
+/// `check`'s "khlenv holds an explicit null for this stem" — this host is
+/// configured to publish nowhere, which is an answer and not a fault. Same
+/// numeric as [`EXIT_ABSENT`] and for the same reason: on a verb whose exit
+/// status IS the answer, 1 is the clean negative and 2 is "could not ask".
+const EXIT_NOWHERE: u8 = 1;
 
 /// Everything the argv front end decides, separated from doing any of it.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -100,7 +134,11 @@ enum Action {
     /// One read from argv (CD-14): `hget`, `get` or `scan`.
     Read(Vec<String>),
     /// Print where this invocation would write, and connect to prove it.
+    /// Connecting is NOT proof that a write would land — see `Check`.
     Endpoint,
+    /// Everything `Endpoint` does, plus a command round trip, so exit 0 means
+    /// the server accepted an authenticated command (WI 2492).
+    Check,
     Help,
     Version,
 }
@@ -183,6 +221,7 @@ fn parse_args(argv: &[String]) -> Result<Invocation, ArgError> {
         None => return Err(ArgError::NoCommand),
         Some("batch") => Action::Batch,
         Some("endpoint") => Action::Endpoint,
+        Some("check") => Action::Check,
         Some("help") => Action::Help,
         // The table decides, not a literal here: a second read verb should
         // reach the read path by being added to READ_USAGE and nowhere else.
@@ -220,6 +259,7 @@ fn help() -> String {
          {verbs}\n\
          \x20 kdash-pub [options] batch          # tab-separated commands on stdin, one round trip\n\
          \x20 kdash-pub [options] endpoint       # print where this would write, and connect\n\
+         \x20 kdash-pub [options] check          # ...and round-trip a command to prove it\n\
          \n\
          Options:\n\
          \x20 --app <name>        app name sent to khlenv (default: kdash-pub)\n\
@@ -246,7 +286,14 @@ fn help() -> String {
          and exits 0 even when none matched. Both exit 2 when the question could\n\
          not be asked at all — an unreachable Redis or a refused key — and\n\
          --best-effort does NOT turn that into a 0, because for these two the\n\
-         exit code is the answer.\n",
+         exit code is the answer.\n\
+         \n\
+         endpoint answers WHERE this host would write. It issues no command, so\n\
+         it cannot answer whether the write would be accepted: --no-auth exits 0\n\
+         against a Redis that requires a password, because Redis only checks\n\
+         AUTH when AUTH is sent. Use check for that — it round-trips a PING and\n\
+         exits 0 accepted / 1 khlenv says nowhere / 2 could not ask, with\n\
+         --best-effort leaving all three alone.\n",
         central = endpoint::CENTRAL_STEM,
         claude = endpoint::CLAUDE_STEM,
     )
@@ -306,8 +353,12 @@ fn publisher(invocation: &Invocation) -> Result<Publisher, String> {
 /// means "absent"), and `--best-effort` leaves that 2 alone (because turning
 /// it into 0 would spell "I could not ask" the same as "here is the answer").
 fn answers_with_status(action: &Action) -> bool {
-    matches!(action, Action::Read(words)
-        if words.first().is_some_and(|v| v == "get" || v == "scan"))
+    match action {
+        // `check` is a probe whose whole output is its exit code.
+        Action::Check => true,
+        Action::Read(words) => words.first().is_some_and(|v| v == "get" || v == "scan"),
+        _ => false,
+    }
 }
 
 fn run(invocation: Invocation) -> Result<(), (u8, String)> {
@@ -325,7 +376,10 @@ fn run(invocation: Invocation) -> Result<(), (u8, String)> {
     let query = build_query(&invocation.action).map_err(|e| (refused, e))?;
     let publisher = publisher(&invocation).map_err(|e| (refused, e))?;
 
-    if matches!(invocation.action, Action::Endpoint) {
+    // `endpoint` and `check` ask the same question one clause apart, so they
+    // share everything up to the round trip.
+    let probing = matches!(invocation.action, Action::Endpoint | Action::Check);
+    if probing {
         match publisher
             .resolve()
             .map_err(|e| (EXIT_DELIVERY, e.to_string()))?
@@ -333,7 +387,23 @@ fn run(invocation: Invocation) -> Result<(), (u8, String)> {
             Resolved::At { host, port } => println!("{host}:{port}"),
             Resolved::Nowhere => {
                 println!("(none)");
-                return Ok(());
+                // For `endpoint` this IS the answer: nowhere, deliberately.
+                // For `check` it is a clean negative — this host is configured
+                // not to publish — and it gets its own code rather than being
+                // folded into the unreachable-Redis 2, which would say
+                // something false about the world.
+                return if matches!(invocation.action, Action::Check) {
+                    Err((
+                        EXIT_NOWHERE,
+                        format!(
+                            "khlenv holds an explicit null for {} — this host \
+                             deliberately publishes nowhere",
+                            invocation.stem.key
+                        ),
+                    ))
+                } else {
+                    Ok(())
+                };
             }
         }
     }
@@ -341,7 +411,7 @@ fn run(invocation: Invocation) -> Result<(), (u8, String)> {
     let mut connection = publisher
         .connect()
         .map_err(|e| (EXIT_DELIVERY, e.to_string()))?;
-    if invocation.verbose || matches!(invocation.action, Action::Endpoint) {
+    if invocation.verbose || probing {
         eprintln!("kdash-pub: {}", connection.endpoint());
         // `endpoint` exists to answer "can this host publish, and how" — which
         // file answered is half of that, and it is the one half no amount of
@@ -364,6 +434,16 @@ fn run(invocation: Invocation) -> Result<(), (u8, String)> {
                 .unwrap_or_else(|| "a per-user env file".to_string())
         );
     }
+    if matches!(invocation.action, Action::Check) {
+        connection
+            .check()
+            .map_err(|e| (EXIT_DELIVERY, e.to_string()))?;
+        // On stderr, like the other two probe lines: stdout is `host:port` and
+        // stays parseable by whatever already pipes `endpoint`.
+        eprintln!("kdash-pub: PING answered — this endpoint accepts authenticated commands");
+        return Ok(());
+    }
+
     if let Some(query) = &query {
         let answer = connection
             .read(query)
@@ -601,8 +681,59 @@ mod tests {
     fn batch_and_endpoint_are_actions_not_keys() {
         assert_eq!(args(&["batch"]).unwrap().action, Action::Batch);
         assert_eq!(args(&["endpoint"]).unwrap().action, Action::Endpoint);
+        assert_eq!(args(&["check"]).unwrap().action, Action::Check);
         assert_eq!(args(&["--help"]).unwrap().action, Action::Help);
         assert_eq!(args(&["-V"]).unwrap().action, Action::Version);
+    }
+
+    #[test]
+    fn check_is_a_probe_and_reaches_neither_the_write_nor_the_read_path() {
+        // It takes no key and no payload, so the two argv-to-work builders
+        // must both come back empty — otherwise `check` would be parsed as a
+        // write to a key called "check".
+        let invocation = args(&["--app", "kdashdata", "check"]).unwrap();
+        assert_eq!(invocation.action, Action::Check);
+        assert_eq!(invocation.app, "kdashdata");
+        assert!(build_commands(&invocation.action).unwrap().is_empty());
+        assert!(build_query(&invocation.action).unwrap().is_none());
+        // And it carries the flags a probe needs: a pinned endpoint and a
+        // named stem are the two ways an operator asks about somewhere else.
+        let pinned = args(&["--stem", "KDASH_CLAUDE_REDIS", "--no-auth", "check"]).unwrap();
+        assert_eq!(pinned.stem, Stem::CLAUDE);
+        assert!(pinned.no_auth);
+        assert_eq!(pinned.action, Action::Check);
+    }
+
+    #[test]
+    fn check_opts_out_of_best_effort_like_the_other_answering_verbs() {
+        // The reason this matters: `check` exists to say whether a write would
+        // land. --best-effort folding its 2 into a 0 would make the one verb
+        // that answers that question answer it wrong, on exactly the hosts
+        // (hook paths) that pass --best-effort by habit.
+        assert!(answers_with_status(&args(&["check"]).unwrap().action));
+        // `endpoint` is NOT on this list, and deliberately: it answers where,
+        // not whether, and has done since sprint 003.
+        assert!(!answers_with_status(&args(&["endpoint"]).unwrap().action));
+    }
+
+    #[test]
+    fn help_names_check_and_the_endpoint_trap_it_exists_for() {
+        let text = help();
+        assert!(
+            text.contains("kdash-pub [options] check"),
+            "help omits check"
+        );
+        // The trap has to be visible where somebody meets it (WI 2492): a
+        // reader of --help must not have to already know that `endpoint`
+        // issues no command.
+        assert!(
+            text.contains("issues no command"),
+            "help omits the endpoint caveat"
+        );
+        assert!(
+            text.contains("--no-auth exits 0"),
+            "help omits the measured case"
+        );
     }
 
     #[test]

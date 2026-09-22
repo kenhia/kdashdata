@@ -50,8 +50,20 @@ pub *ARGS:
     @cargo build --release --manifest-path publishers/rust/Cargo.toml --quiet
     ./publishers/rust/target/release/kdash-pub {{ ARGS }}
 
-# Where would this host publish, and can it? One command, both wrappers' answer.
+# Where would this host publish? Resolve and connect, and issue no command.
+#
+# Deliberately NOT the same question as `pub-check`: this one opens a socket
+# and stops, and Redis only checks AUTH when AUTH is sent — so `--no-auth`
+# exits 0 here against a Redis that requires a password (CD-25). Use it when
+# "where" is the question; use `pub-check` when "can it" is.
 pub-endpoint: (pub "--app" "kdashdata" "endpoint")
+
+# ...and would the write be accepted? Round-trips a PING (sprint 016, CD-25).
+#
+# 0 accepted / 1 khlenv says this host publishes nowhere / 2 could not ask.
+# This is the per-host check a rollout should run: it proves khlenv resolution
+# AND the CD-12 auth route, which `pub-endpoint` cannot.
+pub-check: (pub "--app" "kdashdata" "check")
 
 # Build the Python wheel (publishing it to the homelab store is a separate step)
 pub-wheel:
