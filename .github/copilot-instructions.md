@@ -115,7 +115,7 @@ with absence as a distinct exit code so an unreachable Redis is never read as
 an all-clear (CD-14 amended); and the repo finally declares its deploy in
 `.sprint-deploy`, behind a self-skipping `publish` whose version comes from the
 binary's own inputs rather than `HEAD`, so a contract-only sprint no longer
-churns four hosts. Most recently sprint 016 (korg:3046) made two claims the
+churns four hosts. Sprint 016 (korg:3046) made two claims the
 repo had been making on trust actually checkable. The counted readers' `-1`
 contract — read did not complete, `out` zeroed, `*skipped` 0 — was
 untestable, because triggering it means losing the endpoint mid-SCAN on a
@@ -127,6 +127,14 @@ And `kdash-pub endpoint` opens a socket without issuing a command, so
 `--no-auth` exited 0 against a Redis that requires a password; `endpoint` is
 unchanged and documents that edge, while the new `check` verb round-trips a
 PING — 0 accepted / 1 khlenv says nowhere / 2 could not ask (CD-25).
+Most recently sprint 017 (korg:3146, slice 5 of the kimac onboarding program
+korg:3148) gave `kdash-pub` its third platform. `kdash-pub-arm64-darwin` is
+built natively on kimac and published under the same version as linux and
+windows. `just publish` wakes the sleeping Mac with a magic packet from kai
+and holds it awake under `caffeinate` for the build; it gets a git bundle and
+a vendored crate tree, so it needs no checkout and no khlenv credential. If
+kimac cannot be woken, linux and windows still ship, and `publish-darwin`
+catches darwin up without moving `latest` (CD-13 amended).
 See `docs/architecture.md` (decisions
 CD-1…CD-25, open questions OQ-n), `contracts/rules.md`,
 `contracts/registry.md`, `include/kdash/kdash.h` for the consumer API, and

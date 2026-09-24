@@ -473,7 +473,7 @@ pure core plus a thin I/O shell (CD-10), for a context that does not exist. A
 dashboard that needs the per-host file gets it through its unit, which is each
 dashboard repo's own slice of program korg:2440.
 
-## CD-13 — `kdash-pub` ships through the package store, to fixed absolute paths
+## CD-13 — `kdash-pub` ships through the package store, to fixed absolute paths — amended: darwin-arm64, built on a woken kimac (sprint 017)
 
 Sprint 003 built the CLI and stopped there, so for one sprint `kdash-pub`
 existed only as `publishers/rust/target/release/kdash-pub` in this checkout on
@@ -559,6 +559,66 @@ This is a recipe standing in for a knarr feature, the same shape as
 `scripts/install-cleo.ps1`. **korg 2680** asks knarr for an allowed-absent
 host; when it lands, komarchy folds back into `deploy`'s list and both the
 extra recipe and the probe go away.
+
+### darwin-arm64 is built natively on kimac, which is woken rather than skipped (sprint 017)
+
+kimac (M1, macOS 27) is the fleet's first Mac, and k-homelab's claude-hooks and
+copilot-hooks need `kdash-pub` there. Ken ruled on 2026-09-22 (k-homelab WI
+3123, decision 3a) that the store gains Mac builds **built natively on
+kimac**. Cross-compiling to `aarch64-apple-darwin` from Linux needs Apple's SDK
+(osxcross), and that was rejected. So `just publish` now produces **three
+artifacts under one version**: `kdash-pub-x86_64-linux`,
+`kdash-pub-x86_64-windows.exe`, and `kdash-pub-arm64-darwin`. The last is the
+name knarr 0.6.0 asks for when it deploys by the target's platform
+(`uname -m`-`uname -s`, lowercased, on the Mac). kpkg needed no change: it
+refuses only a same-named file, and rewrites `SHA256SUMS` over the whole
+directory.
+
+**How the build reaches the Mac without a checkout or a credential.**
+`scripts/build-darwin.sh` sends kimac a `git bundle` of the full history plus
+a `cargo vendor` tree. The bundle lets `build.rs` derive the stamp from real
+git objects. The vendor tree lets the build run `--offline`, which matters
+because kimac holds no credential for the private khlenv repo (CD-11).
+`scripts/build-darwin-remote.sh` runs on the Mac under `/bin/bash` 3.2. It
+builds, checks that the binary's own stamp equals the label the publishing host
+computed, and only then hands the binary back. The stamp and the label stay one
+fact across the third platform, just as they are across the first two.
+
+**A sleeping Mac is woken, not skipped.** The proposal's rule 2 was
+originally "a sleeping kimac is skipped with an advisory". The Wake-on-LAN
+test then PASSed (a magic packet from kai wakes kimac within a second), and Ken
+ruled on 2026-09-23 to build the wake path instead (korg:3146 comment 2973).
+The wake is a **dark** wake, which falls back to sleep about 28 s later, so the
+order matters:
+
+1. send the magic packet from kai, which shares kimac's LAN segment
+   (Tailscale cannot carry a broadcast);
+2. ssh with a retry loop and a 20 s ConnectTimeout;
+3. on the first answer, run `caffeinate -u -t 2`, which promotes the dark wake
+   to a full wake;
+4. run the build under `caffeinate -i -s`, which holds idle *and* system sleep
+   off for exactly as long as the build process lives, with nothing detached
+   left behind.
+
+**Three outcomes, kept apart**, in the same shape as `deploy-all`'s komarchy
+probe:
+
+- **Could not be woken** (exit 3 from the script): `publish` ships linux and
+  windows, prints `darwin: skipped, kimac unreachable`, and names the
+  catch-up. A sleeping Mac never blocks a publish, which keeps rule 2's intent.
+- **Woke, then failed**: this is a fault, and nothing uploads. A dropped ssh
+  session mid-build (ssh exit 255) is reported as the hold not holding.
+- **Built**: all three go up in one `kpkg artifact` call.
+
+`just publish-darwin <version>` is the catch-up. It checks that the checkout
+builds exactly `<version>`, adds only the darwin file to the existing store
+directory, and passes `--no-latest`, so the pointer never moves. Unlike
+`publish`, an unwakeable Mac is a failure there, because asking for darwin by
+name means you believe it can be reached.
+
+**Rule 1 (Ken): a darwin build is made only for tools that a macOS recipe
+uses.** `kdash-pub` qualifies. This decision does not make "every artifact
+gets a Mac build" the store's default.
 
 ## CD-14 — `kdash-pub`'s read verbs are a publisher's, and absence is an answer — amended: `get` and `scan` (sprint 015)
 
