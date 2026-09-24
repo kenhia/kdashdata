@@ -128,8 +128,58 @@ would make build.rs stamp `-dirty`. It then compares the binary's own
 
 ## Acceptance
 
-_(filled in as each run completes)_
+Every run was on kai, from the branch, so every version is `--no-latest`.
+kimac was probed from kai, which is the host that sends the packet and runs
+the build. `latest` stayed `0.1.0-b73b5f4` throughout.
+
+| # | run | version | result |
+|---|---|---|---|
+| 1 | `sudo pmset sleepnow` at 22:08:35, silence, then `just publish` at 22:09:05 | `0.1.0-59d6150` | **3 binaries + SHA256SUMS**, exit 0, 29 s. **But kimac never slept**; see below. This counts as the *awake* case. |
+| 2 | `KIMAC_HOST=192.0.2.1 KIMAC_MAC=02:…:00 WAKE_TIMEOUT=30 just publish` | `0.1.0-1d2709d` | **2 binaries**, `darwin: skipped, kimac unreachable — catch it up with: just publish-darwin 0.1.0-1d2709d`, exit 0 |
+| 3 | `sleepnow` at 22:11:44, silence, then `just publish-darwin 0.1.0-1d2709d` at 22:12:14 | `0.1.0-1d2709d` | darwin **added**, `SHA256SUMS` covers 3, `latest` unmoved, exit 0, 22 s. **kimac never slept this time either.** |
+
+Script-level negative tests:
+- a TEST-NET host gives exit 3 and "nothing built";
+- a wrong version gives exit 1, with the Mac-side stamp check naming both
+  labels;
+- a vendor run under `--quiet` failed offline on khlenv. That was fixed, and
+  the vendor config is now asserted non-empty.
+
+The caffeinate half did what it was designed to do, as kimac's own
+`pmset -g log` shows:
+- `caffeinate -u` created UserIsActive for 2 s.
+- `caffeinate -is` created PreventSystemSleep, which lasted 14 s in both
+  runs (22:09:18–22:09:32 and 22:12:20–22:12:34) and was released
+  `ClientDied` as the build exited.
+- Nothing was left behind.
+
+### The forced sleep never reached sleep: the HOLD confirmation is still outstanding
+
+In both runs, `pmset -g log` shows the same sequence:
+1. `Display is turned off` at the `sleepnow`;
+2. then, **2–3 s later**, a HID event: the Magic Keyboard (`TurnedOn
+   UserIsActive … AppleHIDKeyboardEventDriverV2`, 22:08:38) in the first run
+   and the Magic Trackpad (`… AppleMultitouchDevice`, 22:11:46) in the second;
+3. then `Display is turned on`.
+
+There is **no `Sleep` entry at all**. `HIDIdleTime` read 64 s at 22:12:52, so
+there was one event right after each attempt and nothing since. The
+2026-09-22 forced WoL runs ABORTed with "still answering 120 s after
+sleepnow" twice, which fits the same thing.
+
+So "stays up through the whole build" was shown only for a Mac that was
+already awake. The dark-wake case that the hold exists for, where a magic
+packet wakes the Mac and it re-sleeps after about 28 s, was **not**
+exercised. Whether the HID event is a person at the Mac or the Bluetooth
+peripherals firing on sleep is not something this leg can tell, and it is not
+this leg's to change. Parked for a ruling; see the proposal thread.
 
 ## Repaired in passing
+
+- `publishers/rust/src/auth.rs`: `PER_HOST_FILE`'s doc said the file is
+  rendered "on Linux". It now records that macOS takes the same path, by Ken's
+  same-path ruling (WI 3123), and that `cfg(unix)`'s mode check applies
+  unchanged. `check-rust` is the gate. This was also the input change that gave
+  runs 2 and 3 a fresh version.
 
 ## Follow-ups
