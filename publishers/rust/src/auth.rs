@@ -43,7 +43,9 @@ pub const AUTH_ENV: &str = "REDISCLI_AUTH";
 pub const AUTH_FILE_ENV: &str = "KDASH_AUTH_FILE";
 
 /// The per-host file k-homelab renders on Linux: `root:khomelab 0640`,
-/// `KEY='value'` lines (CD-19).
+/// `KEY='value'` lines (CD-19). macOS uses the same path by Ken's same-path
+/// ruling (k-homelab WI 3123). The `cfg(unix)` mode check below applies to it
+/// unchanged, so the darwin build has no platform branch here.
 pub const PER_HOST_FILE: &str = "/etc/khomelab/secrets.env";
 
 /// The Windows variable naming the per-machine data directory. Read at RUN

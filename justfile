@@ -145,11 +145,19 @@ published version:
 
 # Publish a release build to the homelab package store (kubsdb :4880).
 #
-# Two artifacts, ONE version. The Linux binary and the Windows binary are built
-# from the same checkout, carry the same `--version` label (build.rs reads the
-# same git state for both), and land in the same store directory under the same
-# `SHA256SUMS`. Never publish them as two versions: a fleet that resolves
+# Three artifacts, ONE version. The Linux binary and the Windows binary are
+# built here, the darwin-arm64 binary natively on kimac (sprint 017), all from
+# the same commit, carrying the same `--version` label (build.rs reads the same
+# git state for each), and landing in the same store directory under the same
+# `SHA256SUMS`. Never publish them as separate versions: a fleet that resolves
 # `latest` differently per platform is a fleet that drifts.
+#
+# kimac is a Mac that sleeps. `scripts/build-darwin.sh` wakes it with a magic
+# packet, holds it awake with caffeinate for the build, and brings the binary
+# back. If it cannot be woken at all, the publish still ships linux + windows
+# and PRINTS that darwin was skipped, with the `publish-darwin` line that
+# catches it up — a sleeping Mac never blocks a publish (Ken, WI 3139 rule 2).
+# If it wakes and the build then fails, that is a fault and nothing uploads.
 #
 # The binary is re-read with `--version` and published under the label that
 # stamp produces, so the stamp and the store label are one fact rather than two
@@ -160,7 +168,7 @@ published version:
 #
 # A first build needs network and git access to the private khlenv repo (CD-11).
 # That is a builder concern only — the deploy targets receive finished binaries.
-[doc("Publish linux+windows binaries to the package store as one version")]
+[doc("Publish linux+windows+darwin binaries to the package store as one version")]
 publish *ARGS:
     #!/usr/bin/env bash
     set -euo pipefail
@@ -214,8 +222,8 @@ publish *ARGS:
         exit 1
     fi
     if [[ -n "$dry" ]]; then
-        echo "publish: --dry-run — would build linux + windows and publish $v"
-        echo "publish: would run: kpkg artifact$([[ "$(git rev-parse --abbrev-ref HEAD)" != "main" ]] && echo ' --no-latest') kdash-pub $v <linux> <windows>"
+        echo "publish: --dry-run — would build linux + windows, wake kimac for darwin, and publish $v"
+        echo "publish: would run: kpkg artifact$([[ "$(git rev-parse --abbrev-ref HEAD)" != "main" ]] && echo ' --no-latest') kdash-pub $v <linux> <windows> [<darwin>]"
         exit 0
     fi
     cargo build --release --manifest-path publishers/rust/Cargo.toml
@@ -245,12 +253,75 @@ publish *ARGS:
         latest_arg="--no-latest"
         echo "publish: not on main — publishing $v WITHOUT moving the latest pointer" >&2
     fi
+    # darwin last, after everything local has succeeded, so a failed linux or
+    # windows build never costs kimac a wake. Exit 3 is "could not be woken".
+    darwin="$(mktemp -d)"
+    trap 'rm -rf "$darwin"' EXIT
+    set +e
+    scripts/build-darwin.sh "$v" "$darwin"
+    rc=$?
+    set -e
+    platforms="linux + windows + darwin"
+    case "$rc" in
+        0) ;;
+        3) platforms="linux + windows"
+           echo "darwin: skipped, kimac unreachable — catch it up with: just publish-darwin $v" >&2 ;;
+        *) echo "publish: the darwin build failed — nothing uploaded" >&2; exit 1 ;;
+    esac
     arch="$(uname -m)-$(uname -s | tr '[:upper:]' '[:lower:]')"
-    echo "==> publishing kdash-pub $v as $stamp (linux + windows)"
+    echo "==> publishing kdash-pub $v as $stamp ($platforms)"
     d=$(ssh -n kubsdb mktemp -d)
     scp publishers/rust/target/release/kdash-pub kubsdb:"$d/kdash-pub-$arch"
     scp publishers/rust/target/x86_64-pc-windows-gnu/release/kdash-pub.exe kubsdb:"$d/kdash-pub-x86_64-windows.exe"
+    for f in "$darwin"/kdash-pub-*; do
+        if [[ -e "$f" ]]; then scp "$f" kubsdb:"$d/"; fi
+    done
     ssh -n kubsdb "kpkg artifact $latest_arg kdash-pub $v $d/* && rm -rf $d"
+
+# Add the darwin-arm64 binary to a version already in the store.
+#
+# The catch-up for a `publish` that printed "darwin: skipped". It builds from
+# THIS checkout, so the checkout must be the commit <version> names — `just
+# version` must equal it, which is checked rather than assumed — and it never
+# moves `latest`: kpkg rewrites `SHA256SUMS` over the whole directory, and
+# `--no-latest` leaves the pointer wherever it was.
+#
+# Unlike `publish`, an unwakeable kimac is a failure here: asking for the
+# darwin build by name means you believe the Mac can be reached.
+[doc("Add kdash-pub-arm64-darwin to an existing store version (wakes kimac; never moves latest)")]
+publish-darwin version:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    if [[ -n "$(git status --porcelain)" ]]; then
+        echo "publish-darwin: refusing to build from a dirty tree" >&2
+        exit 1
+    fi
+    have="$(just version)"
+    if [[ "$have" != "{{version}}" ]]; then
+        echo "publish-darwin: this checkout builds '$have', not '{{version}}' — check out the commit it names" >&2
+        exit 1
+    fi
+    set +e
+    ans="$(just published "{{version}}" 2>&1)"
+    rc=$?
+    set -e
+    case "$rc" in
+        0) ;;
+        1) echo "publish-darwin: {{version}} is not in the store — use 'just publish' for a new version" >&2; exit 1 ;;
+        *) echo "publish-darwin: could not ask the store about {{version}}" >&2
+           grep -v '^error: Recipe' <<<"$ans" >&2
+           exit 1 ;;
+    esac
+    darwin="$(mktemp -d)"
+    trap 'rm -rf "$darwin"' EXIT
+    if ! scripts/build-darwin.sh "{{version}}" "$darwin"; then
+        echo "publish-darwin: no darwin build for {{version}} — nothing uploaded" >&2
+        exit 1
+    fi
+    echo "==> adding darwin to kdash-pub {{version}} (latest unchanged)"
+    d=$(ssh -n kubsdb mktemp -d)
+    scp "$darwin"/kdash-pub-* kubsdb:"$d/"
+    ssh -n kubsdb "kpkg artifact --no-latest kdash-pub {{version}} $d/* && rm -rf $d"
 
 # Deploy the store's latest to the Linux publisher hosts.
 #

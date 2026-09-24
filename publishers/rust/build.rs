@@ -17,6 +17,18 @@
 //! root is `publishers/rust/`, not the repo root, so `.git` is two levels up.
 //! `git rev-parse --git-dir` is asked where it is rather than assuming `.git`.
 //!
+//! ## The darwin build runs this in a bundle clone on kimac (sprint 017)
+//!
+//! `kdash-pub-arm64-darwin` is built natively on kimac, not cross-compiled,
+//! and kimac holds no checkout. `scripts/build-darwin.sh` sends it a
+//! `git bundle` of the publishing host's full history, and this script runs
+//! inside a fresh repo fetched from it. That is why the stamp is asked of git
+//! rather than passed in: the Mac derives the label independently, from the
+//! same objects, and a label it disagrees on is refused before upload. Full
+//! history rather than a shallow bundle keeps `%h` abbreviating to the same
+//! length on both sides. The build's target dir sits outside that clone,
+//! because one inside it would make `git status` report `-dirty`.
+//!
 //! ## The commit is the last one touching THIS BINARY'S INPUTS, not `HEAD`
 //!
 //! Sprint 015, WI 2798, extending by analogy the rule Ken set on 2026-09-17

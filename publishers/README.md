@@ -150,8 +150,9 @@ exec by absolute path, so it ships as a package-store artifact — CD-13.
 ```sh
 just version        # the store label this checkout would publish under
 just published <v>  # is <v> already in the store? 0 = yes, 1 = no, 2 = unknown
-just publish        # linux + windows cross-build, ONE version, from main
+just publish        # linux + windows here, darwin-arm64 on a woken kimac — ONE version
 just publish --dry-run
+just publish-darwin <v>  # catch-up: add darwin to an existing version, latest unmoved
 just deploy         # knarr -> /usr/local/bin/kdash-pub on kai and kubs0
 just deploy-cleo    # store-resolving install -> C:\tools\bin\kdash-pub.exe
 just deploy-komarchy  # the laptop — knarr, but only with the lid open
@@ -159,7 +160,11 @@ just deploy-all     # all four publisher hosts, which is the point
 ```
 
 `publish` refuses a dirty tree and refuses a stamp that names no commit, and
-off `main` it publishes without moving `latest`. The install paths are a
+off `main` it publishes without moving `latest`. The darwin binary is built
+natively on kimac, which `publish` wakes with a magic packet and holds awake
+under `caffeinate` for the build. If kimac cannot be woken, linux + windows
+still ship and `publish` prints the `publish-darwin` line that catches it up
+(CD-13, sprint 017). The install paths are a
 contract: the CD-7 hook scripts exec them absolutely, because a hook context's
 `PATH` is not the interactive one.
 

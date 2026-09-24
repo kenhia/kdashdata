@@ -26,6 +26,8 @@ serde_json = "1"
 [profile.release]
 # The CLI is exec'd from Claude Code hooks on every tool call (CD-12), so the
 # binary is optimised for size and startup, not for throughput it never has.
+# The same profile builds all three store artifacts, darwin-arm64 included on
+# kimac (sprint 017), so a flag changed here reaches every platform at once.
 opt-level = "s"
 lto = true
 codegen-units = 1
