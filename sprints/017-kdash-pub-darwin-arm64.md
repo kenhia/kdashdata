@@ -222,6 +222,41 @@ Against comment 3000's three criteria:
 
 Parked for a ruling (proposal thread).
 
+### Ruling: the hold is confirmed, and the packet is best-effort (comment 3003)
+
+The overseer ruled option 1. Ken's ruling made the forced-sleep acceptance
+**the HOLD confirmation**, and runs 4 and 5 both show it: a real `Sleep`, a
+dark wake promoted to full wake by `caffeinate -u`, and `caffeinate -is` held
+through the whole build without an ssh drop.
+
+The `Enet.MagicPacket` criterion over-specified that ruling. The packet waking
+a deep-idle kimac was already proven at 08:35. Tonight's Mac was seconds into
+re-sleep from a maintenance wake, which is a different state rather than a
+contradiction. The other dark wakes in the quiet windows are kimac's known
+background traffic (46 overnight, WI 3123 comment 2966), not a finding.
+
+`5951c2c` (the 5 s grace period before the probe) stays. The script header
+and CD-13 now say the packet is best-effort.
+
+### Branch versions left in the store: none is `latest`, and none is a release
+
+Every one was published from this branch with `--no-latest`, so each names a
+commit the squash merge will erase. They exist to prove the path, and the
+store's `latest` is still `0.1.0-b73b5f4`. The ship's own `publish` from
+`main` cuts the real release.
+
+| version | contents | made by |
+|---|---|---|
+| `0.1.0-59d6150` | linux, windows, darwin | run 1 (awake full publish) |
+| `0.1.0-1d2709d` | linux, windows, darwin | run 2 (advisory) + run 3 (catch-up) |
+| `0.1.0-b425da3` | linux, windows, darwin | advisory publish + run 4 (forced-sleep catch-up) |
+
+There are **three** branch versions, read from the store listing on kubsdb
+after the ruling. The previous pause reply said "four", which was a miscount
+by this leg, and comment 3003 carried it forward. `0.1.0-b73b5f4` is `latest`
+and still has no darwin build. The ship's own `publish` from `main` cuts a new
+version with all three platforms, so no catch-up of `b73b5f4` is needed.
+
 ## Repaired in passing
 
 - `publishers/rust/src/auth.rs`: `PER_HOST_FILE`'s doc said the file is
@@ -230,4 +265,16 @@ Parked for a ruling (proposal thread).
   unchanged. `check-rust` is the gate. This was also the input change that gave
   runs 2 and 3 a fresh version.
 
+## Cross-repo changes made
+
+None. The agent-skills host-section wording (comment 2979) goes to
+agent-skills as its own slice, filed by the overseer using the wording in
+comment 3001 (ruling 3003).
+
 ## Follow-ups
+
+None filed.
+- The agent-skills wording is the overseer's to file (3003).
+- The unexplained dark wakes are known background traffic (3003).
+- `deploy` for kimac belongs to slice 6 (korg:3142) and the deploy fold-back
+  to WI 3094. Both were out of scope by 2971.

@@ -20,8 +20,11 @@
 # never a quiet skip.
 #
 # Why the wake is shaped like this (CD-13, sprint 017; evidence in k-homelab
-# WI 3123 and kdashdata WI 3139): a magic packet wakes kimac within a second,
-# but into a DARK wake that falls back to sleep ~28 s later. So, in order:
+# WI 3123 and kdashdata WI 3139): a magic packet wakes a deep-idle kimac within
+# a second, but into a DARK wake that falls back to sleep ~28 s later. From a
+# shallower sleep the packet may wake nothing, and the ssh probe's own traffic
+# wakes it instead. Either wake is fine; the packet is best-effort, and the
+# hold is what matters (confirmed from forced sleep in sprint 017). In order:
 #   1. send the packet, and give it a few seconds alone (PROBE_DELAY)
 #   2. ssh with a retry loop and a long ConnectTimeout
 #   3. `caffeinate -u -t 2` on the first answer -- declares user activity,

@@ -592,13 +592,24 @@ The wake is a **dark** wake, which falls back to sleep about 28 s later, so the
 order matters:
 
 1. send the magic packet from kai, which shares kimac's LAN segment
-   (Tailscale cannot carry a broadcast);
+   (Tailscale cannot carry a broadcast), and give it 5 s alone;
 2. ssh with a retry loop and a 20 s ConnectTimeout;
 3. on the first answer, run `caffeinate -u -t 2`, which promotes the dark wake
    to a full wake;
 4. run the build under `caffeinate -i -s`, which holds idle *and* system sleep
    off for exactly as long as the build process lives, with nothing detached
    left behind.
+
+**What the forced-sleep acceptance showed.** kimac's `pmset -g log` from the
+sprint 017 runs shows a real `Sleep` entry each time, then a dark wake
+promoted to `FullWake … due to HID Activity` by `caffeinate -u`, then a
+`caffeinate -is` PreventSystemSleep that covered the whole build and was
+released when the build exited. ssh never dropped. **The packet is
+best-effort.** It woke a deep-idle kimac at +1 s on 2026-09-23. From a Mac
+seconds into re-sleep after a maintenance wake, it woke nothing, and the ssh
+probe's own traffic (`Enet.Service`) did the waking. "Wake, then build" does
+not care which of the two woke the Mac, and the overseer ruled it that way
+(korg:3146 comment 3003).
 
 **Three outcomes, kept apart**, in the same shape as `deploy-all`'s komarchy
 probe:
