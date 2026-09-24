@@ -278,3 +278,43 @@ None filed.
 - The unexplained dark wakes are known background traffic (3003).
 - `deploy` for kimac belongs to slice 6 (korg:3142) and the deploy fold-back
   to WI 3094. Both were out of scope by 2971.
+
+## Deployed
+
+**What:** `kdash-pub 0.1.0-0ea8e7c`, the squash-merge commit. It is the first
+real three-platform version, and `latest` moved to it.
+
+**When:** 2026-09-23, 22:23–22:24 PDT, from kai on merged `main`, by
+`.sprint-deploy`'s two declared steps in order: `just publish`, then
+`just deploy-all`. Both ran in the foreground, per the overseer's clearance
+(korg:3146 comment 3005).
+
+**`just publish`:** `0.1.0-0ea8e7c` was not in the store, so it published
+linux + windows + darwin, `latest -> 0.1.0-0ea8e7c`. The store's
+`SHA256SUMS`:
+
+```
+00650f59151f8f36d8ada5b3d883b96b1dfc96f8ca8f532fc9906f59ef816a60  kdash-pub-arm64-darwin
+06e024a3158e4003649740f914c0e3e3074a491446455cbb7033441119dd6710  kdash-pub-x86_64-linux
+b91e239a9e84f6ea4af74afd20f75f46fd5679b5141b64f59d91e50a85ab1f2f  kdash-pub-x86_64-windows.exe
+```
+
+**kimac was already awake**, not woken. Its `pmset -g log` has no `Sleep` or
+wake entry from 22:20 up to the build. The packet went out at 22:23:21, ssh
+answered on its first try, `caffeinate -u` ran 22:23:26–28, and
+`caffeinate -is` PreventSystemSleep ran 22:23:29–22:23:43 (`ClientDied` at
+build end). The Mac's stamp check passed before upload.
+
+**`just deploy-all`, verified by naming the hosts from kai:**
+
+| host | result |
+|---|---|
+| kai | `kdash-pub 0.1.0-0ea8e7c (2026-09-23)`, `check` = 0 |
+| kubs0 | `kdash-pub 0.1.0-0ea8e7c (2026-09-23)`, `check` = 0 |
+| cleo | installer: sha256 ok, confirmed `kdash-pub 0.1.0-0ea8e7c (2026-09-23)` |
+| komarchy | **skipped**. The recipe's probe from kai got no answer, and a direct `ssh komarchy` from kai timed out. It is still on its previous build until `just deploy-komarchy` runs with the lid open |
+| kimac | **not deployed, by design.** The first kimac install belongs to slice 6 (korg:3142), which exercises knarr WI 3140's Mach-O acceptance |
+
+**What this sprint delivered is live:** the store's `latest` carries
+`kdash-pub-arm64-darwin`, which is the file slice 6's knarr deploy will fetch
+for kimac.
