@@ -22,7 +22,7 @@
 # Why the wake is shaped like this (CD-13, sprint 017; evidence in k-homelab
 # WI 3123 and kdashdata WI 3139): a magic packet wakes kimac within a second,
 # but into a DARK wake that falls back to sleep ~28 s later. So, in order:
-#   1. send the packet
+#   1. send the packet, and give it a few seconds alone (PROBE_DELAY)
 #   2. ssh with a retry loop and a long ConnectTimeout
 #   3. `caffeinate -u -t 2` on the first answer -- declares user activity,
 #      which promotes the dark wake to a full one
@@ -32,7 +32,7 @@
 # Everything local (bundle, vendor) is prepared BEFORE the packet goes out, so
 # the woken window is spent building rather than waiting on kai.
 #
-# Overridable: KIMAC_HOST KIMAC_MAC KIMAC_BCAST WAKE_TIMEOUT
+# Overridable: KIMAC_HOST KIMAC_MAC KIMAC_BCAST WAKE_TIMEOUT PROBE_DELAY
 set -euo pipefail
 
 version="${1:?usage: build-darwin.sh <version> <outdir>}"
@@ -76,7 +76,14 @@ for i in range(3):
     if i < 2:
         time.sleep(1)
 PY
-say "sent magic packets for $mac to $bcast; waiting up to ${wake_timeout}s for $host"
+say "sent magic packets for $mac to $bcast at $(date '+%T %Z'); waiting up to ${wake_timeout}s for $host"
+# Give the packet the first word. An ssh SYN sent in the same instant also wakes
+# a sleeping Mac (pmset logs it as `Enet.Service`), and when the two race, the
+# ssh often wins. The Mac still wakes, but the packet has then woken nothing.
+# That is not what it's for: it is here for the Mac an ssh cannot reach.
+# Measured 2026-09-23 22:17: a probe with no delay logged Enet.Service; the
+# WoL harness waited before probing and logged Enet.MagicPacket at +1 s.
+sleep "${PROBE_DELAY:-5}"
 
 # -- 2 + 3. ssh until it answers, and the answer IS the full-wake -----------
 # A failure that says the host answered but refused us is not absence: stop
