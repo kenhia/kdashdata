@@ -174,6 +174,54 @@ exercised. Whether the HID event is a person at the Mac or the Bluetooth
 peripherals firing on sleep is not something this leg can tell, and it is not
 this leg's to change. Parked for a ruling; see the proposal thread.
 
+### Rerun with Ken hands-off (comment 3000): the hold holds, but the packet wakes nothing
+
+It was Ken at the Mac. The rerun used a fresh version, `0.1.0-b425da3`, from
+an input commit to the `Cargo.toml` profile comment. linux + windows were
+published first with kimac pointed away (the advisory path again). The Mac's
+build cache was cleared before each sleep.
+
+**Run 4:** `sleepnow` at 22:16:36, then 30 s of quiet, then
+`just publish-darwin 0.1.0-b425da3`. Darwin was added, `SHA256SUMS` covers 3,
+`latest` did not move, and it exited 0 in 22 s. In kimac's log:
+- `Sleep` at 22:16:41;
+- an **unexplained** `DarkWake … Enet.Service` at 22:16:54, which was not
+  this leg's traffic;
+- `Maintenance Sleep` at 22:17:07;
+- then `DarkWake … Enet.Service/HID Activity` at 22:17:09, and
+  `DarkWake to FullWake … due to HID Activity` (the `caffeinate -u`);
+- PreventSystemSleep 22:17:12–22:17:27, `ClientDied` at build end.
+
+The script probed ssh at the same instant it sent the packet, so the two
+raced. That was fixed: `PROBE_DELAY` (5 s) now gives the packet the first
+word.
+
+**Run 5:** the wake-and-hold path alone, `scripts/build-darwin.sh
+0.1.0-b425da3`, with no upload, since the version already carries darwin.
+`sleepnow` at 22:18:15, then 40 s of quiet.
+
+| time | kimac `pmset -g log` |
+|---|---|
+| 22:18:20 | `Sleep` (Software Sleep) |
+| 22:18:41 | `DarkWake … Enet.Service`: not this leg's traffic |
+| 22:18:54 | `Sleep` (Maintenance Sleep) |
+| 22:18:58 | **packet sent**, then 5 s alone |
+| 22:19:03 | `DarkWake … Enet.Service`: the first ssh probe |
+| 22:19:13 | `DarkWake to FullWake … due to HID Activity` (`caffeinate -u`) |
+| 22:19:16–22:19:30 | PreventSystemSleep, `ClientDied` at build end; exit 0 |
+
+Against comment 3000's three criteria:
+- **A `Sleep` entry before the packet:** passes.
+- **The `-is` hold covers the whole build:** passes. The ssh session never
+  dropped, and `-u` turned the dark wake into a full wake both times.
+- **`Enet.MagicPacket` as the wake reason:** **fails**, twice. In run 5 the
+  packet had 5 s alone, and nothing woke the Mac until the ssh SYN did. The
+  morning WoL test woke at +1 s, but that Mac had been in deep idle for 597 s.
+  Here each packet landed seconds after a `Maintenance Sleep`, in a Mac that
+  some other host's traffic keeps dark-waking about every 20 s.
+
+Parked for a ruling (proposal thread).
+
 ## Repaired in passing
 
 - `publishers/rust/src/auth.rs`: `PER_HOST_FILE`'s doc said the file is
