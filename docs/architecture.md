@@ -506,8 +506,14 @@ but must never be what the fleet resolves.
 | host | path | installed by |
 |---|---|---|
 | kai, kubs0 | `/usr/local/bin/kdash-pub` | `knarr deploy` (`just deploy`) |
-| cleo | `C:\tools\bin\kdash-pub.exe` | `scripts/install-cleo.ps1` (`just deploy-cleo`) |
-| komarchy | `/usr/local/bin/kdash-pub` | `knarr deploy` (`just deploy-komarchy`) |
+| cleo | `C:\tools\bin\kdash-pub.exe` | `knarr deploy --host-windows` (`just deploy`) |
+| komarchy | `/usr/local/bin/kdash-pub` | `knarr deploy --host-optional` (`just deploy`) |
+
+Until sprint 018 cleo and komarchy each had a stand-in — a store-resolving
+`scripts/install-cleo.ps1` behind `just deploy-cleo`, and `just deploy-komarchy`
+behind an ssh probe in `just deploy-all` — because knarr could reach neither.
+knarr 0.5 grew both features (knarr WI 1763 and WI 2680), so the stand-ins are
+gone and the four hosts are one `just deploy`.
 
 CD-12 is the reason. A Claude Code hook context inherits neither an
 interactive shell's environment nor its `PATH`, so the hook scripts that will
@@ -519,12 +525,12 @@ during the CD-7 program: it would bypass the store, so a `just publish` +
 `just deploy` upgrade would never reach the hooks, recreating stale-binary
 drift in a per-user form invisible to knarr and kmuster.
 
-**Verify by naming the hosts.** `just deploy-all` covers all four, and the
+**Verify by naming the hosts.** `just deploy` covers all four, and the
 verification names kai, kubs0, cleo and komarchy explicitly rather than
 iterating whatever the runner reached — that is precisely how kpolice sprint
 002 left cleo on a commit that no longer existed for a whole sprint.
 
-### komarchy is a publisher host that is normally asleep (sprint 011)
+### komarchy is a publisher host that is normally asleep (sprint 011; folded into `deploy`, sprint 018)
 
 komarchy is the fourth host and it arrived late, having been missed entirely by
 the CD-7 program: it ran `0.1.0-7fe2c87` from 2026-09-02 to 2026-09-15 while
@@ -559,6 +565,18 @@ This is a recipe standing in for a knarr feature, the same shape as
 `scripts/install-cleo.ps1`. **korg 2680** asks knarr for an allowed-absent
 host; when it lands, komarchy folds back into `deploy`'s list and both the
 extra recipe and the probe go away.
+
+**Sprint 018: it landed, and they have.** knarr's `--host-optional komarchy`
+is the probe moved to where it belongs. An unanswering host is reported
+`skipped` with a reason, the aggregate stays `ok: true`, and the run exits 0.
+A host that answers and then fails is an ordinary failure. A host key or auth
+refusal is a failure too, not an excused absence, because knarr allowlists
+only measured network-level absence. So asleep and broken stay apart exactly as
+the probe kept them. komarchy is in `just deploy`'s one call, and the everyday
+deploy prints a SKIPPED line on the days the lid is shut. That was ruled the
+intended end state (korg WI 3094, comment 2910): a sleeping laptop named is
+information, not noise. If the line turns out to annoy rather than inform,
+that item is where to say so.
 
 ### darwin-arm64 is built natively on kimac, which is woken rather than skipped (sprint 017)
 
@@ -611,8 +629,8 @@ probe's own traffic (`Enet.Service`) did the waking. "Wake, then build" does
 not care which of the two woke the Mac, and the overseer ruled it that way
 (korg:3146 comment 3003).
 
-**Three outcomes, kept apart**, in the same shape as `deploy-all`'s komarchy
-probe:
+**Three outcomes, kept apart**, in the same shape as the komarchy deploy's
+asleep-versus-broken split:
 
 - **Could not be woken** (exit 3 from the script): `publish` ships linux and
   windows, prints `darwin: skipped, kimac unreachable`, and names the
@@ -1413,6 +1431,111 @@ never sold as a probe. Every path that reaches Redis (`get`, `scan`,
 and so authenticates for real. There is no false claim to fix; adding a probe
 would be inventing one. The docstring now says `connect()` opens no socket,
 which is the part that was overstated.
+
+## CD-26 — korg data reaches a dashboard as a `kdash:korg:*` feed on central, written by a publisher that reads korg's rollups (sprint 018)
+
+korg WI 1803, filed by the overseer of program korg:1785 after kstudiodash 005.
+kstudiodash's board keeps its lower-left blank for kfdc's **Rate of Fire**, and
+**Awaiting Ken** wants the same source. Both are **korg data**. korg is
+HTTP+JSON on kubsdb, and until now nothing in this registry carried any of it.
+kstudiodash's rule since its hold comment (korg:1728) is *everything through
+libkdash*, so the widget could not honestly be scheduled until this repo, as
+contract owner, said how the data gets there. The decision is recorded here so
+that whoever builds the widget does not settle it by default.
+
+**The decision: option 1.** A publisher reads korg's own rollups over korg's
+public REST interface and writes a `kdash:korg:*` family to the **central**
+Redis. Dashboards read it through typed libkdash readers, like every other
+feed. This is CD-1 applied without exception: shared, cross-dashboard data
+lives on central, publishers push, and dashboards pull. The feed is shared from
+day one. kstudiodash wants it, and korg-dash is named in its own
+backlog as the glanceable korg summary feed for kdeskdash (korg-dash WI 618).
+One feed gives both panels one answer.
+
+**Option 3, a dashboard calling korg's HTTP API directly, is rejected, and
+the rejection is on the record rather than left to drift.** It is the fastest
+path, and it would be the first crack in the one-way-through-the-library rule
+that the whole program was built to defend. Four reasons, each enough on its
+own:
+
+- **Every panel becomes an HTTP client of the system of record.** Each one
+  polls korg on its own cadence, grows its own JSON parsing of korg's shapes,
+  and breaks separately when korg's API evolves. This contract exists so that
+  a producer's shape change is absorbed in one place.
+- **It bypasses CD-6.** A dashboard's degrade-don't-block behaviour is built
+  around one dependency, the central Redis, with freshness from `ts`. A second
+  live dependency with its own failure modes (TLS, DNS, a korg restart, a
+  kubsdb reboot) is a second degradation story in every panel.
+- **Two dashboards would compute two answers.** kfdc's Rate of Fire totals
+  line exists to enforce *no two figures may imply a comparison they do not
+  support* (kfdc sprint 011). A panel that derives its own figures from raw
+  rows is where that rule quietly stops holding.
+- **It is invisible to this repo.** A feed nobody registered is a feed nobody
+  can find, which is the failure `check-docs` was built to stop.
+
+**Option 2, an HTTP client inside libkdash, loses for the reasons CD-9
+already gave.** The library has two dependencies and refused a third
+(libcurl). It speaks khlenv's HTTP by hand only because that is one
+unencrypted GET. korg's API is not that small, it is TLS on the tailnet, and
+its shapes are korg's to evolve. Option 2 would put korg's release cadence
+inside a C library linked by three dashboards on two architectures, where every
+korg shape change becomes a libkdash release and a rebuild of every panel.
+Option 1 absorbs the same change in one publisher, with no C in the loop. It
+would also still leave every panel an HTTP client of korg, with the fan-out
+cost of option 3, only better hidden.
+
+### The feed (provisional; the schema lands with its first writer)
+
+Two keys, one per korg read, so a key's `ts` always names **one consistent
+snapshot**:
+
+| Key | Source read | Pattern | What it carries |
+|---|---|---|---|
+| `kdash:korg:board` | `GET /api/board` (`get_board`) | latest-value, ts-owned | kfdc's panels, in kfdc's words: `fire_missions` (active proposals: title, project, covered counts), `on_deck` (queue depth), `commanders_call` (the awaiting lane: title, kind, age), `operations` (live programs: title, status, slice counts). Each list is capped, and **each cap names its overflow count**. kfdc's "nothing disappears silently" applies to a feed too. |
+| `kdash:korg:rate_of_fire` | `GET /api/work-items/flow?days=N` (`work_item_flow`) | latest-value, ts-owned | korg's flow series **as korg computes it**: `{day, added, closed, backlog, added_durable, closed_durable}` per day, plus `backlog_before`, `durable_after_days`, `timezone`. |
+
+The vocabulary is **kfdc's, not the dashboard's**, because kfdc owns the
+board language (Fire Missions, On Deck, Commander's Call, Operations, Rate of
+Fire) and a second dialect is how the two surfaces would drift apart.
+kstudiodash's **Awaiting Ken** widget is a rendering of `commanders_call`. The
+widget keeps its own title, and the feed keeps kfdc's name.
+
+**The publisher summarises and never re-derives.** The durable split,
+`backlog`, and which rows are "awaiting" are korg's computations. The
+publisher copies them. It never recomputes them from raw work items, so the
+feed can never disagree with kfdc. The dashboard owns only presentation
+(CD-10's line, unchanged).
+
+**Both keys are ts-owned, not expiring.** A stale board is still the last
+true board. The reader owns the window, and a panel shows age rather than
+blanking (CD-6).
+
+### Stated defaults — decided when the publisher is built, not here
+
+- **Cadence:** `board` every **60 s**, and `rate_of_fire` every **5 min**.
+  The flow series is day-granular, and only today's row moves within a day.
+  Suggested reader windows are 180 s and 15 min.
+- **Where it runs:** a systemd user timer on **kubs0**. kubs0 is always on and
+  already a `kdash-pub` host (CD-13) with the CD-12 env file. Running on
+  kubsdb, next to korg, would make kubsdb a fifth publisher host for no gain,
+  because the read is one HTTPS call either way.
+- **Which repo owns it:** **korg-dash**, whose stated purpose is the glanceable
+  korg summary feed (WI 618). It is a korg *reader* through korg's public
+  interface. korg itself gains no Redis dependency and the system of record
+  stays unaware of dashboards. It writes through `kdash-pub`, and `kdash` is
+  already in both wrappers' allowlists, so no publisher change is needed.
+- **Finding korg:** CD-4 governs Redis endpoints only. The publisher finds
+  korg the way korg's other clients do, and that is not this contract's
+  concern.
+
+Any of the three defaults may change when the work is planned. What may not
+change without amending this CD is the direction: publisher → central →
+libkdash → panel, with no panel speaking to korg.
+
+**Nothing is built by this decision.** No schema, no reader, no writer. The
+registry row is marked provisional, and the schema lands with the first
+writer, validated by its own examples (CD-24). The kstudiodash consumer work
+and the publisher get planned when someone picks them up.
 
 ## Open questions
 

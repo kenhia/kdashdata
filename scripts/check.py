@@ -240,14 +240,16 @@ def main() -> int:
 
     check_namespaces(registry_text, errors)
 
-    # scripts/install-cleo.ps1 runs under Windows PowerShell 5.1, which reads a
+    # A .ps1 cleo runs executes under Windows PowerShell 5.1, which reads a
     # BOM-less .ps1 as the system ANSI codepage rather than UTF-8. A UTF-8
     # em-dash then arrives as mojibake, and one sitting inside a double-quoted
     # string terminates that string early — so the file fails to parse with
     # errors pointing dozens of lines away from the actual character. The rest
     # of this repo uses em-dashes freely, which is exactly why an editor (or an
     # agent) will eventually put one here. Cheaper to catch at `just check`
-    # than on cleo.
+    # than on cleo. The file this was written for, scripts/install-cleo.ps1,
+    # was retired in sprint 018 when knarr learned --host-windows; the gate
+    # stays for the next one, and finds nothing to check until then.
     for path in repo_files(".ps1"):
         raw = path.read_bytes()
         for lineno, line in enumerate(raw.split(b"\n"), start=1):

@@ -135,8 +135,17 @@ and holds it awake under `caffeinate` for the build; it gets a git bundle and
 a vendored crate tree, so it needs no checkout and no khlenv credential. If
 kimac cannot be woken, linux and windows still ship, and `publish-darwin`
 catches darwin up without moving `latest` (CD-13 amended).
+Most recently sprint 018 (korg:3233, a low-hanging-fruit slice of korg:3245)
+folded the knarr stand-ins back: `scripts/install-cleo.ps1`, `deploy-cleo`,
+`deploy-komarchy` and `deploy-all` are gone, and one `just deploy` reaches all
+four publisher hosts through knarr's `--host-windows cleo` and
+`--host-optional komarchy`, which prints SKIPPED for a shut laptop and still
+exits 0. The same sprint listed kpidash 023's optional `availability:
+"intermittent"` in the client-health schema, and it recorded CD-26: korg data
+reaches a dashboard as a provisional `kdash:korg:*` feed on central, written by
+a publisher that reads korg's rollups, and no panel ever calls korg directly.
 See `docs/architecture.md` (decisions
-CD-1…CD-25, open questions OQ-n), `contracts/rules.md`,
+CD-1…CD-26, open questions OQ-n), `contracts/rules.md`,
 `contracts/registry.md`, `include/kdash/kdash.h` for the consumer API, and
 `publishers/README.md` for the publish side and the version-and-skip rule.
 Next: the rest of program
