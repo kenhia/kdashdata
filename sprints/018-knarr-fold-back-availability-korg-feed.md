@@ -99,3 +99,11 @@ Cross-project plan: kdashdata is not listed in the plan index, so none applies.
   asleep host. That needs a struct change here and a rendering choice there.
 - Alignment with the kpolice sibling (WI 3092). That leg was still on its
   pre-change justfile when this one was written.
+
+## Deployed
+
+Deployed 2026-09-25 12:14 PDT from merged `main` (`78e570f`, PR #18) by `.sprint-deploy`, with each step run from kai:
+
+- **`just publish`**: a deliberate no-op. It printed `nothing to publish: 0.1.0-0ea8e7c already in the store`, because this sprint changed no publisher input.
+- **`just deploy`**: this was the new recipe's first live run, and the first `--host-windows` for kdash-pub. It exited 0 with aggregate `ok: true` and printed `deployed kdash-pub 0.1.0-0ea8e7c to kai, kubs0, cleo, komarchy`. knarr's confirm step read `kdash-pub 0.1.0-0ea8e7c (2026-09-23)` on all four hosts. komarchy was awake, so it installed rather than skipped.
+- **cleo, checked separately over ssh from kai.** `C:\tools\bin\kdash-pub.exe --version` prints `0.1.0-0ea8e7c`. The file was written at 12:12:27. `kdash-pub.exe.prev` holds the 09-23 install that `install-cleo.ps1` put there. The installed SHA256 `b91e239a…ab1f2f` equals the store's `SHA256SUMS` entry for `kdash-pub-x86_64-windows.exe`.
