@@ -18,15 +18,16 @@
 # with no publisher change, and an unconditional publish would have cut a new
 # version and reinstalled it on four hosts for nothing.
 #
-# `deploy-all` runs UNCONDITIONALLY, including when publish skipped. A host can
+# `deploy` runs UNCONDITIONALLY, including when publish skipped. A host can
 # be behind the store's `latest` without this sprint changing anything —
 # komarchy was ten days behind in sprint 011 — so "publish no-op'd, therefore
 # skip the deploy" is not right. It installs `latest`, which is unchanged in
 # that case, and knarr's confirm step still reports what each host is running.
 #
-# `deploy-all` rather than `deploy`: all four publisher hosts, because the
-# failure this exists to prevent is deploying MOST of them. komarchy is asleep
-# most of the time and its skip is a NORMAL outcome — the recipe probes it from
-# this host, prints the skip, and exits 0.
+# `deploy` covers all four publisher hosts, because the failure this exists to
+# prevent is deploying MOST of them. Until sprint 018 that took a separate
+# `deploy-all`; knarr 0.5 grew `--host-windows` and `--host-optional`, so
+# `deploy` itself now reaches cleo and komarchy. komarchy is asleep most of the
+# time and its skip is a NORMAL outcome — knarr names it SKIPPED and exits 0.
 recipe: publish
-recipe: deploy-all
+recipe: deploy

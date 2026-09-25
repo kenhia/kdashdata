@@ -23,6 +23,10 @@
     "os_name": {
       "type": "string",
       "description": "os-release PRETTY_NAME, fallback platform.system()+release; optional"
+    },
+    "availability": {
+      "enum": ["intermittent"],
+      "description": "Optional (kpidash sprint 023). A host that sleeps by design sends \"intermittent\", so a dashboard can draw its expired key as asleep rather than offline. Absent means always-on, and every pre-023 payload is unchanged. A reader keeps the last value it saw past the key's expiry, and treats any other value as absent. Listed in kdashdata sprint 018 (WI 3179)."
     }
   },
   "examples": [
@@ -35,6 +39,12 @@
     {
       "hostname": "cleo",
       "last_seen_ts": 1758500012.4
+    },
+    {
+      "hostname": "kimac",
+      "last_seen_ts": 1758500012.4,
+      "os_name": "macOS 27",
+      "availability": "intermittent"
     }
   ],
   "x-counterexamples": [
@@ -50,6 +60,14 @@
         "hostname": "kai"
       },
       "why": "`last_seen_ts` is the whole point of a health key — without it the TTL is the only liveness signal and the payload says nothing"
+    },
+    {
+      "record": {
+        "hostname": "komarchy",
+        "last_seen_ts": 1758500012.4,
+        "availability": "sometimes"
+      },
+      "why": "`intermittent` is the only value; kpidash reads anything else as absent, so a typo draws a sleeping host red — the contract names the mistake instead of letting it pass as always-on"
     }
   ]
 }

@@ -153,10 +153,9 @@ just published <v>  # is <v> already in the store? 0 = yes, 1 = no, 2 = unknown
 just publish        # linux + windows here, darwin-arm64 on a woken kimac — ONE version
 just publish --dry-run
 just publish-darwin <v>  # catch-up: add darwin to an existing version, latest unmoved
-just deploy         # knarr -> /usr/local/bin/kdash-pub on kai and kubs0
-just deploy-cleo    # store-resolving install -> C:\tools\bin\kdash-pub.exe
-just deploy-komarchy  # the laptop — knarr, but only with the lid open
-just deploy-all     # all four publisher hosts, which is the point
+just deploy         # knarr -> all four publisher hosts: kai, kubs0, cleo (Windows),
+                    # and komarchy, which is SKIPPED by name when the lid is shut
+just deploy --dry-run
 ```
 
 `publish` refuses a dirty tree and refuses a stamp that names no commit, and

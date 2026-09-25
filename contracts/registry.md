@@ -62,6 +62,13 @@ migrated.
 | `kpidash:apttemps:{zone}` | latest-value, ts-owned | apt-temps publisher | none | [apttemps](schemas/kpidash-apttemps.schema.json) |
 
 Notes: key absence (TTL expired) = source offline for the expiring three.
+**`health` may carry `availability: "intermittent"`** (kpidash sprint 023,
+listed here in sprint 018): a host that sleeps by design says so, and a reader
+that remembers the last value past expiry can draw that host grey *asleep*
+instead of red *offline*. Optional and additive — absent means always-on, and
+no pre-023 payload changed. kpidash's `docs/CLIENT-PROTOCOL.md` §2 owns the
+semantics. libkdash's `kdash_health_t` does not surface the field yet, so a C
+consumer sees such a host as offline like any other.
 `services` keys are exactly 4 segments, `_` = "no host"; non-conforming keys
 are ignored. `services`/`apttemps` staleness is reader-owned via `ts`, and **the window
 is the consumer's, per service** — not a number this contract fixes. kpidash's
@@ -365,6 +372,24 @@ only, so a panel wanting a sparkline either keeps its own ring or asks
 klaude-top to start emitting them. Capped at 24 either way — an uncapped array
 in a value republished every two seconds is how a Redis fills up quietly.
 
+### Provisional: `kdash:korg:*` — korg data for the panels (CD-26, sprint 018)
+
+**Decided, not built.** No key below is written yet, and neither has a schema
+or a reader. The rows exist so the next person to build a korg widget finds
+the decision before reaching for korg's HTTP API. A panel **never** calls korg
+directly (CD-26 rejects that option on the record).
+
+| Key | Type / pattern | Writer (cadence) | TTL | Schema |
+|---|---|---|---|---|
+| `kdash:korg:board` | latest-value, ts-owned | korg-side publisher reading `GET /api/board` (default 60 s) | none | — provisional, lands with the writer |
+| `kdash:korg:rate_of_fire` | latest-value, ts-owned | the same publisher reading `GET /api/work-items/flow` (default 5 min) | none | — provisional, lands with the writer |
+
+The vocabulary is kfdc's (Fire Missions, On Deck, Commander's Call,
+Operations, Rate of Fire). kstudiodash's *Awaiting Ken* is a rendering of
+`board`'s `commanders_call`. The publisher copies korg's computations and never
+re-derives them. Its host, repo and cadence are stated defaults in CD-26,
+settled when it is planned.
+
 ## Family: ghcp (central, live)
 
 Owner: kdeskdash (`publisher/ghcp-pub.sh`, shipped in the same package-store
@@ -561,6 +586,7 @@ written down where the consumer slice will read them (CD-8):
 
 - `kdash:<family>:<…>` — the namespace for new shared feeds (rules.md).
   `selftest`, `panel`, `panelmode`, `panelshot`, `stale` and `agentact` are
-  the families in it so far.
+  the families in it so far, and `korg` is decided but not yet written
+  (CD-26).
 - `ghcp:*` — outside that namespace by a named exception (CD-21), not by
   omission. New, frozen from day one, and not a migration candidate.

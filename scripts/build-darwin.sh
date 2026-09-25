@@ -13,11 +13,11 @@
 #   3  kimac could not be woken: NOTHING was built -- an advisory, not a fault
 #   1  anything else: kimac answered and the build did not complete
 #
-# Exit 3 and exit 1 are kept apart on purpose, the way `deploy-all`'s komarchy
-# probe keeps asleep and broken apart: a Mac that never answered is its resting
-# state, while a Mac that answered and then failed -- including by dropping the
-# ssh session mid-build because it went back to sleep -- is a fault to report,
-# never a quiet skip.
+# Exit 3 and exit 1 are kept apart on purpose, the way knarr's
+# `--host-optional` keeps a sleeping komarchy and a broken one apart: a Mac
+# that never answered is its resting state, while a Mac that answered and
+# then failed -- including by dropping the ssh session mid-build because it
+# went back to sleep -- is a fault to report, never a quiet skip.
 #
 # Why the wake is shaped like this (CD-13, sprint 017; evidence in k-homelab
 # WI 3123 and kdashdata WI 3139): a magic packet wakes a deep-idle kimac within

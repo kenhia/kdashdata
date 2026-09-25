@@ -323,104 +323,31 @@ publish-darwin version:
     scp "$darwin"/kdash-pub-* kubsdb:"$d/"
     ssh -n kubsdb "kpkg artifact --no-latest kdash-pub {{version}} $d/* && rm -rf $d"
 
-# Deploy the store's latest to the Linux publisher hosts.
+# Deploy the store's latest to every publisher host.
 #
 # `kdash-pub` is a single static binary at a fixed absolute path, which is
 # exactly knarr's default "file" shape — no --dest, no --unit, no --shape.
 # The path is a CONTRACT, not a convenience: kdeskdash's claude-pub.sh execs
 # `/usr/local/bin/kdash-pub` directly, because a hook context's PATH is not
-# the interactive one.
+# the interactive one (CD-13).
 #
-# Pass --version to pin a build, or --dry-run to see the plan.
-#
-# cleo is NOT here — knarr installs over ssh with `install -m 0755`, which is
-# not the Windows shape. It is a separate recipe, `just deploy-cleo`.
-#
-# komarchy is not here either, for a different reason — see `deploy-komarchy`.
-# `just deploy-all` runs all four.
-[doc("Deploy the store's latest to the always-on Linux publisher hosts (kai, kubs0)")]
-deploy *ARGS:
-    knarr deploy kdash-pub --host kai,kubs0 {{ARGS}}
-
-# Install on komarchy, the laptop.
-#
-# komarchy is a publisher host like the others — k-homelab's claude-hooks
-# recipe calls `kdash-pub` its unmanaged prerequisite, "installed by
-# `knarr deploy kdash-pub`, because the binary belongs to the repo that owns
-# it". What makes it its own recipe is that it is normally ASLEEP:
-# `availability: intermittent` in k-homelab, lid closed being its resting
-# state, and `No route to host` the expected answer rather than a fault.
-#
-# knarr cannot express that today, and it is not for want of the hard part.
-# A fleet deploy is already not a transaction, so an unreachable host does not
-# cost the others their upgrade, and the aggregate NAMES it rather than
-# quietly dropping it. What is missing is a host that may be absent without
-# costing the RUN its exit code: measured 2026-09-15, one unreachable host in
-# the list gives `ok: false` and exit 3 while every reachable host installs
-# cleanly. Put komarchy in `deploy`'s list and the everyday `just deploy`
-# fails on most days for a reason that is not a problem — which teaches the
-# operator to stop reading its exit code.
-#
-# korg 2680 asks knarr for that host. When it lands, komarchy folds back into
-# `deploy` above and this recipe and `deploy-all`'s probe both go away.
-#
-# Run it with the lid open. Failure here is a plain failure on purpose: asking
-# for komarchy explicitly means you believe it is awake.
-[doc("Deploy the store's latest to komarchy (the laptop — needs the lid open)")]
-deploy-komarchy *ARGS:
-    knarr deploy kdash-pub --host komarchy {{ARGS}}
-
-# Install on cleo from the store.
-#
-# knarr cannot do this — its install step is `install -m 0755` over ssh — so
-# `scripts/install-cleo.ps1` stands in for a knarr feature. Read that file's
-# header before extending it; the ceiling is deliberate, and knarr WI 1763
-# tracks retiring both copies.
-#
-# The script is COPIED and then run, never inlined into a quoted ssh command:
-# cleo's ssh session is PowerShell, so the local shell, the ssh argument and
-# the remote shell would each get a say in how the source is parsed, and it
-# fails in ways that look like content errors.
-#
-# Pass --version to pin a build, e.g. `just deploy-cleo -Version 0.1.0-abc1234`.
-[doc("Deploy the store's latest to cleo (Windows)")]
-deploy-cleo *ARGS:
-    #!/usr/bin/env bash
-    set -euo pipefail
-    remote='C:/Users/kenhi/AppData/Local/Temp/install-kdash-pub.ps1'
-    scp -q scripts/install-cleo.ps1 "cleo:$remote"
-    ssh -n cleo "powershell -NoProfile -ExecutionPolicy Bypass -File $remote {{ARGS}}"
-    ssh -n cleo "cmd /c del \"${remote//\//\\}\"" || true
-
-# Deploy to every claude-publisher host.
-#
-# All four in one recipe, because the failure this exists to prevent is
-# deploying *most* of them. kpolice sprint 002 redeployed the two hosts knarr
-# reaches and left cleo on a commit that no longer existed — and the
-# verification could not catch it, because it only iterated the hosts knarr
+# All four publisher hosts in one call, because the failure this exists to
+# prevent is deploying *most* of them. kpolice sprint 002 redeployed the two
+# hosts knarr reached and left cleo on a commit that no longer existed — and
+# the verification could not catch it, because it only iterated the hosts it
 # had touched. Never verify by iterating what you deployed; name the hosts.
 #
-# komarchy is named here for exactly that reason, and it is the one host this
-# recipe is allowed to finish without. It runs LAST and behind an explicit
-# reachability probe, which is what keeps "asleep" and "broken" apart: if the
-# probe answers, the deploy runs and any failure it hits is fatal like every
-# other host's; if it does not answer, the skip is PRINTED, because a host
-# quietly missing from a fleet deploy is the whole thing this recipe exists to
-# stop. The probe runs from here, the host doing the deploying — a
-# reachability check run anywhere else measures that machine's route, not
-# komarchy's availability.
+# - kai, kubs0: ordinary knarr hosts.
+# - cleo: `--host-windows` — its ssh session is PowerShell, and knarr installs
+#   to `C:\tools\bin\kdash-pub.exe` from here, verifying the store's SHA256
+#   and keeping the old binary as `.prev` (knarr WI 1763).
+# - komarchy: `--host-optional` — the laptop, asleep most of the time. If it
+#   does not answer it is SKIPPED by name, and the run still exits 0; if it
+#   answers and then fails, that is an ordinary failure (knarr WI 2680). A
+#   host key or auth refusal is a failure too, not an excused absence. The
+#   daily SKIPPED line is intended (ruled on korg WI 3094, comment 2910).
 #
-# This is a recipe standing in for a knarr feature (korg 2680), the same shape
-# as scripts/install-cleo.ps1. Both go away when knarr grows the real thing.
-[doc("Deploy to all four publisher hosts: kai, kubs0 (knarr), cleo (Windows), komarchy (if awake)")]
-deploy-all *ARGS:
-    #!/usr/bin/env bash
-    set -euo pipefail
-    just deploy {{ARGS}}
-    just deploy-cleo
-    if ssh -o BatchMode=yes -o ConnectTimeout=5 -n komarchy true 2>/dev/null; then
-        just deploy-komarchy {{ARGS}}
-    else
-        echo "deploy-all: komarchy did not answer — SKIPPED (lid closed is its normal state)" >&2
-        echo "deploy-all: run 'just deploy-komarchy' with the lid open to finish the rollout" >&2
-    fi
+# Pass --version to pin a build, or --dry-run to see the plan.
+[doc("Deploy the store's latest to kai, kubs0, cleo (Windows) and komarchy (skipped if asleep)")]
+deploy *ARGS:
+    knarr deploy kdash-pub --host kai,kubs0 --host-windows cleo --host-optional komarchy {{ARGS}}
