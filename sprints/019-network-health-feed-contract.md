@@ -106,3 +106,15 @@ kpidash vendors this repo as the `lib/kdashdata` submodule, currently at
 `bb29b69` (sprint 009). Bump it to this sprint's merge commit on `main` so
 the schema is in-tree. Nothing in the C library changed, so the bump moves
 no consumer-facing API.
+
+## Deployed
+
+2026-10-26 18:17 PDT. Merge `6a928e3` (PR #19), shipped from kai under the overseer's clearance (korg:4065 comment 3990).
+
+- **`just publish`**: a deliberate no-op. It printed `nothing to publish: 0.1.0-0ea8e7c already in the store`. This is a contract-only sprint, and the binary's inputs are unchanged since `0ea8e7c`.
+- **`just deploy`**: the first run of the widened host list, exit 0.
+  - Installed and confirmed (`kdash-pub --version`): `0.1.0-0ea8e7c` on kai, kubs0, cleo, kimac and thrall.
+  - Skipped by name as allowed-absent:
+    - komarchy and kbook2 (ssh connect timed out)
+    - thrall-arch (name did not resolve; the dual-boot desktop is up as thrall)
+- **Nothing to verify live for the contract.** `kdash:net:*` has no writer yet; kpidash slice 3 (korg:4066) is the first.
