@@ -1,0 +1,297 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/kenhia/kdashdata/contracts/schemas/kdash-net.schema.json",
+  "title": "kdash network health",
+  "description": "Payload of kdash:net:{host} — latest-value EXPIRING (STRING JSON, SET .. EX), exactly 3 segments, on central (KDASH_CENTRAL_REDIS). One host's view of the 10G fabric and its own path out of it, as that host measured it: which leg is carrying its traffic, how often that link has dropped, and whether it can reach the UDM, its fabric peers and the Internet. Contract v1 (sprint 019, CD-27). The consumer is kpidash's 2x1 network-health card ('B · Rail', korg:4059), and every field below is one the card draws — add a field only when a card draws it. Each host probes its OWN path; that is what makes the fabric-uplink failure (peers reachable, UDM not) visible, and a central prober would miss it. Freshness is the host-card convention, deliberately: written every ~5 s with EX 15 (3x cadence, rules.md), so key ABSENCE means the publisher is gone and the card's column goes stale exactly as a host card goes red — a reader keeps the last value it saw and renders it hatched with `STALE · now - ts` rather than as healthy. `ts` is required beside the TTL so that age is computable. Field names are pinned: a rename, retype or removed field is a breaking change and lands as kdash:net:v2:{host} (rules.md Versioning), never in place, so a producer change cannot silently blank the card. Producers: kpidash-client (Linux) and kpidash-client-win (cleo), each writing the key directly over the connection that already writes kpidash:client:{host}:* — not through the wrappers. There is no fabric-level key: the panel derives uplink state (every host peers ∧ no host udm) from the per-host `reach` objects, so no two producers race for one key. Uplink load % is deliberately absent: no producer can attribute off-fabric traffic cheaply, so the card's UPLINK tile shows the 1G link up/down only.",
+  "type": "object",
+  "required": [
+    "leg",
+    "speed_mbps",
+    "bond",
+    "lfc",
+    "lfc_delta_24h",
+    "rx_errors",
+    "rx_errors_delta_24h",
+    "reach",
+    "rtt_ms",
+    "bytes_per_s",
+    "drops",
+    "ts"
+  ],
+  "additionalProperties": true,
+  "properties": {
+    "leg": {
+      "enum": ["10g", "5g", "1g", "down"],
+      "description": "The speed tier of the link carrying this host's traffic right now: the bond's currently active slave, or the single NIC on a host with no bond. The card colours by this (10g teal, 5g sapphire, 1g yellow, down red), so it is the producer's classification of `speed_mbps`, not a NIC name: >= 10000 is 10g, >= 5000 is 5g, any other negotiated link is 1g, and no active slave / no carrier is down. On a bonded host `1g` therefore means 'on the backup leg' (or a 10G NIC that negotiated down, which the card should flag the same way). Lowercase, closed: an unknown value distrusts the record."
+    },
+    "speed_mbps": {
+      "type": ["integer", "null"],
+      "minimum": 0,
+      "description": "Negotiated speed of that link in Mb/s, as the kernel (or Windows) reports it. null exactly when `leg` is `down` — a link with no carrier has no speed, and 0 would read as a number."
+    },
+    "bond": {
+      "type": "boolean",
+      "description": "Whether this host's fabric connection is a bond (active-backup, korg:1972). false on cleo, which has a single 5G NIC. The card's subtitle (`bond primary` / `single NIC` / `on 1G backup`) is derived from this and `leg`."
+    },
+    "lfc": {
+      "type": ["integer", "null"],
+      "minimum": 0,
+      "description": "Link Failure Count of the bond's PRIMARY (10G) slave, from /proc/net/bonding/<bond> — cumulative since that bond came up. The flap signal (korg:3949). The primary slave's count, not a sum across slaves: the backup leg's count says nothing about the 10G link the card is about. null when `bond` is false: a host with no bond has no such counter, and the card renders `—` rather than a misleading 0. Present-and-null, never absent, so a reader can tell 'no bond' from a producer that forgot the field (which fails `required`)."
+    },
+    "lfc_delta_24h": {
+      "type": ["integer", "null"],
+      "minimum": 0,
+      "description": "How much `lfc` rose over the trailing 24 h, as the producer measured it (the card's `(+Δ)`). A counter reset (bond re-created, reboot) is counted from the reset, never negative. null when `lfc` is null."
+    },
+    "rx_errors": {
+      "type": ["integer", "null"],
+      "minimum": 0,
+      "description": "Cumulative receive errors on the fabric NIC — the 10G slave on a bonded host (/sys/class/net/<if>/statistics/rx_errors), the single NIC on cleo. null when the producer could not read the counter this tick; a reader shows `—`, never 0."
+    },
+    "rx_errors_delta_24h": {
+      "type": ["integer", "null"],
+      "minimum": 0,
+      "description": "How much `rx_errors` rose over the trailing 24 h; counter resets counted from the reset. null when `rx_errors` is null."
+    },
+    "reach": {
+      "type": "object",
+      "required": ["udm", "peers", "wan"],
+      "additionalProperties": true,
+      "description": "Probe results FROM this host, each over its own path. The three pills on the card's column.",
+      "properties": {
+        "udm": {
+          "type": "boolean",
+          "description": "The UDM (the gateway, 192.168.1.1) answered."
+        },
+        "peers": {
+          "type": "boolean",
+          "description": "At least one other fabric host answered. 'At least one', not 'all': one peer being down must not paint every other host's column red, and what the card needs from this pill is 'the fabric is carrying my traffic'. Which peers are probed is the producer's configuration."
+        },
+        "wan": {
+          "type": "boolean",
+          "description": "The producer's Internet target answered."
+        }
+      }
+    },
+    "rtt_ms": {
+      "type": "object",
+      "required": ["udm", "wan"],
+      "additionalProperties": true,
+      "description": "Round-trip times of the same probes, in milliseconds. The panel's header tiles (UDM RTT, WAN RTT) are aggregates of these across hosts, derived on the panel.",
+      "properties": {
+        "udm": {
+          "type": ["number", "null"],
+          "minimum": 0,
+          "description": "RTT to the UDM. null exactly when `reach.udm` is false."
+        },
+        "wan": {
+          "type": ["number", "null"],
+          "minimum": 0,
+          "description": "RTT to the Internet target. null exactly when `reach.wan` is false."
+        }
+      }
+    },
+    "bytes_per_s": {
+      "type": "number",
+      "minimum": 0,
+      "description": "tx + rx bytes per second on the fabric NIC (the 10G slave; cleo's single NIC), averaged over the producer's poll interval. One sample per write; the 60-sample sparkline history is kept by the renderer, not the feed. A host on its 1G backup correctly shows near-zero here."
+    },
+    "drops": {
+      "type": "array",
+      "maxItems": 64,
+      "items": {
+        "type": "number",
+        "exclusiveMinimum": 0,
+        "maximum": 100000000000
+      },
+      "description": "Unix seconds of each link-down event on the fabric link within the last 3600 s, oldest first; [] when there were none. PRODUCER-side events, not a panel-side diff of `lfc` between polls: the panel restarts and would lose the history, and a diff of two polls cannot place a drop in time. On a bonded host an event is an increment of the primary slave's `lfc` (or a carrier loss on it) the producer observed; on cleo it is a carrier loss on the single NIC. The producer prunes entries older than an hour on every write; capped at 64 because an uncapped array republished every 5 s is how a Redis fills up quietly, and 64 drops in an hour is already the loudest state the card has."
+    },
+    "ts": {
+      "type": "number",
+      "exclusiveMinimum": 0,
+      "maximum": 100000000000,
+      "description": "Unix seconds (float) of this observation, writer's clock. Present even though the key carries a TTL: the card's stale label is `now - ts` of the last value it saw. Bounded at 1e11 like every new family's `ts`, so a millisecond stamp fails the schema instead of reading as permanently fresh."
+    },
+    "nic": {
+      "type": "string",
+      "maxLength": 16,
+      "description": "Optional display label for the fabric NIC (`AQC113`, `X550`, `RTL8126`), drawn muted beside the host name. Display only, nothing branches on it, and a card with no `nic` simply draws none."
+    }
+  },
+  "examples": [
+    {
+      "leg": "10g",
+      "speed_mbps": 10000,
+      "bond": true,
+      "lfc": 1,
+      "lfc_delta_24h": 0,
+      "rx_errors": 0,
+      "rx_errors_delta_24h": 0,
+      "reach": {"udm": true, "peers": true, "wan": true},
+      "rtt_ms": {"udm": 0.4, "wan": 11.8},
+      "bytes_per_s": 2400000.0,
+      "drops": [],
+      "ts": 1793062800.2,
+      "nic": "AQC113"
+    },
+    {
+      "leg": "1g",
+      "speed_mbps": 1000,
+      "bond": true,
+      "lfc": 28,
+      "lfc_delta_24h": 3,
+      "rx_errors": 412,
+      "rx_errors_delta_24h": 37,
+      "reach": {"udm": true, "peers": true, "wan": true},
+      "rtt_ms": {"udm": 0.6, "wan": 12.4},
+      "bytes_per_s": 1200.0,
+      "drops": [1793061000.0, 1793061900.5, 1793062500.1],
+      "ts": 1793062800.2
+    },
+    {
+      "leg": "5g",
+      "speed_mbps": 5000,
+      "bond": false,
+      "lfc": null,
+      "lfc_delta_24h": null,
+      "rx_errors": 0,
+      "rx_errors_delta_24h": 0,
+      "reach": {"udm": true, "peers": true, "wan": true},
+      "rtt_ms": {"udm": 0.5, "wan": 12.0},
+      "bytes_per_s": 500000.0,
+      "drops": [],
+      "ts": 1793062800.2,
+      "nic": "RTL8126"
+    },
+    {
+      "leg": "10g",
+      "speed_mbps": 10000,
+      "bond": true,
+      "lfc": 2,
+      "lfc_delta_24h": 0,
+      "rx_errors": null,
+      "rx_errors_delta_24h": null,
+      "reach": {"udm": false, "peers": true, "wan": false},
+      "rtt_ms": {"udm": null, "wan": null},
+      "bytes_per_s": 1600000.0,
+      "drops": [],
+      "ts": 1793062800.2
+    },
+    {
+      "leg": "down",
+      "speed_mbps": null,
+      "bond": true,
+      "lfc": 5,
+      "lfc_delta_24h": 1,
+      "rx_errors": 0,
+      "rx_errors_delta_24h": 0,
+      "reach": {"udm": false, "peers": false, "wan": false},
+      "rtt_ms": {"udm": null, "wan": null},
+      "bytes_per_s": 0,
+      "drops": [1793062790.0],
+      "ts": 1793062800.2
+    }
+  ],
+  "x-counterexamples": [
+    {
+      "record": {
+        "leg": "5g",
+        "speed_mbps": 5000,
+        "bond": false,
+        "rx_errors": 0,
+        "rx_errors_delta_24h": 0,
+        "reach": {"udm": true, "peers": true, "wan": true},
+        "rtt_ms": {"udm": 0.5, "wan": 12.0},
+        "bytes_per_s": 500000.0,
+        "drops": [],
+        "ts": 1793062800.2
+      },
+      "why": "a host with no bond sends `lfc` and `lfc_delta_24h` as null, not absent — absence is indistinguishable from a producer that forgot the field, and the card would have to guess which"
+    },
+    {
+      "record": {
+        "leg": "1G",
+        "speed_mbps": 1000,
+        "bond": true,
+        "lfc": 1,
+        "lfc_delta_24h": 0,
+        "rx_errors": 0,
+        "rx_errors_delta_24h": 0,
+        "reach": {"udm": true, "peers": true, "wan": true},
+        "rtt_ms": {"udm": 0.4, "wan": 11.8},
+        "bytes_per_s": 1200.0,
+        "drops": [],
+        "ts": 1793062800.2
+      },
+      "why": "`leg` is lowercase and closed; `1G` is the label the card draws, not the wire value, and a reader distrusts the record rather than case-folding it"
+    },
+    {
+      "record": {
+        "leg": "10g",
+        "speed_mbps": 10000,
+        "bond": true,
+        "lfc": 1,
+        "lfc_delta_24h": 0,
+        "rx_errors": 0,
+        "rx_errors_delta_24h": 0,
+        "reach": {"udm": true, "wan": true},
+        "rtt_ms": {"udm": 0.4, "wan": 11.8},
+        "bytes_per_s": 2400000.0,
+        "drops": [],
+        "ts": 1793062800.2
+      },
+      "why": "`reach.peers` is the half of the fabric-uplink signal (peers ok, UDM not) the card derives its UPLINK state from; a record without it cannot say which failure it is in"
+    },
+    {
+      "record": {
+        "leg": "10g",
+        "speed_mbps": 10000,
+        "bond": true,
+        "lfc": 1,
+        "lfc_delta_24h": 0,
+        "rx_errors": 0,
+        "rx_errors_delta_24h": 0,
+        "reach": {"udm": true, "peers": true, "wan": true},
+        "rtt_ms": {"udm": 0.4, "wan": 11.8},
+        "bytes_per_s": 2400000.0,
+        "drops": [1793061000000.0],
+        "ts": 1793062800.2
+      },
+      "why": "drop timestamps are unix SECONDS; a millisecond stamp would place the drop in the year 58,000 and the sparkline marker nowhere — the 1e11 bound makes the slip a validation failure"
+    },
+    {
+      "record": {
+        "leg": "10g",
+        "speed_mbps": 10000,
+        "bond": true,
+        "lfc": 1,
+        "lfc_delta_24h": 0,
+        "rx_errors": 0,
+        "rx_errors_delta_24h": 0,
+        "reach": {"udm": true, "peers": true, "wan": true},
+        "rtt_ms": {"udm": 0.4, "wan": 11.8},
+        "bytes_per_s": 2400000.0,
+        "drops": [],
+        "ts": 1793062800200
+      },
+      "why": "`ts` in milliseconds reads as a record from the far future, which readers treat as clock skew and therefore fresh — a dead producer would never go stale"
+    },
+    {
+      "record": {
+        "leg": "10g",
+        "speed_mbps": 10000,
+        "bond": true,
+        "lfc": -1,
+        "lfc_delta_24h": 0,
+        "rx_errors": 0,
+        "rx_errors_delta_24h": 0,
+        "reach": {"udm": true, "peers": true, "wan": true},
+        "rtt_ms": {"udm": 0.4, "wan": 11.8},
+        "bytes_per_s": 2400000.0,
+        "drops": [],
+        "ts": 1793062800.2
+      },
+      "why": "a counter is never negative; -1 as 'unknown' is the sentinel this contract spells null"
+    }
+  ]
+}

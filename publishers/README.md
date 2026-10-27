@@ -153,8 +153,9 @@ just published <v>  # is <v> already in the store? 0 = yes, 1 = no, 2 = unknown
 just publish        # linux + windows here, darwin-arm64 on a woken kimac — ONE version
 just publish --dry-run
 just publish-darwin <v>  # catch-up: add darwin to an existing version, latest unmoved
-just deploy         # knarr -> all four publisher hosts: kai, kubs0, cleo (Windows),
-                    # and komarchy, which is SKIPPED by name when the lid is shut
+just deploy         # knarr -> every publisher host: kai, kubs0, cleo (Windows), and
+                    # komarchy, kbook2, kimac, thrall, thrall-arch, each SKIPPED by
+                    # name when it does not answer
 just deploy --dry-run
 ```
 

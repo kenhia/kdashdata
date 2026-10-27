@@ -331,7 +331,7 @@ publish-darwin version:
 # `/usr/local/bin/kdash-pub` directly, because a hook context's PATH is not
 # the interactive one (CD-13).
 #
-# All four publisher hosts in one call, because the failure this exists to
+# Every publisher host in one call, because the failure this exists to
 # prevent is deploying *most* of them. kpolice sprint 002 redeployed the two
 # hosts knarr reached and left cleo on a commit that no longer existed — and
 # the verification could not catch it, because it only iterated the hosts it
@@ -346,8 +346,14 @@ publish-darwin version:
 #   answers and then fails, that is an ordinary failure (knarr WI 2680). A
 #   host key or auth refusal is a failure too, not an excused absence. The
 #   daily SKIPPED line is intended (ruled on korg WI 3094, comment 2910).
+# - kbook2, kimac, thrall, thrall-arch: `--host-optional` on the same terms.
+#   Each is `availability: intermittent` in k-homelab's inventory and was
+#   onboarded with a one-off `knarr deploy kdash-pub --host <h>`, which left
+#   every later version behind (WI 4003, sprint 019). thrall and thrall-arch
+#   are the two OSes of one dual-boot desktop, so at most one ever answers.
+#   kimac takes the arm64-darwin file by its own `uname`.
 #
 # Pass --version to pin a build, or --dry-run to see the plan.
-[doc("Deploy the store's latest to kai, kubs0, cleo (Windows) and komarchy (skipped if asleep)")]
+[doc("Deploy the store's latest to kai, kubs0, cleo (Windows) and the intermittent hosts (skipped if asleep)")]
 deploy *ARGS:
-    knarr deploy kdash-pub --host kai,kubs0 --host-windows cleo --host-optional komarchy {{ARGS}}
+    knarr deploy kdash-pub --host kai,kubs0 --host-windows cleo --host-optional komarchy,kbook2,kimac,thrall,thrall-arch {{ARGS}}
