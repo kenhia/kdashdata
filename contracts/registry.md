@@ -124,6 +124,7 @@ first key arrived with the publisher wrappers in sprint 003.
 | `kdash:panelshot:{host}` | latest-value, ts-owned | `kddss` and any operator, on demand | none | [panelshot](schemas/kdash-panelshot.schema.json) |
 | `kdash:stale:{host}:{deployer}` | latest-value, presence-owned | each deployer, on a skipped deploy | none (never) | [stale](schemas/kdash-stale.schema.json) |
 | `kdash:agentact:{host}:{sid}` | latest-value, expiring | klaude-top `--publish` (~2 s tick) | ~10 s | [agentact](schemas/kdash-agentact.schema.json) |
+| `kdash:net:{host}` | latest-value, expiring | kpidash-client / kpidash-client-win (~5 s) | 15 s | [net](schemas/kdash-net.schema.json) — **v1** |
 
 `selftest` is a publish canary, not a dashboard feed: running it from a host
 proves that host's whole publish path — khlenv discovery, `REDISCLI_AUTH`, key
@@ -372,6 +373,70 @@ only, so a panel wanting a sparkline either keeps its own ring or asks
 klaude-top to start emitting them. Capped at 24 either way — an uncapped array
 in a value republished every two seconds is how a Redis fills up quietly.
 
+`net` is the family's first **network** feed: one host's view of the 10G
+fabric and of its own way out of it (sprint 019, CD-27). Its consumer was
+fixed before the contract was written: kpidash's 2×1 network-health card,
+design "B · Rail" (korg:4059). **Every field is one that card draws**, and that
+is the rule for adding one. The card shows, per host column, the leg carrying
+traffic and its speed, a sparkline of fabric throughput with a tick per link
+drop, `LFC n (+Δ)` / `rx err n`, and UDM · PEERS · WAN pills, with WAN RTT and
+feed age underneath.
+
+**Each host probes its own path.** That is what makes the fabric-uplink
+failure visible: every server can reach its peers and none can reach the UDM
+(korg:4055). A central prober would see one path and miss it. So `reach` and
+`rtt_ms` are measured *from* `{host}`, and there is **no fabric-level key**.
+The panel derives the uplink state (every host `peers`, no host `udm`), and
+no two producers race for one key.
+
+**Freshness is the host cards' convention, unchanged**: expiring, written about
+every 5 s with `EX 15` (3× cadence), so key absence means the producer is gone.
+`ts` rides along so the card can label a column `STALE · n s` from the last
+value it kept, which it renders hatched and never green. That is the same
+reader-keeps-the-last-value move `health`'s `availability` note describes, and
+it is why kpidash's stale state comes free rather than being a second
+convention (WI 4062).
+
+**Versioned v1, and the field names are pinned.** This is the rule korg:3955
+set for the gratch panel: a producer change must not be able to blank the
+card silently. Additive fields follow the ordinary rule. A rename, retype or
+removal is `kdash:net:v2:{host}` (four segments, so a v1 reader's
+exact-segment parse ignores it), never an edit in place. kpidash consumes
+this repo as the `lib/kdashdata` submodule, so its slice moves the pointer
+to the commit that lands this schema.
+
+Rulings this contract makes (CD-27 has the reasoning):
+
+- **`drops` is producer-side events**, not a panel-side diff of `lfc`. It
+  holds unix seconds of each link-down in the last hour, oldest first, and
+  is capped at 64. The panel restarts and would lose a diff's history, and
+  two polls cannot place a drop in time.
+- **No uplink-load field.** No producer can cheaply tell which of its bytes
+  left the fabric, so the card's UPLINK tile shows the 1G link up/down.
+- **A host with no bond (cleo) fills the same shape.** It sends `bond:
+  false`, `leg: "5g"`, and `lfc` / `lfc_delta_24h` as `null`, which is
+  present-and-null and never absent. Absence would be indistinguishable from
+  a producer that forgot the field, and that fails `required`. `rx_errors`
+  is real on cleo, from its one NIC.
+- `lfc` is the **primary (10G) slave's** Link Failure Count, not a sum. The
+  backup leg's count says nothing about the link the card is about.
+- `reach.peers` means **at least one** peer answered. With "all", one peer
+  down would paint every other column red.
+
+**Writers**: kpidash-client on the Linux hosts and kpidash-client-win on cleo.
+Each writes the key **directly**, over the connection that already writes
+`kpidash:client:{host}:*`, and does not go through the wrappers. That is
+kpidash-client's existing shape (it holds its own redis-py client and its own
+khlenv resolution, checked on kai). kpidash-client-win's repo lives only on
+cleo and was not read here, so its slice confirms the same route. The publisher conduct in [rules.md](rules.md) applies
+regardless, in particular *validate the key* and *stamp `ts`*. `kdash` is
+already in both wrappers' allowlists, so `kdash-pub set kdash:net:<host> …` is
+the hand-test route and needs no code. **Readers**: kpidash's network card
+(program korg:4068, slice 3). No C reader ships with this contract, and it is
+registered ahead of its consumer as `stale` and `agentact` were. A typed
+`kdash_net()` in libkdash is the consumer slice's to ask for, not this one's
+to guess.
+
 ### Provisional: `kdash:korg:*` — korg data for the panels (CD-26, sprint 018)
 
 **Decided, not built.** No key below is written yet, and neither has a schema
@@ -585,8 +650,8 @@ written down where the consumer slice will read them (CD-8):
 ## Reserved
 
 - `kdash:<family>:<…>` — the namespace for new shared feeds (rules.md).
-  `selftest`, `panel`, `panelmode`, `panelshot`, `stale` and `agentact` are
-  the families in it so far, and `korg` is decided but not yet written
+  `selftest`, `panel`, `panelmode`, `panelshot`, `stale`, `agentact` and
+  `net` are the families in it so far, and `korg` is decided but not yet written
   (CD-26).
 - `ghcp:*` — outside that namespace by a named exception (CD-21), not by
   omission. New, frozen from day one, and not a migration candidate.

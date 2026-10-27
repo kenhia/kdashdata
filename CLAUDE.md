@@ -144,11 +144,20 @@ exits 0. The same sprint listed kpidash 023's optional `availability:
 "intermittent"` in the client-health schema, and it recorded CD-26: korg data
 reaches a dashboard as a provisional `kdash:korg:*` feed on central, written by
 a publisher that reads korg's rollups, and no panel ever calls korg directly.
+Most recently sprint 019 (korg:4065, slice 2 of the network-health card
+program korg:4068) landed `kdash:net:{host}` v1, code-free: one host's own view
+of the 10G fabric (leg, speed, bond, primary-slave LFC, rx errors, UDM/peer/WAN
+reach and RTT, throughput, recent drops), expiring like the host cards, field
+names pinned with `kdash:net:v2:{host}` as the only route for a breaking
+change, and cleo's no-bond counters required-and-null rather than absent
+(CD-27). The same sprint widened `just deploy` to every kdash-pub host, adding
+kbook2, kimac, thrall and thrall-arch as `--host-optional` (WI 4003).
 See `docs/architecture.md` (decisions
-CD-1…CD-26, open questions OQ-n), `contracts/rules.md`,
+CD-1…CD-27, open questions OQ-n), `contracts/rules.md`,
 `contracts/registry.md`, `include/kdash/kdash.h` for the consumer API, and
 `publishers/README.md` for the publish side and the version-and-skip rule.
-Next: the rest of program
+Next: kpidash's producer and card for that feed (korg:4066) and cleo's
+producer (korg:4076); the rest of program
 korg:2935 — kdeskdash folds rpidash2's pair Redis into central (korg:2932),
 then panel state to a file and commands from central (korg:2933), then
 k-homelab retires the three servers (korg:2934). After that: kdeskdash's

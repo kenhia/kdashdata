@@ -1537,6 +1537,79 @@ registry row is marked provisional, and the schema lands with the first
 writer, validated by its own examples (CD-24). The kstudiodash consumer work
 and the publisher get planned when someone picks them up.
 
+## CD-27 — A feed with a fixed consumer is versioned by its key, carries only what that consumer draws, and makes its producers state what they cannot measure (sprint 019)
+
+korg WI 4060, slice 2 of program korg:4068 (the network-health card on
+rpi53's kpidash). The consumer came first. Ken picked design "B · Rail" in
+slice 1 (korg:4059), and its field list was the brief. The contract is
+`kdash:net:{host}`
+([schema](../contracts/schemas/kdash-net.schema.json),
+[registry](../contracts/registry.md)).
+
+**Namespace.** The WI sketched `kpidash:net:<host>` and left the key to this
+repo. `kpidash:*` is grandfathered and frozen (CD-3), so a new feed goes in
+`kdash:` (rules.md). The new key costs nobody anything, because neither
+end has been written yet.
+
+**Version.** This is v1, and the field names are pinned. korg:3955 set the
+rule for the gratch panel: a producer change must not be able to blank a
+card silently. rules.md already has the mechanism. A breaking change is a
+new segment, `kdash:net:v2:{host}`, and a v1 reader's exact-segment parse
+skips it. So the version is in the key. It is not a payload field a reader
+would have to check, and it is not a schema `$id` nobody reads at run time.
+
+Five rulings the brief left open. Each took the brief's default unless noted.
+
+1. **`drops` comes from the producer.** It is an event list of unix seconds,
+   one per link-down in the last hour, oldest first, capped at 64. The
+   alternative was for the panel to diff `lfc` between polls. That fails
+   twice: the panel restarts and loses its history, and two polls can say a
+   drop happened but not when, while the card puts a tick on the sparkline
+   at the moment of each drop.
+2. **There is no uplink-load field.** Attributing a host's bytes to "left
+   the fabric" needs flow accounting no producer has. The card's UPLINK tile
+   shows the 1G link up or down, which the panel derives from `reach`.
+3. **Freshness is the host-card convention.** The key is written about every
+   5 s with `EX 15`. Absence means the publisher is gone, and `ts` dates the
+   last value the reader kept. kpidash's stale rendering therefore applies
+   unchanged (WI 4062, and kpidash WI 2944's convention). Inventing a
+   ts-owned variant would have meant a second staleness rule on one panel.
+4. **cleo, with a single NIC and no bond, fills the same shape.** It sends
+   `bond: false` and `leg: "5g"`. **`lfc` and `lfc_delta_24h` are required
+   and `null`, never absent.** The brief offered either. Absence is
+   indistinguishable from a producer that dropped the field, while
+   present-and-null is a statement ("there is no such counter here"), and
+   the card draws `—` for it. The same reasoning makes every counter the
+   producer could not read this tick `null` rather than `0` or `-1`. A
+   counterexample pins the absent form as a failure. The pairing "null
+   exactly when `bond` is false" (and `speed_mbps` null exactly when `leg`
+   is `down`) is prose only, because the validator implements no
+   conditionals (CD-24). It is a producer obligation the gate cannot check.
+5. **There is no fabric key.** Every host would own a share of it and none
+   would own it. The panel derives the uplink-lost state (every host
+   `peers`, no host `udm`) from the per-host records, so there is no shared
+   key to race on.
+
+Two semantics the field list did not fix, and this CD fixes:
+
+- `lfc` is the **primary (10G) slave's** Link Failure Count. It is not the
+  bond-wide sum, because the backup leg's flaps say nothing about the link
+  the card is about.
+- `reach.peers` means **at least one** fabric peer answered. With "all",
+  one peer down would paint every other host's column red, and the pill is
+  meant to answer "is the fabric carrying my traffic".
+
+**One field beyond the list**: an optional `nic` display label (`AQC113`,
+`RTL8126`). The locked design draws it, muted, beside each host name. It is
+optional, and a card without it draws nothing there.
+
+**Producers write directly.** kpidash-client holds its own redis-py
+connection and khlenv resolution for `kpidash:client:*`, and the new key
+goes over the same connection. The Python wrapper would add a second Redis
+client to a daemon that already has one. kpidash-client-win is assumed to do
+the same, and its slice confirms it on cleo. Publisher conduct (rules.md)
+binds them either way.
+
 ## Open questions
 
 - **OQ-2 — Redis ACL writer/reader split** (see CD-2).
