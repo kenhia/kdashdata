@@ -290,7 +290,13 @@ reader's choke point by design ([rules.md](rules.md), Key grammar), so a
 deployer builds this key carefully or not at all.
 
 **Readers**: kpidash renders a `<host> stale` card while any key for that host
-exists, listing the deployers behind it; kmon may later read it instead of
+exists, listing the deployers behind it — except that for an
+`availability: intermittent` host the card is held back until that host's
+**oldest** `since` is **more than 7 days** old, the same window as kmon's
+`KMON_ABSENCE_DAYS` (k-homelab korg:4023 decision 2(i), kpidash sprint 026). The
+grace is **reader-side only**: the key is set on the first skip exactly as above,
+stays as truthful as before, and no writer waits a week or learns availability.
+An unreadable `since` voids the grace rather than extending it. kmon may later read it instead of
 counting an intermittent host against fleet health. No C reader ships with this
 contract — the feed is registered ahead of its consumers on purpose. The day a
 dashboard wants it through libkdash it needs a **SCAN over
