@@ -11,7 +11,7 @@ Three LVGL dashboards consume homelab data feeds over Redis:
 |---|---|---|---|
 | kpidash | rpi53 (Pi 5) | aarch64 | Fleet KPI wall — also hosts the central Redis |
 | kdeskdash | rpidash2 (Pi 5, dev desk), rpidash3 (Pi 4, work desk) | aarch64 | Multi-mode desk panels |
-| kstudiodash | kstudio (Surface Studio) | x86_64 | Big-panel dashboard |
+| ~~kstudiodash~~ | ~~kstudio (Surface Studio)~~ | x86_64 | **Retired** 2026-10-20 — kstudio left the homelab (WI 3986). Its mentions in the decisions below are history. |
 
 The rpidash3 (work-desk) kdeskdash instance participates in the shared feeds
 but is otherwise out of kdashdata's scope.
@@ -975,6 +975,21 @@ without review, which would need a reaper rather than a longer window. The
 mitigation here is that the key names both parties, so whoever retires a host
 or a deployer can see exactly which keys to delete.
 
+**Second family, sprint 020: `kdash:update:{host}:{kind}`** (WI 3641). An
+update run that needs Ken is a condition flag in exactly this sense, so it takes
+this decision whole: presence is the flag, DEL the only all-clear, an
+unparseable payload still raises the host, and `since` is carried, never
+restamped. One choice was new. The WI offered one key per host or one per
+(host, kind), and this takes **per kind**. Two issues can stand at once (a held
+package and a pending reboot), each clears on its own evidence, and a single
+key would make every writer read-modify-write the other issue's state to clear
+its own. The kind vocabulary is open, and a reader renders an unknown kind by
+its `issue` line rather than dropping it — dropping a presence-owned flag is
+the false all-clear this decision exists to prevent. The retirement cost
+above came due in the same sprint: kstudio left the homelab, and only a person
+enumerating `kdash:stale:kstudio:*` with SCAN could have removed what it left
+(WI 3986 found nothing left by then).
+
 ## CD-19 — The per-host secrets file comes first, and the mode policy travels with the candidate
 
 Program korg:2440 gives the homelab one copy of each infrastructure password
@@ -1609,6 +1624,41 @@ goes over the same connection. The Python wrapper would add a second Redis
 client to a daemon that already has one. kpidash-client-win is assumed to do
 the same, and its slice confirms it on cleo. Publisher conduct (rules.md)
 binds them either way.
+
+### Addendum (sprint 020) — clearing a reviewed warning: `kdash:net:ack:{host}`
+
+kpidash WI 4143. Ken wants a yellow host column that someone has looked at to
+be clearable, by time and by an explicit ack. Time already holds by
+construction: yellow comes from the producer's 24 h deltas. The ack is a new
+key, **additive** — `kdash:net:{host}` v1 is unchanged, and v1's exact-segment
+parse skips the four-segment ack key the same way it skips `v2`.
+
+**The ack is applied on the panel.** The WI named this as the decision. The
+alternative, applying it in each producer, would keep the deltas meaning
+"what matters" on the wire, but every producer — cleo's Windows client
+(korg:4076) included — would then have to read a second key to compute a
+field it publishes, and an ack would take effect only as fast as the slowest
+producer's next tick. On the panel it lives in one place, and v1 already
+carries everything needed: the record holds the counter baseline at ack time,
+and the effective delta is `min(delta_24h, counter − ack)` (the live counter
+itself after a reset). So an event after the ack is yellow again on the next
+tick, an expired ack (`EX 86400`, the delta window) changes nothing, and an
+ack never touches a red state. The contract is
+[`kdash-net-ack`](../contracts/schemas/kdash-net-ack.schema.json).
+
+### Second application (sprint 020) — `kdash:nas:{host}` v1
+
+WI 3955 asked for exactly this decision's versioning rule before CD-27 existed
+(it is where "a producer change must not silently blank a card" came from), so
+the gratch NAS-health feed is CD-27's second application rather than a new
+decision: the version is in the key, every value the source cannot supply is
+present-and-null, and the feed carries what the panel draws. What is new is a
+**projected source**: the producer reads gratch-ui's collector output rather
+than the hardware, so the registry pins the mapping from every contract field
+to its source field. The one ruling with an alternative: usage is the pool's
+**usable** used/avail after parity, not raw `alloc`/`size`, because the bar
+answers "how full is my NAS", and raidz parity is not data. The contract is
+[`kdash-nas`](../contracts/schemas/kdash-nas.schema.json).
 
 ## Open questions
 

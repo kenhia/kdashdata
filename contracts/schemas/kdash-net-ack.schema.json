@@ -1,0 +1,86 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/kenhia/kdashdata/contracts/schemas/kdash-net-ack.schema.json",
+  "title": "kdash network-health warning acknowledgement",
+  "description": "Payload of kdash:net:ack:{host} — latest-value, expiring (SET … EX 86400), exactly 4 segments. Somebody has looked at {host}'s yellow column on the network-health card and cleared it. The record is the counter baseline at ack time: the PANEL (not any producer — CD-27 addendum) computes each effective 24 h delta as min(<counter>_delta_24h, <counter> − ack.<counter>) from kdash:net:{host} v1, so anything that happens after the ack turns the column yellow again, and with no ack (or an expired one) the card behaves exactly as v1 alone. If the live counter is below the baseline it reset since the ack, and the effective delta counts from the reset (the live counter itself). The 24 h EX matches the delta window: an ack older than that has nothing left to suppress. An ack never clears a red state (stale, no link, no path). Additive: kdash:net:{host} v1 is unchanged, and its readers' exact-segment parse already skips this 4-segment key — `ack`, like `v2`, is never a host name in the third segment.",
+  "type": "object",
+  "required": [
+    "lfc",
+    "rx_errors",
+    "by",
+    "ts"
+  ],
+  "additionalProperties": true,
+  "properties": {
+    "lfc": {
+      "type": [
+        "integer",
+        "null"
+      ],
+      "minimum": 0,
+      "description": "The host's kdash:net `lfc` at ack time — the primary slave's Link Failure Count. null exactly when that record's `lfc` was null (a host with no bond): present-and-null, never absent, as in v1."
+    },
+    "rx_errors": {
+      "type": [
+        "integer",
+        "null"
+      ],
+      "minimum": 0,
+      "description": "The host's kdash:net `rx_errors` at ack time. null when that record's `rx_errors` was null."
+    },
+    "by": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 64,
+      "description": "Who cleared it — `ken`, or an agent identity such as `claude-kai`. The optional 'ack'd' marker on the column can show it."
+    },
+    "ts": {
+      "type": "number",
+      "exclusiveMinimum": 0,
+      "maximum": 100000000000,
+      "description": "Unix seconds (float) of the ack. Also lets a reader show how long ago the warning was reviewed; expiry itself is the key's EX, not a reader-side window."
+    }
+  },
+  "examples": [
+    {
+      "lfc": 7,
+      "rx_errors": 0,
+      "by": "claude-kai",
+      "ts": 1793080000.0
+    },
+    {
+      "lfc": null,
+      "rx_errors": 12,
+      "by": "ken",
+      "ts": 1793080000.0
+    }
+  ],
+  "x-counterexamples": [
+    {
+      "record": {
+        "rx_errors": 0,
+        "by": "ken",
+        "ts": 1793080000.0
+      },
+      "why": "a no-bond host sends `lfc: null`, never omits it — absence is indistinguishable from a writer that forgot the field (CD-27)"
+    },
+    {
+      "record": {
+        "lfc": 7,
+        "rx_errors": 0,
+        "by": "",
+        "ts": 1793080000.0
+      },
+      "why": "an anonymous ack is a warning cleared by nobody; the field is what the marker shows"
+    },
+    {
+      "record": {
+        "lfc": -1,
+        "rx_errors": 0,
+        "by": "claude-kai",
+        "ts": 1793080000.0
+      },
+      "why": "a counter baseline cannot be negative; -1 as 'unknown' is the sentinel CD-27 replaced with null"
+    }
+  ]
+}

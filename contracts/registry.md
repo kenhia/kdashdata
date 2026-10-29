@@ -87,7 +87,7 @@ shared data model, not each panel's taste: `kdash_apttemps_band()` in
 `KDASH_APTTEMPS_{COLD,OK,HOT}_F` in
 [`kdash_freshness.h`](../include/kdash/kdash_freshness.h) as defaults. Below
 65 F cold, 65–75 ok, 75.1–79.9 warm, 80 and above hot — kpidash's bands,
-which kstudiodash had ported by hand. Which *colour* a band renders as stays
+which kstudiodash (retired with kstudio, 2026-10-20) had ported by hand. Which *colour* a band renders as stays
 in the panel (CD-10). A zone whose `ts` is outside the 300 s window classifies
 `stale` regardless of the reading. Added sprint 009 (CD-16's argument applied
 to `apttemps`, WI 1804).
@@ -125,6 +125,9 @@ first key arrived with the publisher wrappers in sprint 003.
 | `kdash:stale:{host}:{deployer}` | latest-value, presence-owned | each deployer, on a skipped deploy | none (never) | [stale](schemas/kdash-stale.schema.json) |
 | `kdash:agentact:{host}:{sid}` | latest-value, expiring | klaude-top `--publish` (~2 s tick) | ~10 s | [agentact](schemas/kdash-agentact.schema.json) |
 | `kdash:net:{host}` | latest-value, expiring | kpidash-client / kpidash-client-win (~5 s) | 15 s | [net](schemas/kdash-net.schema.json) — **v1** |
+| `kdash:net:ack:{host}` | latest-value, expiring | Ken or an agent, on demand (`SET … EX 86400`) | 24 h | [net-ack](schemas/kdash-net-ack.schema.json) |
+| `kdash:update:{host}:{kind}` | latest-value, presence-owned | k-homelab's apt runner, per run (not yet — see below) | none (never) | [update](schemas/kdash-update.schema.json) |
+| `kdash:nas:{host}` | latest-value, expiring | kpidash-client on the NAS host (not yet — see below) | 3× cadence | [nas](schemas/kdash-nas.schema.json) — **v1** |
 
 `selftest` is a publish canary, not a dashboard feed: running it from a host
 proves that host's whole publish path — khlenv discovery, `REDISCLI_AUTH`, key
@@ -132,8 +135,10 @@ grammar, schema-valid payload — and nothing renders the result. Key absence
 means nobody has run it there lately, which is not a fault.
 
 `panel` is the family's first **control** feed (CD-17): it tells the dashboard
-running on `{host}` which screen to show — `dash` or `desktop` — and
-kstudiodash acts on it by switching VT. Deliberately *state* rather than the
+running on `{host}` which screen to show — `dash` or `desktop`. Its only
+reader was kstudiodash, which acted on it by switching VT; kstudio left the
+homelab on 2026-10-20, so the family has **no reader today** (see the
+retirement note below the command table). Deliberately *state* rather than the
 `GETDEL` one-shot command pattern [rules.md](rules.md) also offers, for two
 reasons that both point the same way. Consuming a one-shot is a **write**, and
 the consumer library has no write path by design (CD-5). And the consumer must
@@ -152,7 +157,7 @@ in the `kdash` namespace the wrappers already accept and `ts` is stamped for
 free ([rules.md](rules.md) payload rules), so the whole write is:
 
 ```sh
-kdash-pub set kdash:panel:kstudio '{"want":"desktop"}'
+kdash-pub set kdash:panel:<host> '{"want":"desktop"}'
 ```
 
 `panelmode` and `panelshot` are `panel`'s **siblings**, added in sprint 014 so
@@ -165,9 +170,17 @@ never replay a command older than the 60 s window — and each keeps its own
 
 | key | says | to |
 |---|---|---|
-| `kdash:panel:{host}` | show the dashboard, or yield the display (`want`: `dash` \| `desktop`) | kstudiodash today |
+| `kdash:panel:{host}` | show the dashboard, or yield the display (`want`: `dash` \| `desktop`) | no reader today (was kstudiodash) |
 | `kdash:panelmode:{host}` | show this screen, optionally configured like this | kdeskdash today |
 | `kdash:panelshot:{host}` | capture the screen, optionally to this path | kdeskdash today |
+
+**`kdash:panel:kstudio` is retired** (WI 3986). It was the one instance of the
+family ever written, and its host left the homelab on 2026-10-20 (given away;
+k-homelab korg:3988). Central held neither it nor any `kdash:stale:kstudio:*` by the
+time this was written (SCAN from kai, 2026-10-29, with a positive control). The *family* stays: the schema, `kdash_panel()`
+and the CD-17 rule are a working control channel any future dashboard host can
+take up with no contract change, and retiring a C reader is an API removal in
+two vendoring repos, not housekeeping.
 
 `want` is a **closed** enum and `mode` deliberately is not. They are two axes:
 `want` is the coarse question every dashboard host has (is the dashboard on
@@ -443,6 +456,102 @@ registered ahead of its consumer as `stale` and `agentact` were. A typed
 `kdash_net()` in libkdash is the consumer slice's to ask for, not this one's
 to guess.
 
+**`kdash:net:ack:{host}` — clearing a reviewed warning** (CD-27 addendum,
+sprint 020, for kpidash WI 4143). A yellow column on the network card comes
+from the producer's 24 h deltas, so it already clears itself 24 h after the
+last event. The ack is the explicit clear: whoever has looked at the warning
+writes the host's current `lfc` and `rx_errors` as a baseline, with `by`:
+
+```sh
+kdash-pub setex kdash:net:ack:kubsdb 86400 '{"lfc":7,"rx_errors":0,"by":"claude-kai"}'
+# or with redis-cli on rpi53 (stamp ts yourself — redis-cli does not):
+redis-cli SET kdash:net:ack:kubsdb '{"lfc":7,"rx_errors":0,"by":"ken","ts":1793080000}' EX 86400
+```
+
+**The ack is applied on the panel**, not by the producers. The panel already
+holds the live record, and the effective delta is computable from v1 alone:
+`min(<counter>_delta_24h, <counter> − ack.<counter>)`, or the live counter
+itself if it is below the baseline (a reset since the ack). An event after the
+ack therefore turns the column yellow again, and with no ack the card behaves
+exactly as v1. The other choice would make every producer — cleo's Windows
+client (korg:4076) included — read a second key to compute a field. An ack
+never clears a red state (stale, no link, no path). `kdash:net:{host}` v1 is
+unchanged; its readers' exact-segment parse skips this four-segment key, and
+`ack` joins `v2` as a third segment that is never a host name. `kdash-pub
+setex` stamps `ts` for free; a raw `redis-cli SET` must carry it, because the
+column's "ack'd" marker shows its age and the schema requires it.
+
+### `kdash:update:{host}:{kind}` — an update run that needs Ken (sprint 020)
+
+korg WI 3641. A flag per host **per kind of issue**, so two issues on one host
+— a held package and a pending reboot — show together and clear separately.
+kpidash already renders one card per host from sub-keys this way for `stale`.
+Known kinds: `ring-stopped`, `reboot-awaiting`, `held`, `gate-failed`. The
+vocabulary is **open**: a reader renders an unknown kind by its `issue` line,
+never drops it, because a dropped flag is a silent all-clear.
+
+**Presence-owned, exactly as `stale` is (CD-18).** SET when the run finds the
+issue, DEL when it is resolved, no TTL, no window. A payload a reader cannot
+parse still shows the host as needing attention. `since` is carried across
+runs by read-modify-write (`kdash-pub get`), never restamped. `issue` is the
+one line the card renders. `ref` optionally names the korg node.
+
+**Writer, not yet.** k-homelab's weekly apt run (proposal korg:3627) writes
+**`kdash:stale:{host}:apt-update` today** (k-homelab WI 3640, Ken's interim
+call, 2026-10-08). That feed's words are wrong for this ("stale" means a
+deployer could not reach the host; this host was reached) and its `reason`
+is not rendered. When k-homelab moves its writer here, it drops `apt-update`
+from the stale feed **in the same change**, so no host is ever flagged twice.
+**Reader**: kpidash's dedicated update-issue card (WI 3642), not yet built. No
+C reader ships with this contract.
+
+### `kdash:nas:{host}` — NAS health for the big panel (sprint 020)
+
+korg WI 3955, for gratch's big panel on rpi53's kpidash (WI 3956). The WI wrote
+`kpidash:nas:gratch`; `kpidash:*` is grandfathered and frozen (CD-3), so the
+key is `kdash:nas:{host}`. **v1, field names pinned**, under CD-27's rule: a
+breaking change is `kdash:nas:v2:{host}`.
+
+**gratch is Ubuntu + ZFS now.** The WI's `/mnt/disk1` and `/mnt/cache` were
+Unraid-era paths, so the usage bars are **per ZFS pool**. Root-filesystem
+usage and the activity graph are not in this key at all, because
+`kpidash:client:{host}:telemetry` and `dev_telemetry` already carry them once
+kpidash-client runs on the host (korg:3952).
+
+**The source is gratch-ui's root collector**, `/run/gratch-ui/privileged.json`
+(korg:3945), read on gratch for this contract on 2026-10-29. The producer
+re-reads that file and **never calls `smartctl` itself**, so the one place
+that knows how to leave a standby IronWolf asleep stays the only one. This
+table pins the fields the contract reads, so a gratch-ui change that breaks
+one breaks it here, visibly, rather than blanking a bar:
+
+| `kdash:nas` field | from `privileged.json` |
+|---|---|
+| `collected_ts` | `collected_at` (ISO 8601 → unix s) |
+| `source_stale`, `source_version` | `stale`, `version` |
+| `pools[].name`, `.health`, `.errors` | `pools[].name`, `.health`, `.error_count` |
+| `pools[].used_bytes`, `.avail_bytes` | `pools[].used_bytes`, `.avail_bytes` — usable, after parity; not `alloc_bytes` |
+| `pools[].scrub` | `pools[].scan` when `function` is `SCRUB`: `state` lower-cased, `end` → `end_ts`, `errors`; else `null` |
+| `disks[].device`, `.model`, `.smart_passed`, `.temp_c` | same names |
+| `disks[].kind` | `nvme` if `protocol` is `NVMe`, else `hdd`/`ssd` from `rotational` |
+| `disks[].power_state` | `active` (and `idle`) → `active`, `standby` → `standby`, anything else → `unknown` |
+| `disks[].smart_ts` | `smart_read_at` (ISO 8601 → unix s) |
+| `disks[].reallocated_sectors`, `.pending_sectors`, `.percentage_used`, `.media_errors` | same names; `null` where the source omits them for that disk type |
+
+Every disk-type-specific value is **present-and-null** where it does not apply
+(an ATA disk's `percentage_used`, an NVMe's `pending_sectors`), never absent:
+CD-27's rule. Dataset-level usage (`pools[].datasets`) is deliberately left
+out until the panel design asks for it; adding it later is additive. A
+missing or unreadable source file still publishes: `collected_ts: null`,
+`source_stale: true`, empty arrays — so the panel says "collector down"
+rather than going blank, which is what `collected_ts` vs `ts` is for.
+
+**Freshness** is the host cards' convention: expiring, `EX` 3× the producer's
+cadence, and `ts` for the stale label. **Writer, not yet**: kpidash-client on
+the NAS host, over the connection it already has (as for `kdash:net`).
+**Reader**: the gratch big panel (WI 3956). No C reader ships with this
+contract.
+
 ### Provisional: `kdash:korg:*` — korg data for the panels (CD-26, sprint 018)
 
 **Decided, not built.** No key below is written yet, and neither has a schema
@@ -456,7 +565,8 @@ directly (CD-26 rejects that option on the record).
 | `kdash:korg:rate_of_fire` | latest-value, ts-owned | the same publisher reading `GET /api/work-items/flow` (default 5 min) | none | — provisional, lands with the writer |
 
 The vocabulary is kfdc's (Fire Missions, On Deck, Commander's Call,
-Operations, Rate of Fire). kstudiodash's *Awaiting Ken* is a rendering of
+Operations, Rate of Fire). kstudiodash's *Awaiting Ken* (the consumer CD-26
+was written for, retired with kstudio on 2026-10-20) was a rendering of
 `board`'s `commanders_call`. The publisher copies korg's computations and never
 re-derives them. Its host, repo and cadence are stated defaults in CD-26,
 settled when it is planned.
@@ -648,16 +758,16 @@ written down where the consumer slice will read them (CD-8):
 
 ## Dashboard-local namespaces (visibility only, not governed)
 
-| Namespace | Host | Keys today |
-|---|---|---|
-| `kdeskdash:*` | each kdeskdash device | `active_mode`, `screenshot`, `gol:settings`, `golz:{wins,human_wins,zombie_wins,ties,gens_to_win,settings}`, `dev:left`, `dev:right` — **being retired** by program korg:2935: the durable half moves to a file on the panel, the control half to `kdash:panelmode` / `kdash:panelshot` above |
-| `kstudiodash:*` | kstudio | reserved — still nothing. kstudio runs no local Redis, which is why the panel-control feed is `kdash:panel:kstudio` on **central** and not a local key here |
+| Namespace | Status | Host | Keys today |
+|---|---|---|---|
+| `kdeskdash:*` | migrating | each kdeskdash device | `active_mode`, `screenshot`, `gol:settings`, `golz:{wins,human_wins,zombie_wins,ties,gens_to_win,settings}`, `dev:left`, `dev:right` — **being retired** by program korg:2935: the durable half moves to a file on the panel, the control half to `kdash:panelmode` / `kdash:panelshot` above |
+| `kstudiodash:*` | retired | kstudio | nothing, ever — kstudio ran no local Redis (which is why its panel-control key was `kdash:panel:kstudio` on central). Retired with the host on 2026-10-20 (WI 3986); both publisher allowlists refuse it, and `check-docs` reads this column to know they should |
 
 ## Reserved
 
 - `kdash:<family>:<…>` — the namespace for new shared feeds (rules.md).
-  `selftest`, `panel`, `panelmode`, `panelshot`, `stale`, `agentact` and
-  `net` are the families in it so far, and `korg` is decided but not yet written
+  `selftest`, `panel`, `panelmode`, `panelshot`, `stale`, `agentact`, `net`,
+  `update` and `nas` are the families in it so far, and `korg` is decided but not yet written
   (CD-26).
 - `ghcp:*` — outside that namespace by a named exception (CD-21), not by
   omission. New, frozen from day one, and not a migration candidate.

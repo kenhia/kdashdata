@@ -1,0 +1,95 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/kenhia/kdashdata/contracts/schemas/kdash-update.schema.json",
+  "title": "kdash per-host update issue",
+  "description": "Payload of kdash:update:{host}:{kind} — latest-value, presence-owned, no TTL, exactly 4 segments. One statement that the update run on {host} needs Ken, of one kind. {host} is the host's inventory name; {kind} names the issue (`ring-stopped`, `reboot-awaiting`, `held`, `gate-failed` today — an OPEN vocabulary: a reader renders an unknown kind by its `issue` line rather than dropping it). Both segments use rules.md's host-token grammar and both are authoritative; the payload echoes neither. One key per (host, kind) so two issues on one host — a held package and a pending reboot — coexist and clear independently. CD-18 applies verbatim, as for kdash:stale: (1) THE KEY'S PRESENCE IS THE FLAG — SET when the issue arises, DELeted when it is resolved, and absence is the only all-clear; no TTL and no staleness window. (2) A MALFORMED PAYLOAD MUST NOT CLEAR THE FLAG: a reader that cannot parse it still shows the host as needing attention, with the detail missing.",
+  "type": "object",
+  "required": [
+    "since",
+    "ts",
+    "issue"
+  ],
+  "additionalProperties": true,
+  "properties": {
+    "since": {
+      "type": "number",
+      "exclusiveMinimum": 0,
+      "maximum": 100000000000,
+      "description": "Unix seconds (float) of when this issue was FIRST raised on this host. Set once and carried unchanged across every later run that finds the same issue still standing (read-modify-write with `kdash-pub get`); a writer that restamps it turns 'held for three weeks' into 'held since this morning'."
+    },
+    "ts": {
+      "type": "number",
+      "exclusiveMinimum": 0,
+      "maximum": 100000000000,
+      "description": "Unix seconds (float) of the LAST write — the most recent run that found this issue still standing. Moves every run; `since` does not."
+    },
+    "issue": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 200,
+      "description": "The one short human line the card renders, e.g. 'rpi53: reboot needed for linux-image 6.12.48'. Rendered verbatim, so it carries the whole explanation; minLength because an empty line is a red row nobody can act on, maxLength because it is one line on a panel, not a log."
+    },
+    "ref": {
+      "type": "string",
+      "pattern": "^korg:[0-9]+$",
+      "description": "Optional korg node the issue is tracked under (`korg:<id>`), so a reader can name where to look. Absent when nothing has been filed."
+    }
+  },
+  "examples": [
+    {
+      "since": 1793581200.0,
+      "ts": 1793667600.4,
+      "issue": "rpi53: reboot needed for linux-image 6.12.48 (apt run 2026-11-02)",
+      "ref": "korg:3627"
+    },
+    {
+      "since": 1793581200.0,
+      "ts": 1793581200.0,
+      "issue": "kai: apt ring stopped — gate failed on kubs0"
+    }
+  ],
+  "x-counterexamples": [
+    {
+      "record": {
+        "since": 1793581200.0,
+        "ts": 1793667600.4,
+        "issue": "",
+        "ref": "korg:3627"
+      },
+      "why": "the issue line is what the card renders; an empty one is a flag with no explanation"
+    },
+    {
+      "record": {
+        "since": "2026-11-02T04:00:00Z",
+        "ts": 1793667600.4,
+        "issue": "reboot needed"
+      },
+      "why": "k-homelab's other timestamps are ISO 8601 strings, and this is the slip WI 1926 was filed for: it publishes cleanly and surfaces as a blank card two repos away"
+    },
+    {
+      "record": {
+        "ts": 1793667600.4,
+        "issue": "reboot needed"
+      },
+      "why": "`since` is the stamp the read-modify-write must carry; dropping it makes every run look like the first"
+    },
+    {
+      "record": {
+        "since": 1793581200.0,
+        "ts": 1793667600.4,
+        "issue": "rpi53: reboot needed for linux-image 6.12.48 (apt run 2026-11-02)",
+        "ref": "3627"
+      },
+      "why": "`ref` is a korg locator, `korg:<id>`; a bare number reads as a work item, a proposal or nothing depending on who reads it"
+    },
+    {
+      "record": {
+        "since": 1793581200.0,
+        "ts": 1793667600400,
+        "issue": "rpi53: reboot needed for linux-image 6.12.48 (apt run 2026-11-02)",
+        "ref": "korg:3627"
+      },
+      "why": "a millisecond stamp would read as permanently fresh; every new family's `ts` is bounded at 1e11"
+    }
+  ]
+}

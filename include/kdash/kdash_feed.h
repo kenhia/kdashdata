@@ -143,7 +143,7 @@ kdash_status_t kdash_panelshot(kdash_conn_t *c, const char *host,
  * both stems answer the same host:port today:
  *
  *   kdash_conn_t *cc = kdash_conn_new(&(kdash_conn_opts_t){
- *       .app = "kstudiodash", .stem = &KDASH_STEM_CLAUDE});
+ *       .app = "kpidash", .stem = &KDASH_STEM_CLAUDE});
  *
  * Handles are independent by design (kdash_conn.h), so a claude endpoint that
  * is down never costs the kpidash panel a thing.

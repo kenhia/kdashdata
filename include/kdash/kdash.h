@@ -6,7 +6,7 @@
  *
  *   #include <kdash/kdash.h>
  *
- *   kdash_conn_t *c = kdash_conn_new(&(kdash_conn_opts_t){.app = "kstudiodash"});
+ *   kdash_conn_t *c = kdash_conn_new(&(kdash_conn_opts_t){.app = "kpidash"});
  *   char hosts[16][KDASH_TOKEN_MAX];
  *   int n = kdash_clients(c, hosts, 16, NULL);
  *   for (int i = 0; i < n; i++) {

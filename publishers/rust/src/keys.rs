@@ -25,8 +25,10 @@ pub const KEY_MAX: usize = 512;
 /// `kdash` is the namespace for new shared feeds; `kpidash`, `claude` and
 /// `kvscf` are grandfathered families (CD-3); `ghcp` sits outside `kdash:` by
 /// one named exception (CD-21) and mirrors `claude:session` field-for-field;
-/// `kdeskdash` and `kstudiodash` are dashboard-local state, listed for
-/// visibility and not schema-governed.
+/// `kdeskdash` is dashboard-local state, listed for visibility and not
+/// schema-governed. `kstudiodash` was the second dashboard-local namespace
+/// until kstudio left the homelab (2026-10-20); it is retired in the registry
+/// and refused here (WI 3986).
 ///
 /// **`scripts/check.py` holds this array to registry.md in both directions**,
 /// because prose and enforcement drifting apart is not hypothetical: sprint
@@ -34,15 +36,7 @@ pub const KEY_MAX: usize = 512;
 /// nothing taught this array, and every `ghcp:*` write was refused until
 /// sprint 013 (WI 2781). Neither repo's gate could see it, because no gate
 /// compared the two sides.
-pub const NAMESPACES: &[&str] = &[
-    "kdash",
-    "kpidash",
-    "claude",
-    "kvscf",
-    "ghcp",
-    "kdeskdash",
-    "kstudiodash",
-];
+pub const NAMESPACES: &[&str] = &["kdash", "kpidash", "claude", "kvscf", "ghcp", "kdeskdash"];
 
 /// The glob metacharacters `scan` accepts inside a segment.
 ///
@@ -292,6 +286,16 @@ mod tests {
         assert_eq!(
             check_key("Claude:limits"),
             Err(KeyError::UnknownNamespace("Claude".into()))
+        );
+    }
+
+    #[test]
+    fn a_retired_namespace_is_off_contract() {
+        // kstudio left the homelab on 2026-10-20 and its namespace was
+        // retired with it (WI 3986): a write there now has no reader anywhere.
+        assert_eq!(
+            check_key("kstudiodash:anything"),
+            Err(KeyError::UnknownNamespace("kstudiodash".into()))
         );
     }
 

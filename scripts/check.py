@@ -46,7 +46,11 @@ PYTHON_KEYS = ROOT / "publishers" / "python" / "src" / "kdash_pub" / "keys.py"
 #: the family's status (`live`, `migrating` or `retired`, per registry.md).
 FAMILY_RE = re.compile(r"^## Family:\s*(\S+)\s*\((.*)\)\s*$", re.MULTILINE)
 #: The dashboard-local table's first column: `| `kdeskdash:*` | each ... |`.
-LOCAL_NS_RE = re.compile(r"^\|\s*`([A-Za-z0-9_-]+):\*`\s*\|", re.MULTILINE)
+LOCAL_NS_RE = re.compile(
+    r"^\|\s*`([A-Za-z0-9_-]+):\*`\s*\|\s*([^|]*?)\s*\|", re.MULTILINE
+)
+#: The registry's status vocabulary, which the dashboard-local table shares.
+STATUSES = ("live", "migrating", "retired")
 #: Both allowlists, each a flat list of string literals.
 RUST_NS_RE = re.compile(r"pub const NAMESPACES: &\[&str\] = &\[(.*?)\];", re.DOTALL)
 PYTHON_NS_RE = re.compile(r"^NAMESPACES = \((.*?)\)", re.DOTALL | re.MULTILINE)
@@ -85,12 +89,14 @@ def documented_namespaces(registry_text: str, errors: list) -> set:
     Two sources, because the registry describes two kinds. Schema-governed
     families get a `## Family:` heading; dashboard-local state is listed for
     visibility in its own table and never gets one. Both are legal to publish
-    to — `kstudiodash:*` is documented as holding nothing at all and is still
-    in both allowlists — so both belong in the comparison.
+    to, so both belong in the comparison.
 
     `retired` families are excluded: the registry's own vocabulary says a
     retired family is no longer written, so requiring the publishers to keep
     accepting it would be this check enforcing the opposite of the contract.
+    The dashboard-local table carries the same vocabulary in its second
+    column, for the same reason: `kstudiodash:*` was retired with kstudio
+    (WI 3986) and stays in the table as a record, not as a live namespace.
     """
     names = set()
     for name, parenthetical in FAMILY_RE.findall(registry_text):
@@ -119,7 +125,17 @@ def documented_namespaces(registry_text: str, errors: list) -> set:
             "section — this gate reads the publishable namespace list from "
             "it, and cannot tell a missing section from an empty one"
         )
-    names.update(LOCAL_NS_RE.findall(section))
+    for name, status in LOCAL_NS_RE.findall(section):
+        if status not in STATUSES:
+            errors.append(
+                f"contracts/registry.md: dashboard-local row `{name}:*` has "
+                f"status {status!r}, not one of {', '.join(STATUSES)} — the "
+                "gate reads that column to decide whether the publishers must "
+                "accept the namespace, and cannot guess"
+            )
+            continue
+        if status != "retired":
+            names.add(name)
     return names
 
 
