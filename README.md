@@ -6,8 +6,9 @@
 kdashdata owns data movement for my homelab's LVGL dashboards: documented
 Redis feed contracts (JSON schema files as the machine-readable source of
 truth), a shared C consumer library the dashboards link, and thin publisher
-wrappers (Rust and Python). The dashboards themselves — kpidash, kdeskdash,
-kstudiodash — live in their own repos and consume this one.
+wrappers (Rust and Python). The dashboards themselves — kpidash and
+kdeskdash — live in their own repos and consume this one. (kstudiodash was
+the third, until kstudio left the homelab on 2026-10-20.)
 
 ## Layout
 
@@ -33,7 +34,7 @@ knowledge of LVGL and never will.
 ```c
 #include <kdash/kdash.h>
 
-kdash_conn_t *c = kdash_conn_new(&(kdash_conn_opts_t){.app = "kstudiodash"});
+kdash_conn_t *c = kdash_conn_new(&(kdash_conn_opts_t){.app = "kpidash"});
 
 char hosts[16][KDASH_TOKEN_MAX];
 int n = kdash_clients(c, hosts, 16, NULL);
@@ -50,7 +51,7 @@ attention-first order, not just parsed rows (CD-16):
 
 ```c
 kdash_conn_t *cc = kdash_conn_new(&(kdash_conn_opts_t){
-    .app = "kstudiodash", .stem = &KDASH_STEM_CLAUDE});
+    .app = "kpidash", .stem = &KDASH_STEM_CLAUDE});
 
 kdash_claude_session_t s[16];
 int n = kdash_claude_sessions(cc, s, 16, NULL);

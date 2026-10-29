@@ -61,8 +61,9 @@ over ceremony.
 
 ## Project
 
-kdashdata owns data movement for the homelab's LVGL dashboards — kpidash,
-kdeskdash, kstudiodash. Three deliverables, in priority order: (1) the
+kdashdata owns data movement for the homelab's LVGL dashboards — kpidash and
+kdeskdash (kstudiodash was the third until kstudio left the homelab on
+2026-10-20). Three deliverables, in priority order: (1) the
 documented Redis feed contracts (JSON schema files are the machine-readable
 source of truth; prose docs stay consistent with them); (2) a shared C
 consumer library the dashboards link (data model + freshness only, no
@@ -152,18 +153,30 @@ names pinned with `kdash:net:v2:{host}` as the only route for a breaking
 change, and cleo's no-bond counters required-and-null rather than absent
 (CD-27). The same sprint widened `just deploy` to every kdash-pub host, adding
 kbook2, kimac, thrall and thrall-arch as `--host-optional` (WI 4003).
+Most recently sprint 020 (korg:4152, a slice of low-hanging-fruit program
+korg:4162) retired the `kstudiodash` namespace with its host — refused by both
+allowlists, marked `retired` in a new Status column of the registry's
+dashboard-local table that `check-docs` now reads — and registered three
+contracts code-free: `kdash:update:{host}:{kind}`, a presence-owned flag per
+kind of update issue (CD-18's second family); `kdash:nas:{host}` v1, gratch's
+ZFS pool and disk health projected from gratch-ui's collector with the field
+mapping pinned in the registry (CD-27's second application); and
+`kdash:net:ack:{host}`, the 24 h ack that clears a reviewed network-card
+warning, applied on the panel rather than in each producer (CD-27 addendum).
 See `docs/architecture.md` (decisions
 CD-1…CD-27, open questions OQ-n), `contracts/rules.md`,
 `contracts/registry.md`, `include/kdash/kdash.h` for the consumer API, and
 `publishers/README.md` for the publish side and the version-and-skip rule.
-Next: kpidash's producer and card for that feed (korg:4066) and cleo's
-producer (korg:4076); the rest of program
+Next: kpidash's producer and card for that feed (korg:4066), the ack and the
+restart fix (korg:4158), and cleo's producer (korg:4076); the writers and cards
+for the update and NAS feeds (k-homelab after korg:3627, kpidash WIs 3642 and
+3956); the rest of program
 korg:2935 — kdeskdash folds rpidash2's pair Redis into central (korg:2932),
 then panel state to a file and commands from central (korg:2933), then
 k-homelab retires the three servers (korg:2934). After that: kdeskdash's
 Copilot publisher, unblocked by 013 (korg:2755) and the k-homelab recipe behind
-it (korg:2756); kdeskdash adopting the `claude:*` readers (korg:2218, work item
-1783); or kstudiodash's first consumption of the library (korg:1728).
+it (korg:2756); or kdeskdash adopting the `claude:*` readers (korg:2218, work
+item 1783).
 
 This line is gated: `scripts/check.py` fails if it does not name the
 newest `sprints/` record, so a sprint cannot ship leaving it behind again

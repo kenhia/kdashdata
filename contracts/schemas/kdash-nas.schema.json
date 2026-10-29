@@ -1,0 +1,529 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/kenhia/kdashdata/contracts/schemas/kdash-nas.schema.json",
+  "title": "kdash NAS health",
+  "description": "Payload of kdash:nas:{host} — latest-value, expiring (EX = 3× the producer's cadence), exactly 3 segments. **v1, field names pinned** (CD-27's rule, which korg:3955 asked for): a rename, retype or removal is kdash:nas:v2:{host}, never an edit in place, so a source change can never blank the panel silently. The health block of a NAS host's big panel on rpi53's kpidash: ZFS pool usage and health, and per-disk SMART, temperature and spin state. It is a projection of gratch-ui's root collector output (/run/gratch-ui/privileged.json, korg:3945) — the producer re-reads that file and never calls smartctl itself, so a standby disk is woken by nobody (registry.md maps every field to its source). Root-filesystem usage and the activity graph are NOT here: kpidash:client:{host}:telemetry and dev_telemetry already carry both. Like kdash:net, every value the source could not supply is present-and-null, never absent.",
+  "type": "object",
+  "required": [
+    "collected_ts",
+    "source_stale",
+    "source_version",
+    "pools",
+    "disks",
+    "ts"
+  ],
+  "additionalProperties": true,
+  "properties": {
+    "collected_ts": {
+      "type": [
+        "number",
+        "null"
+      ],
+      "exclusiveMinimum": 0,
+      "maximum": 100000000000,
+      "description": "Unix seconds of the source's `collected_at` — when the collector last ran. Distinct from `ts`: the producer can be alive and republishing while the collector has stopped, and the panel should say so. null if the source file was missing or unparseable this tick (pools and disks are then [])."
+    },
+    "source_stale": {
+      "type": "boolean",
+      "description": "The source's own `stale` flag, passed through: gratch-ui's statement that its data is out of date. true also when the producer could not read the source at all."
+    },
+    "source_version": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "description": "The source's `version` (gratch-ui's build), for diagnosis only. Nothing branches on it."
+    },
+    "pools": {
+      "type": "array",
+      "maxItems": 16,
+      "description": "One entry per ZFS pool, in the source's order.",
+      "items": {
+        "type": "object",
+        "additionalProperties": true,
+        "required": [
+          "name",
+          "health",
+          "used_bytes",
+          "avail_bytes",
+          "errors",
+          "scrub"
+        ],
+        "properties": {
+          "name": {
+            "type": "string",
+            "minLength": 1
+          },
+          "health": {
+            "type": "string",
+            "enum": [
+              "ONLINE",
+              "DEGRADED",
+              "FAULTED",
+              "OFFLINE",
+              "UNAVAIL",
+              "REMOVED",
+              "SUSPENDED"
+            ],
+            "description": "zpool health, ZFS's own closed vocabulary. Anything but ONLINE is a warning."
+          },
+          "used_bytes": {
+            "type": "integer",
+            "minimum": 0,
+            "description": "Usable space used, after parity (the source's root-dataset `used_bytes`) — what a human means by 'how full'. NOT the raw `alloc_bytes`, which counts raidz parity."
+          },
+          "avail_bytes": {
+            "type": "integer",
+            "minimum": 0,
+            "description": "Usable space free, after parity (the source's `avail_bytes`). The bar is used / (used + avail)."
+          },
+          "errors": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "minimum": 0,
+            "description": "The pool's total read+write+checksum error count (the source's `error_count`). Non-zero is a warning."
+          },
+          "scrub": {
+            "type": [
+              "object",
+              "null"
+            ],
+            "description": "The last scrub, or null if the pool has never been scrubbed (or the last scan was a resilver/expansion, not a scrub).",
+            "required": [
+              "state",
+              "end_ts",
+              "errors"
+            ],
+            "additionalProperties": true,
+            "properties": {
+              "state": {
+                "type": "string",
+                "enum": [
+                  "scanning",
+                  "finished",
+                  "canceled"
+                ],
+                "description": "The source's `scan.state`, lower-cased."
+              },
+              "end_ts": {
+                "type": [
+                  "number",
+                  "null"
+                ],
+                "exclusiveMinimum": 0,
+                "maximum": 100000000000,
+                "description": "Unix seconds the scrub finished; null while scanning."
+              },
+              "errors": {
+                "type": "integer",
+                "minimum": 0
+              }
+            }
+          }
+        }
+      }
+    },
+    "disks": {
+      "type": "array",
+      "maxItems": 32,
+      "description": "Every physical disk the collector sees, pool members or not, in the source's order.",
+      "items": {
+        "type": "object",
+        "additionalProperties": true,
+        "required": [
+          "device",
+          "model",
+          "kind",
+          "power_state",
+          "smart_passed",
+          "smart_ts",
+          "temp_c",
+          "reallocated_sectors",
+          "pending_sectors",
+          "percentage_used",
+          "media_errors"
+        ],
+        "properties": {
+          "device": {
+            "type": "string",
+            "minLength": 1,
+            "description": "e.g. /dev/sdb, /dev/nvme0."
+          },
+          "model": {
+            "type": "string",
+            "description": "Display label."
+          },
+          "kind": {
+            "type": "string",
+            "enum": [
+              "hdd",
+              "ssd",
+              "nvme"
+            ],
+            "description": "nvme for protocol NVMe; otherwise hdd when rotational, ssd when not."
+          },
+          "power_state": {
+            "type": "string",
+            "enum": [
+              "active",
+              "standby",
+              "unknown"
+            ],
+            "description": "Spin state. active covers the source's active and idle; standby is spun down. A spun-down disk is not a fault, and its SMART values are as old as smart_ts."
+          },
+          "smart_passed": {
+            "type": [
+              "boolean",
+              "null"
+            ],
+            "description": "Overall SMART verdict; null if never read."
+          },
+          "smart_ts": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "exclusiveMinimum": 0,
+            "maximum": 100000000000,
+            "description": "Unix seconds of the last SMART read (the source's `smart_read_at`). A standby disk is deliberately not woken to read it, so this can be hours old while the disk is fine."
+          },
+          "temp_c": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "description": "Temperature in °C at the last SMART read."
+          },
+          "reallocated_sectors": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "minimum": 0,
+            "description": "ATA only; null on NVMe. Non-zero is worth showing; a rise is worth a warning."
+          },
+          "pending_sectors": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "minimum": 0,
+            "description": "ATA rotational only; null where the source does not report it. Non-zero is a warning."
+          },
+          "percentage_used": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "minimum": 0,
+            "maximum": 255,
+            "description": "NVMe endurance used, percent (NVMe allows > 100). null on ATA."
+          },
+          "media_errors": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "minimum": 0,
+            "description": "NVMe media errors; null on ATA. Non-zero is a warning."
+          }
+        }
+      }
+    },
+    "ts": {
+      "type": "number",
+      "exclusiveMinimum": 0,
+      "maximum": 100000000000,
+      "description": "Unix seconds (float) of this write, producer's clock. The card's stale label is now − ts of the last value it kept, as on the host cards."
+    }
+  },
+  "examples": [
+    {
+      "collected_ts": 1793163791.0,
+      "source_stale": false,
+      "source_version": "0.1.0-7f28ad6",
+      "pools": [
+        {
+          "name": "nas",
+          "health": "ONLINE",
+          "used_bytes": 976605544448,
+          "avail_bytes": 4881729847296,
+          "errors": 0,
+          "scrub": {
+            "state": "finished",
+            "end_ts": 1793057255.0,
+            "errors": 0
+          }
+        }
+      ],
+      "disks": [
+        {
+          "device": "/dev/nvme0",
+          "model": "CT4000T710SSD8",
+          "kind": "nvme",
+          "power_state": "active",
+          "smart_passed": true,
+          "smart_ts": 1793163791.0,
+          "temp_c": 28,
+          "reallocated_sectors": null,
+          "pending_sectors": null,
+          "percentage_used": 0,
+          "media_errors": 0
+        },
+        {
+          "device": "/dev/sdc",
+          "model": "ST8000VN0022-2EL112",
+          "kind": "hdd",
+          "power_state": "standby",
+          "smart_passed": true,
+          "smart_ts": 1793082351.4,
+          "temp_c": 34,
+          "reallocated_sectors": 8,
+          "pending_sectors": 0,
+          "percentage_used": null,
+          "media_errors": null
+        }
+      ],
+      "ts": 1793163800.2
+    },
+    {
+      "collected_ts": null,
+      "source_stale": true,
+      "source_version": null,
+      "pools": [],
+      "disks": [],
+      "ts": 1793163800.2
+    }
+  ],
+  "x-counterexamples": [
+    {
+      "record": {
+        "collected_ts": 1793163791.0,
+        "source_stale": false,
+        "source_version": "0.1.0-7f28ad6",
+        "pools": [
+          {
+            "name": "nas",
+            "health": "ONLINE",
+            "used_bytes": 976605544448,
+            "avail_bytes": 4881729847296,
+            "errors": 0,
+            "scrub": {
+              "state": "finished",
+              "end_ts": 1793057255.0,
+              "errors": 0
+            }
+          }
+        ],
+        "disks": [
+          {
+            "device": "/dev/sdc",
+            "model": "ST8000VN0022-2EL112",
+            "kind": "hdd",
+            "power_state": "standby",
+            "smart_passed": true,
+            "smart_ts": 1793082351.4,
+            "temp_c": 34,
+            "reallocated_sectors": 8,
+            "pending_sectors": 0,
+            "media_errors": null
+          }
+        ],
+        "ts": 1793163800.2
+      },
+      "why": "an ATA disk sends `percentage_used: null`, never omits it — absence is indistinguishable from a producer that dropped the field (CD-27)"
+    },
+    {
+      "record": {
+        "collected_ts": 1793163791.0,
+        "source_stale": false,
+        "source_version": "0.1.0-7f28ad6",
+        "pools": [
+          {
+            "name": "nas",
+            "health": "ONLINE",
+            "used_bytes": 976605544448,
+            "avail_bytes": 4881729847296,
+            "errors": 0,
+            "scrub": {
+              "state": "finished",
+              "end_ts": 1793057255.0,
+              "errors": 0
+            }
+          }
+        ],
+        "disks": [
+          {
+            "device": "/dev/sdc",
+            "model": "ST8000VN0022-2EL112",
+            "kind": "hdd",
+            "power_state": "STANDBY",
+            "smart_passed": true,
+            "smart_ts": 1793082351.4,
+            "temp_c": 34,
+            "reallocated_sectors": 8,
+            "pending_sectors": 0,
+            "percentage_used": null,
+            "media_errors": null
+          }
+        ],
+        "ts": 1793163800.2
+      },
+      "why": "the producer maps the source's spin state into the closed lower-case enum; passing the source's word through unmapped is how a gratch-ui change would blank the column"
+    },
+    {
+      "record": {
+        "collected_ts": 1793163791.0,
+        "source_stale": false,
+        "source_version": "0.1.0-7f28ad6",
+        "pools": [
+          {
+            "name": "nas",
+            "health": "online",
+            "used_bytes": 976605544448,
+            "avail_bytes": 4881729847296,
+            "errors": 0,
+            "scrub": {
+              "state": "finished",
+              "end_ts": 1793057255.0,
+              "errors": 0
+            }
+          }
+        ],
+        "disks": [
+          {
+            "device": "/dev/nvme0",
+            "model": "CT4000T710SSD8",
+            "kind": "nvme",
+            "power_state": "active",
+            "smart_passed": true,
+            "smart_ts": 1793163791.0,
+            "temp_c": 28,
+            "reallocated_sectors": null,
+            "pending_sectors": null,
+            "percentage_used": 0,
+            "media_errors": 0
+          },
+          {
+            "device": "/dev/sdc",
+            "model": "ST8000VN0022-2EL112",
+            "kind": "hdd",
+            "power_state": "standby",
+            "smart_passed": true,
+            "smart_ts": 1793082351.4,
+            "temp_c": 34,
+            "reallocated_sectors": 8,
+            "pending_sectors": 0,
+            "percentage_used": null,
+            "media_errors": null
+          }
+        ],
+        "ts": 1793163800.2
+      },
+      "why": "pool health is ZFS's own upper-case vocabulary, carried verbatim"
+    },
+    {
+      "record": {
+        "source_stale": false,
+        "source_version": "0.1.0-7f28ad6",
+        "pools": [
+          {
+            "name": "nas",
+            "health": "ONLINE",
+            "used_bytes": 976605544448,
+            "avail_bytes": 4881729847296,
+            "errors": 0,
+            "scrub": {
+              "state": "finished",
+              "end_ts": 1793057255.0,
+              "errors": 0
+            }
+          }
+        ],
+        "disks": [
+          {
+            "device": "/dev/nvme0",
+            "model": "CT4000T710SSD8",
+            "kind": "nvme",
+            "power_state": "active",
+            "smart_passed": true,
+            "smart_ts": 1793163791.0,
+            "temp_c": 28,
+            "reallocated_sectors": null,
+            "pending_sectors": null,
+            "percentage_used": 0,
+            "media_errors": 0
+          },
+          {
+            "device": "/dev/sdc",
+            "model": "ST8000VN0022-2EL112",
+            "kind": "hdd",
+            "power_state": "standby",
+            "smart_passed": true,
+            "smart_ts": 1793082351.4,
+            "temp_c": 34,
+            "reallocated_sectors": 8,
+            "pending_sectors": 0,
+            "percentage_used": null,
+            "media_errors": null
+          }
+        ],
+        "ts": 1793163800.2
+      },
+      "why": "without the collector's stamp a live producer republishing a dead collector's data reads as healthy"
+    },
+    {
+      "record": {
+        "collected_ts": "2026-10-29T02:03:11Z",
+        "source_stale": false,
+        "source_version": "0.1.0-7f28ad6",
+        "pools": [
+          {
+            "name": "nas",
+            "health": "ONLINE",
+            "used_bytes": 976605544448,
+            "avail_bytes": 4881729847296,
+            "errors": 0,
+            "scrub": {
+              "state": "finished",
+              "end_ts": 1793057255.0,
+              "errors": 0
+            }
+          }
+        ],
+        "disks": [
+          {
+            "device": "/dev/nvme0",
+            "model": "CT4000T710SSD8",
+            "kind": "nvme",
+            "power_state": "active",
+            "smart_passed": true,
+            "smart_ts": 1793163791.0,
+            "temp_c": 28,
+            "reallocated_sectors": null,
+            "pending_sectors": null,
+            "percentage_used": 0,
+            "media_errors": 0
+          },
+          {
+            "device": "/dev/sdc",
+            "model": "ST8000VN0022-2EL112",
+            "kind": "hdd",
+            "power_state": "standby",
+            "smart_passed": true,
+            "smart_ts": 1793082351.4,
+            "temp_c": 34,
+            "reallocated_sectors": 8,
+            "pending_sectors": 0,
+            "percentage_used": null,
+            "media_errors": null
+          }
+        ],
+        "ts": 1793163800.2
+      },
+      "why": "the source's `collected_at` is ISO 8601; the producer converts it, because an unconverted string is the WI 1926 slip"
+    }
+  ]
+}

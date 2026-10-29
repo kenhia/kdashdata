@@ -8,7 +8,7 @@
  *   ./build/kdash_dump                       # discover the endpoints via khlenv
  *   KDASH_CENTRAL_REDIS=rpi53:6379 ./build/kdash_dump    # pin the central one
  *   KDASH_CLAUDE_REDIS=rpi53:6379 ./build/kdash_dump     # pin the claude one
- *   KDASH_PANEL_HOST=kstudio ./build/kdash_dump          # another panel's command
+ *   KDASH_PANEL_HOST=rpidash2 ./build/kdash_dump          # another panel's command
  *
  * TWO handles, two stems (CD-4/CD-7): the kpidash families resolve
  * KDASH_CENTRAL_REDIS and the claude family resolves KDASH_CLAUDE_REDIS. They

@@ -9,8 +9,8 @@
 
 - **New shared feeds**: `kdash:<family>:<…>` on the central Redis. One
   family = one owner (the publisher project) = one schema set here.
-- **Dashboard-local state**: `<dashboard>:<…>` (e.g. `kdeskdash:*`,
-  `kstudiodash:*`) on that dashboard's local Redis. Local state is that
+- **Dashboard-local state**: `<dashboard>:<…>` (e.g. `kdeskdash:*`) on that
+  dashboard's local Redis. Local state is that
   dashboard's business; it is listed in the registry for visibility but not
   schema-governed.
 - **Grandfathered**: `kpidash:*`, `claude:*`, `kvscf:*` — frozen shapes,

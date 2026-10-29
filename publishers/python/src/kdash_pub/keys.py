@@ -20,8 +20,10 @@ KEY_MAX = 512
 #: The namespaces contracts/registry.md knows about. `kdash` is for new shared
 #: feeds; `kpidash`, `claude` and `kvscf` are grandfathered families (CD-3);
 #: `ghcp` sits outside `kdash:` by one named exception (CD-21) and mirrors
-#: `claude:session` field-for-field; `kdeskdash` and `kstudiodash` are
-#: dashboard-local state, listed for visibility and not schema-governed.
+#: `claude:session` field-for-field; `kdeskdash` is dashboard-local state,
+#: listed for visibility and not schema-governed. `kstudiodash` was the second
+#: dashboard-local namespace until kstudio left the homelab (2026-10-20); it is
+#: retired in the registry and refused here (WI 3986).
 #:
 #: **scripts/check.py holds this tuple to registry.md in both directions**,
 #: because prose and enforcement drifting apart is not hypothetical: sprint 012
@@ -36,7 +38,6 @@ NAMESPACES = (
     "kvscf",
     "ghcp",
     "kdeskdash",
-    "kstudiodash",
 )
 
 _ALLOWED_EXTRA = frozenset("._-")

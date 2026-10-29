@@ -4,7 +4,7 @@
 # The output is generic aarch64 — one build tree serves rpi53 (kpidash, Pi 5),
 # rpidash2 (Pi 5) and rpidash3 (Pi 4) alike. They run the same Debian 13 Trixie
 # userspace, so one sysroot serves them all; only the kernel flavor differs,
-# which does not reach the linker. x86_64 (kstudio) is the build host's own
+# which does not reach the linker. x86_64 is the build host's own
 # native target and needs no toolchain file.
 #
 # Ported verbatim in shape from kdeskdash, which has been cross-building this

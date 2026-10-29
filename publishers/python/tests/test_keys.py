@@ -50,6 +50,12 @@ class GovernedKeys(unittest.TestCase):
         with self.assertRaises(KeyError_):
             check_key("weather:now")
 
+    def test_retired_namespace_is_off_contract(self):
+        # kstudio left the homelab on 2026-10-20 and its namespace was retired
+        # with it (WI 3986): a write there now has no reader anywhere.
+        with self.assertRaises(KeyError_):
+            check_key("kstudiodash:anything")
+
     def test_namespace_case_matters(self):
         # Redis would treat this as a separate family.
         with self.assertRaises(KeyError_):
