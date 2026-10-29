@@ -136,3 +136,34 @@ fixes:
 None filed. Writers and readers for the three new contracts are already
 tracked: k-homelab after korg:3627, kpidash WIs 3642 and 3956, and korg:4158
 for the ack.
+
+## Deployed
+
+2026-10-28 19:10–19:13 PDT, from merged `main` (`4837473`, PR #20), on kai.
+
+- **`just publish`**: `0.1.0-4837473` was not in the store, so it published
+  linux, windows and darwin. kimac woke after 2 s and built under caffeinate.
+  `latest -> 0.1.0-4837473`. This was not a no-op: `publishers/rust/src/keys.rs`
+  is one of `just version`'s inputs.
+- **`just deploy`** (knarr, exit 0): deployed `kdash-pub 0.1.0-4837473` to
+  kai, kubs0, cleo, kimac and thrall. SKIPPED komarchy and kbook2 (ssh timed
+  out) and thrall-arch (name does not resolve). All three are
+  `--host-optional`, and each catches up on its next `just deploy`.
+- **Verified live on kai**: `kdash-pub --version` reports `0.1.0-4837473`.
+  `kdash-pub set kstudiodash:probe …` exits 1 and `scan 'kstudiodash:*'`
+  exits 2, both with "namespace "kstudiodash" is not one of kdash, kpidash,
+  claude, kvscf, ghcp, kdeskdash". That is the sprint's one behaviour change.
+- **Re-vendored (side PRs, each repo's `just check` green, merged, checkouts
+  level with origin)**:
+  - **kdeskdash #52** (`8f0a47b`): `lib/kdashdata` moved from `8683ce1` to
+    `4837473`. The kstudio comments are retired: `CMakeLists.txt`, the
+    service unit, and `CLAUDE.md` 188.
+  - **kpidash #28** (`063fcc0`): `lib/kdashdata` moved from `6a928e3` to
+    `4837473`, and the `scripts/unit-lint.sh` comment is retired.
+- **Neither dashboard was redeployed.** kpidash's bump changes header comments
+  only. kdeskdash's pin was six sprints behind, so its bump also carries
+  kdashdata 015–016's library changes. Among them is 016's fix that zeroes
+  `out` when a counted reader's SCAN fails, and kdeskdash calls
+  `kdash_claude_sessions`. That is a real behaviour change, but only on a
+  failure path and in the safe direction. It ships with kdeskdash's next
+  deploy.
