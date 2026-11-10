@@ -7,3 +7,4 @@ publishers/rust/target/
 publishers/python/.venv*/
 publishers/python/dist/
 __pycache__/
+.sprint-defaults
