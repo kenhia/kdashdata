@@ -1,4 +1,5 @@
 <!-- kproject:begin — managed by kprojects; do not edit inside this block -->
+
 ## kproject conventions
 
 This project uses the kproject minimal harness
@@ -57,6 +58,7 @@ over ceremony.
   exit 1. A gate never seen to fail is not a gate, and the seeded placeholder
   fails on purpose until you replace it
 - License is MIT unless specifically directed otherwise
+
 <!-- kproject:end -->
 
 ## Project
