@@ -58,7 +58,7 @@ Run on kai, 2026-11-13, against kpidash `origin/main` at `70b7f7a`.
 
 ## Evidence
 
-`just check` green on the branch (see wrap-up handoff on korg:4598).
+`just check` green on the branch (exit 0, all four gates); merged as `617ff8e` (PR #23).
 
 ## Repaired in passing
 
@@ -68,3 +68,24 @@ Run on kai, 2026-11-13, against kpidash `origin/main` at `70b7f7a`.
 ## Follow-ups
 
 None.
+
+## Deployed
+
+2026-11-13, from merged `main` at `617ff8e`, run from kai as karc leg
+`kdashdata-3095c3`. These are the `.sprint-deploy` steps:
+
+- `just publish` printed "nothing to publish: 0.1.0-4837473 already in the
+  store". That is a deliberate no-op, because this sprint changed no publisher
+  input.
+- `just deploy` installed `kdash-pub 0.1.0-4837473` (unchanged) on kai,
+  kubs0, cleo, kimac and thrall. knarr skipped three hosts it is allowed to
+  skip, and exited 0:
+  - komarchy: ssh timed out.
+  - kbook2: ssh timed out.
+  - thrall-arch: its hostname did not resolve.
+
+  These skips are what knarr reported from kai. They are not a reachability
+  verdict from anywhere else.
+
+Nothing in this sprint has a live surface to smoke-test: the registry and the
+README are documentation.
