@@ -169,6 +169,10 @@ Sprint 021 (korg:4575) then registered `kdash:weather:{loc}` v1, code-free:
 outdoor conditions, sun times and a daily forecast for kpidash's filler card,
 provider-neutral by design (the kweather collector classifies into a closed
 `cond` set), ts-owned, with no new CD — it is CD-27 applied a third time.
+Sprint 022 (korg:4598, slice 3 of program korg:4599) removed the
+kpidash-internal keys nothing reads or writes any more — activities, repos,
+fortune, and the `graph` / `fortune_dev` commands — from the registry, after
+kpidash sprints 032 and 036 removed their readers and last writers.
 See `docs/architecture.md` (decisions
 CD-1…CD-27, open questions OQ-n), `contracts/rules.md`,
 `contracts/registry.md`, `include/kdash/kdash.h` for the consumer API, and

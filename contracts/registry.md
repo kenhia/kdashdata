@@ -103,13 +103,18 @@ these feeds render missing rows as absent *things*.
 
 | Keys | Pattern | Notes |
 |---|---|---|
-| `kpidash:activities`, `kpidash:activity:{uuid}` | event log: ZSET index + HASH per entry, capped 20 | activity ticker |
-| `kpidash:repos:{host}` | HASH field=path value=JSON, ~30 s | only non-clean/off-default repos are written; clean → `HDEL` |
-| `kpidash:fortune:current`, `kpidash:fortune:pushed` | latest-value | pushed overrides rotation, EX 300 |
 | `kpidash:status:current`, `kpidash:status:ack:{id}` | latest-value + ack key (EX 60) | the CD-5 sanctioned client-write example |
-| `kpidash:cmd:*` | dev/control toggles, EX 300 | grid, textsize, graph, fortune_dev, services:evict (GETDEL) |
+| `kpidash:cmd:*` | dev/control toggles, EX 300 | grid, textsize, services:evict (GETDEL) |
 | `kpidash:screenshot` | one-shot command (GETDEL) | device self-screenshot |
 | `kpidash:system:*` | diagnostics | logpath/version plain strings; mem:current + mem:ring (LPUSH, trim 1500) |
+
+**Retired from this table** (kdashdata 022, korg:4598): `kpidash:activities` /
+`kpidash:activity:{uuid}`, `kpidash:repos:{host}`, `kpidash:fortune:current` /
+`kpidash:fortune:pushed`, and the `graph` (`kpidash:cmd:graph`,
+`kpidash:cmd:graph:{host}`) and `fortune_dev` commands under `kpidash:cmd:*`.
+kpidash sprint 032 (korg:4562) removed every reader; kpidash-client 2.0.0,
+sprint 036 (korg:4596), removed the last writers and deleted the keys on
+central. The shapes are on kpidash's git tag `last-with-dev-graphs-fortune`.
 
 ## Family: kdash (central, live)
 

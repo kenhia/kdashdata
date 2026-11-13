@@ -17,7 +17,7 @@ publisher.publish_expiring("kpidash:client:kai:health", {"ok": True}, ttl=5)
 publisher.publish_latest("kpidash:apttemps:office", {"zone": "office", "temp_c": 22.4})
 
 # event log, capped — the writer owns the cap, so it is a required argument
-publisher.publish_event("kpidash:activities", {"what": "deploy"}, cap=20)
+publisher.publish_event("claude:recent", {"host": "kai", "project": "kdashdata", "ended_ts": 1758499000}, cap=20)
 ```
 
 Nothing above names a host, a port or a password. The endpoint comes from
