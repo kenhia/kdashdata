@@ -128,6 +128,7 @@ first key arrived with the publisher wrappers in sprint 003.
 | `kdash:net:ack:{host}` | latest-value, expiring | Ken or an agent, on demand (`SET … EX 86400`) | 24 h | [net-ack](schemas/kdash-net-ack.schema.json) |
 | `kdash:update:{host}:{kind}` | latest-value, presence-owned | k-homelab's apt runner, per run (not yet — see below) | none (never) | [update](schemas/kdash-update.schema.json) |
 | `kdash:nas:{host}` | latest-value, expiring | kpidash-client on the NAS host (not yet — see below) | 3× cadence | [nas](schemas/kdash-nas.schema.json) — **v1** |
+| `kdash:weather:{loc}` | latest-value, ts-owned | kweather on kai, every 10 min (not yet — see below) | none | [weather](schemas/kdash-weather.schema.json) — **v1** |
 
 `selftest` is a publish canary, not a dashboard feed: running it from a host
 proves that host's whole publish path — khlenv discovery, `REDISCLI_AUTH`, key
@@ -551,6 +552,62 @@ cadence, and `ts` for the stale label. **Writer, not yet**: kpidash-client on
 the NAS host, over the connection it already has (as for `kdash:net`).
 **Reader**: the gratch big panel (WI 3956). No C reader ships with this
 contract.
+
+### `kdash:weather:{loc}` — outdoor weather for a filler card (sprint 021)
+
+korg WI 4573. Current conditions, today's sun times and a short daily
+forecast for one named location. **v1, field names pinned**, under CD-27's
+rule: a breaking change is `kdash:weather:v2:{loc}`.
+
+**`{loc}` is a location token, not a host.** `home` is the only one today. It
+obeys the host-token grammar (rules.md), so the three-segment parse is the same
+as every other `kdash:<family>:{token}` key, and a second location later is a
+second key with no contract change. Coordinates are not in the key or the
+payload: they are the collector's private configuration.
+
+**The consumer** is kpidash's weather filler in the host row's spare columns.
+It draws at one to four column widths and not at all when the row is full, so
+nothing in this feed is critical and the card trims to what fits — `days` is
+capped at 8 and the card draws as many as it has room for.
+
+**The payload is provider-neutral, and that is the design.** The collector
+(kweather, korg project 85) asks Open-Meteo and falls back to NWS, and maps
+either into this one shape:
+
+- `cond` is a **closed lowercase set** — `clear`, `partly`, `cloudy`, `fog`,
+  `drizzle`, `rain`, `sleet`, `snow`, `thunder` — that the collector
+  classifies into. No provider code or text goes on the wire, so changing or
+  adding a provider never reaches a dashboard. A new `cond` value is a
+  breaking change (a v1 reader has no icon for it).
+- `source` names the provider that answered. Diagnostic only; nothing branches
+  on it, which is why it is a free string and not an enum.
+- Units are pinned in the field names (`_f` Fahrenheit, `_pct` percent).
+- `sun` (first light, sunrise, sunset, last light; unix seconds) is computed
+  by the collector from latitude/longitude, not taken from a provider. First
+  and last light are civil twilight. The reader formats them in its own
+  timezone.
+- `days[0]` is **always today** in the location's calendar. The collector
+  publishes nothing rather than a list that starts on another day, so a reader
+  never has to check.
+
+**Present-and-null, never absent** (CD-27): `now`'s numbers when the provider
+had a forecast but no usable current reading; today's `hi_f` on NWS when the
+collector never saw it before NWS dropped the daytime period; the last day's
+`lo_f` when a provider's list ends on a daytime period; `sun` fields on a
+polar day or night. One documented difference a reader cannot see: `lo_f` is
+the calendar day's minimum from Open-Meteo and the coming night's low from
+NWS.
+
+**Freshness** is reader-owned via `ts`, with no TTL: the last reading should
+outlive a dead collector, greyed, rather than vanish. The suggested window is
+**1 hour** against a 10-minute cadence. When every provider is down the
+collector **publishes nothing**, so an ageing `ts` means exactly "no provider
+answered since" — it never republishes an old reading under a new `ts`.
+
+**Writer, not yet**: kweather's systemd user timer on kai, through `kdash-pub
+set` (kweather WI 4574 installs it). **Reader**: kpidash's filler card. No C
+reader ships with this contract; the card's session asks for one if it wants
+it.
 
 ### Provisional: `kdash:korg:*` — korg data for the panels (CD-26, sprint 018)
 

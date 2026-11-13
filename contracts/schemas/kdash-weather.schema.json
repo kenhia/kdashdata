@@ -1,0 +1,221 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/kenhia/kdashdata/contracts/schemas/kdash-weather.schema.json",
+  "title": "kdash weather",
+  "description": "Payload of kdash:weather:{loc} — latest-value TS-OWNED (STRING JSON, no TTL), exactly 3 segments, on central (KDASH_CENTRAL_REDIS). Current conditions, today's sun times and a short daily forecast for one named location (`home`). Contract v1. The consumer is kpidash's weather filler in the host row, which draws at 1-4 column widths and may not draw at all, so nothing here is critical and the card trims to what fits. Written about every 10 minutes by the kweather collector; the last record outlives a dead collector and the reader ages it by `ts` (suggested window 1 h — the collector publishes nothing when every provider is down, so a stale `ts` means exactly that). PROVIDER-NEUTRAL: the collector maps Open-Meteo, or NWS when Open-Meteo is down, into this one shape, and `cond` is the collector's closed classification, never a provider code. Units are pinned in the field names (`_f` Fahrenheit, `_pct` percent). Nulls are present-and-null, never absent: a provider that cannot supply a value says so, and the card draws a dash. Field names are pinned; a rename, retype or removal lands as kdash:weather:v2:{loc} (rules.md Versioning).",
+  "type": "object",
+  "required": ["ts", "source", "now", "sun", "days"],
+  "additionalProperties": true,
+  "properties": {
+    "ts": {
+      "type": "number",
+      "exclusiveMinimum": 0,
+      "maximum": 100000000000,
+      "description": "Unix seconds (float) when the collector fetched this record, writer's clock. Bounded at 1e11 so a millisecond stamp fails instead of reading as permanently fresh."
+    },
+    "source": {
+      "type": "string",
+      "maxLength": 16,
+      "description": "Which provider answered: `open-meteo` or `nws` today. Display/diagnostic only; nothing branches on it, so a new provider is not a breaking change."
+    },
+    "now": {
+      "type": "object",
+      "required": ["temp_f", "humidity_pct", "feels_f", "cond", "is_day"],
+      "additionalProperties": true,
+      "description": "Current conditions. The three numbers and `cond` are null together when the provider had a forecast but no usable current reading (NWS with no recent station observation).",
+      "properties": {
+        "temp_f": {
+          "type": ["number", "null"],
+          "minimum": -150,
+          "maximum": 150,
+          "description": "Air temperature, degrees Fahrenheit, one decimal."
+        },
+        "humidity_pct": {
+          "type": ["integer", "null"],
+          "minimum": 0,
+          "maximum": 100,
+          "description": "Relative humidity, whole percent."
+        },
+        "feels_f": {
+          "type": ["number", "null"],
+          "minimum": -150,
+          "maximum": 150,
+          "description": "Apparent temperature, degrees Fahrenheit. Equal to `temp_f` when the provider reports neither wind chill nor heat index."
+        },
+        "cond": {
+          "enum": ["clear", "partly", "cloudy", "fog", "drizzle", "rain", "sleet", "snow", "thunder", null],
+          "description": "The collector's classification of the sky right now. Lowercase and closed: the card picks an icon from it and an unknown value distrusts the record. `sleet` covers every freezing or mixed precipitation; `thunder` covers any thunderstorm and the severe-storm codes. null when the provider gave nothing classifiable."
+        },
+        "is_day": {
+          "type": "boolean",
+          "description": "Whether `ts` falls between `sun.sunrise` and `sun.sunset`, computed by the collector, so the card can choose a sun or moon glyph without doing the comparison."
+        }
+      }
+    },
+    "sun": {
+      "type": "object",
+      "required": ["first_light", "sunrise", "sunset", "last_light"],
+      "additionalProperties": true,
+      "description": "Today's sun events for the location, unix seconds, computed by the collector from latitude/longitude (not taken from a provider). The reader formats them in its own timezone. null only where the event does not occur that day (polar day or night).",
+      "properties": {
+        "first_light": {
+          "type": ["integer", "null"],
+          "exclusiveMinimum": 0,
+          "maximum": 100000000000,
+          "description": "Start of morning civil twilight (sun 6 degrees below the horizon)."
+        },
+        "sunrise": {
+          "type": ["integer", "null"],
+          "exclusiveMinimum": 0,
+          "maximum": 100000000000,
+          "description": "Sunrise."
+        },
+        "sunset": {
+          "type": ["integer", "null"],
+          "exclusiveMinimum": 0,
+          "maximum": 100000000000,
+          "description": "Sunset."
+        },
+        "last_light": {
+          "type": ["integer", "null"],
+          "exclusiveMinimum": 0,
+          "maximum": 100000000000,
+          "description": "End of evening civil twilight."
+        }
+      }
+    },
+    "days": {
+      "type": "array",
+      "maxItems": 8,
+      "description": "Daily forecast, oldest first. days[0] is ALWAYS today in the location's calendar, so today's high/low has no separate field; the collector publishes nothing rather than a list that starts on another day. The card draws as many as fit.",
+      "items": {
+        "type": "object",
+        "required": ["date", "hi_f", "lo_f", "cond", "pop_pct"],
+        "additionalProperties": true,
+        "properties": {
+          "date": {
+            "type": "string",
+            "maxLength": 10,
+            "description": "Local calendar date, `YYYY-MM-DD`. The card derives the weekday label from it."
+          },
+          "hi_f": {
+            "type": ["integer", "null"],
+            "minimum": -150,
+            "maximum": 150,
+            "description": "Forecast high, whole degrees Fahrenheit. null only for today, only on NWS, and only when the collector never saw today's high before NWS dropped the daytime period (the collector remembers it across runs)."
+          },
+          "lo_f": {
+            "type": ["integer", "null"],
+            "minimum": -150,
+            "maximum": 150,
+            "description": "Forecast low, whole degrees Fahrenheit. Provider nuance: Open-Meteo's is the calendar day's minimum (usually the early morning), NWS's is the coming night's low. null when the provider's list ends on a daytime period."
+          },
+          "cond": {
+            "enum": ["clear", "partly", "cloudy", "fog", "drizzle", "rain", "sleet", "snow", "thunder", null],
+            "description": "The day's classification, same closed set as `now.cond`."
+          },
+          "pop_pct": {
+            "type": ["integer", "null"],
+            "minimum": 0,
+            "maximum": 100,
+            "description": "Highest probability of precipitation in the day, whole percent. null when the provider gives none."
+          }
+        }
+      }
+    }
+  },
+  "examples": [
+    {
+      "ts": 1794528429.6,
+      "source": "open-meteo",
+      "now": {"temp_f": 60.8, "humidity_pct": 63, "feels_f": 59.2, "cond": "cloudy", "is_day": true},
+      "sun": {"first_light": 1794494179, "sunrise": 1794496173, "sunset": 1794530276, "last_light": 1794532269},
+      "days": [
+        {"date": "2026-11-12", "hi_f": 61, "lo_f": 52, "cond": "cloudy", "pop_pct": 33},
+        {"date": "2026-11-13", "hi_f": 59, "lo_f": 50, "cond": "rain", "pop_pct": 77},
+        {"date": "2026-11-14", "hi_f": 57, "lo_f": 51, "cond": "thunder", "pop_pct": null}
+      ]
+    },
+    {
+      "ts": 1794535000.0,
+      "source": "nws",
+      "now": {"temp_f": null, "humidity_pct": null, "feels_f": null, "cond": null, "is_day": false},
+      "sun": {"first_light": 1794494179, "sunrise": 1794496173, "sunset": 1794530276, "last_light": 1794532269},
+      "days": [
+        {"date": "2026-11-12", "hi_f": null, "lo_f": 52, "cond": "rain", "pop_pct": 33},
+        {"date": "2026-11-13", "hi_f": 59, "lo_f": null, "cond": "rain", "pop_pct": 77}
+      ]
+    },
+    {
+      "ts": 1797800000.0,
+      "source": "open-meteo",
+      "now": {"temp_f": -4.0, "humidity_pct": 80, "feels_f": -18.5, "cond": "snow", "is_day": false},
+      "sun": {"first_light": null, "sunrise": null, "sunset": null, "last_light": null},
+      "days": [
+        {"date": "2026-12-21", "hi_f": -2, "lo_f": -11, "cond": "snow", "pop_pct": 60}
+      ]
+    }
+  ],
+  "x-counterexamples": [
+    {
+      "record": {
+        "ts": 1794528429.6,
+        "source": "nws",
+        "now": {"temp_f": 60.8, "humidity_pct": 63, "feels_f": 60.8, "cond": "clear", "is_day": true},
+        "sun": {"first_light": 1794494179, "sunrise": 1794496173, "sunset": 1794530276, "last_light": 1794532269},
+        "days": [
+          {"date": "2026-11-12", "lo_f": 52, "cond": "rain", "pop_pct": 33}
+        ]
+      },
+      "why": "an afternoon NWS record with no known high sends `hi_f` as null, not absent — absence is indistinguishable from a collector that forgot the field"
+    },
+    {
+      "record": {
+        "ts": 1794528429.6,
+        "source": "nws",
+        "now": {"temp_f": 60.8, "humidity_pct": 63, "feels_f": 60.8, "cond": "Mostly Cloudy", "is_day": true},
+        "sun": {"first_light": 1794494179, "sunrise": 1794496173, "sunset": 1794530276, "last_light": 1794532269},
+        "days": [
+          {"date": "2026-11-12", "hi_f": 61, "lo_f": 52, "cond": "cloudy", "pop_pct": 33}
+        ]
+      },
+      "why": "`cond` is the collector's closed classification; a provider's own text or code on the wire is the leak this contract exists to prevent, because the card has no icon for it"
+    },
+    {
+      "record": {
+        "ts": 1794528429.6,
+        "source": "open-meteo",
+        "now": {"temp_f": 60.8, "humidity_pct": 63, "feels_f": 59.2, "cond": "cloudy", "is_day": true},
+        "sun": {"first_light": 1794494179000, "sunrise": 1794496173000, "sunset": 1794530276000, "last_light": 1794532269000},
+        "days": [
+          {"date": "2026-11-12", "hi_f": 61, "lo_f": 52, "cond": "cloudy", "pop_pct": 33}
+        ]
+      },
+      "why": "sun events are unix SECONDS; a millisecond stamp would put sunrise tens of thousands of years out and the card would format nonsense"
+    },
+    {
+      "record": {
+        "ts": 1794528429600,
+        "source": "open-meteo",
+        "now": {"temp_f": 60.8, "humidity_pct": 63, "feels_f": 59.2, "cond": "cloudy", "is_day": true},
+        "sun": {"first_light": 1794494179, "sunrise": 1794496173, "sunset": 1794530276, "last_light": 1794532269},
+        "days": [
+          {"date": "2026-11-12", "hi_f": 61, "lo_f": 52, "cond": "cloudy", "pop_pct": 33}
+        ]
+      },
+      "why": "`ts` in milliseconds reads as a record from the far future, which readers treat as clock skew and therefore fresh — a dead collector would never go stale"
+    },
+    {
+      "record": {
+        "ts": 1794528429.6,
+        "source": "open-meteo",
+        "now": {"temp_f": 60.8, "humidity_pct": 163, "feels_f": 59.2, "cond": "cloudy", "is_day": true},
+        "sun": {"first_light": 1794494179, "sunrise": 1794496173, "sunset": 1794530276, "last_light": 1794532269},
+        "days": [
+          {"date": "2026-11-12", "hi_f": 61, "lo_f": 52, "cond": "cloudy", "pop_pct": 33}
+        ]
+      },
+      "why": "humidity and probability are whole percents in 0..100; a value outside that is a mapping bug, not weather"
+    }
+  ]
+}
