@@ -76,3 +76,24 @@ produced a live payload: its forecast API was unreachable all day.
   Ken supplying coordinates.
 - kpidash — bump `lib/kdashdata` to this sprint's merge commit to get the
   schema in-tree (nothing in the C library changed).
+
+## Deployed
+
+2026-11-12, from merged `main` (`bf56d03`, PR #22), by `/sprint-ship` running
+the two steps `.sprint-deploy` declares.
+
+- **`just publish`** — a deliberate no-op: "nothing to publish: 0.1.0-4837473
+  already in the store". This sprint changed no publisher input.
+- **`just deploy`** — knarr installed `kdash-pub` `latest` (`0.1.0-4837473`,
+  unchanged) on kai, kubs0, cleo, kimac and thrall. komarchy and kbook2 did
+  not answer and thrall-arch did not resolve; all three are `--host-optional`
+  and were reported SKIPPED, exit 0.
+
+What this sprint delivered is a schema and a registry entry, and those are
+live by being on `main`: `scripts/check.py` on merged `main` reports 20
+schemas registered and validating. No key was written; the first
+`kdash:weather:home` record is kweather WI 4574's.
+
+Noted, not changed: thrall-arch is still in `just deploy`'s optional host
+list although that install was retired on 2026-10-24 (korg:4034). It costs a
+skipped line per deploy and nothing else.
