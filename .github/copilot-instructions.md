@@ -165,6 +165,10 @@ ZFS pool and disk health projected from gratch-ui's collector with the field
 mapping pinned in the registry (CD-27's second application); and
 `kdash:net:ack:{host}`, the 24 h ack that clears a reviewed network-card
 warning, applied on the panel rather than in each producer (CD-27 addendum).
+Sprint 021 (korg:4575) then registered `kdash:weather:{loc}` v1, code-free:
+outdoor conditions, sun times and a daily forecast for kpidash's filler card,
+provider-neutral by design (the kweather collector classifies into a closed
+`cond` set), ts-owned, with no new CD — it is CD-27 applied a third time.
 See `docs/architecture.md` (decisions
 CD-1…CD-27, open questions OQ-n), `contracts/rules.md`,
 `contracts/registry.md`, `include/kdash/kdash.h` for the consumer API, and
