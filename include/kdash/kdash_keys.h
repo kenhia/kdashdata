@@ -57,6 +57,10 @@
 #define KDASH_KEY_KORG_PULSE   "kdash:korg:pulse"
 #define KDASH_KEY_KLAMS_STATUS "kdash:klams:status"
 
+/* The tagged-days feed for the time and calendar card (CD-30). One fixed key;
+ * a v2 lands beside it as `kdash:calendar:v2`. */
+#define KDASH_KEY_CALENDAR "kdash:calendar"
+
 /* The claude family (registry.md). Two of the three are single fixed keys, so
  * they are literals rather than grammars; only the session family is parsed. */
 #define KDASH_KEY_CLAUDE_SESSION_PFX "claude:session:"

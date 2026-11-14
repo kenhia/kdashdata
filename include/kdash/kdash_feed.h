@@ -148,6 +148,14 @@ kdash_status_t kdash_panelshot(kdash_conn_t *c, const char *host,
 kdash_status_t kdash_korg_pulse(kdash_conn_t *c, kdash_korg_pulse_t *out);
 kdash_status_t kdash_klams_status(kdash_conn_t *c, kdash_klams_status_t *out);
 
+/* GET kdash:calendar — the tagged days (CD-30). One fixed key on the central
+ * stem, one round trip. KDASH_ABSENT means no publisher has written it, or it
+ * is not schema-valid; KDASH_UNAVAIL means the endpoint did not answer. A
+ * caller that gets either keeps drawing its LAST GOOD record: an unreadable or
+ * old calendar is never a reason to blank tags that rarely change. Staleness
+ * is kdash_calendar_covers() against today's local date. */
+kdash_status_t kdash_calendar(kdash_conn_t *c, kdash_calendar_t *out);
+
 /* ---- the claude family --------------------------------------------------
  *
  * These live at their OWN endpoint (CD-7), so they need a handle opened on

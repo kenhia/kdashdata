@@ -1817,6 +1817,75 @@ handles additively. Also rejected: a sentinel value (`-1`) in `five_hour_pct`.
 That changes the field's meaning, and old readers clamp it to 0 anyway, so
 nothing would be gained.
 
+## CD-30 — `kdash:calendar` carries concrete tagged days, and a window that misses today is its staleness (sprint 025)
+
+kdashdata WI 4663, slice 1 of program korg:4669. kpidash's row 3 gets a 2×1
+time and calendar card (mock-up A, 24-hour clock) that marks weekends, Ken's
+days off, holidays and special days. The overseer decided the inputs before
+this sprint: the tagged-days list lives in korg, holidays are US federal and
+computed by rule with observed weekdays marked, and the feed carries concrete
+dates. This decision is the wire shape.
+
+**One provider-neutral key, `kdash:calendar`, ts-owned, no TTL, on central.**
+It is not `kdash:korg:calendar`. The family under `kdash:korg:*` copies korg's
+own figures (CD-26), and these are days, which a repo file could equally hold
+(the alternative the overseer weighed). `kdash:weather:{loc}` set the same
+precedent: name the content, not the source.
+
+**The publisher expands; the reader compares strings.** Every entry is one
+`YYYY-MM-DD`. Repeats, nth-weekday holidays and observed-weekday shifts never
+reach the panel, so the C side needs no calendar arithmetic and no tz
+database beyond knowing today's local date. An observed holiday is its own
+entry whose name says `(observed)`, rather than a flag: the card shows a name
+either way, and a flag would be a second way to say the same thing.
+
+**Dates are America/Los_Angeles, named in the contract.** The fleet's Linux
+hosts are `Etc/UTC` system-wide, so "local date" alone would be read as UTC by
+exactly the programs this feed serves.
+
+**The record states its own window.** `from` is the first of the current
+month and `to` at least 90 days ahead. That makes absence meaningful: a date
+inside the window with no entry is untagged, a date outside is unknown. It
+also gives the feed its real staleness test. Tags change rarely and an hourly
+publisher that misses a day has lost nothing, so an old `ts` is a muted hint
+at most and never blanks the card. A window that no longer covers today is
+stale, and the card falls back to an untagged grid.
+`kdash_calendar_covers()` is that test, and `kdash_cadence_stale()` (CD-28)
+still serves the hint, which is why `expected_refresh_s` stays required.
+
+**One entry per date, carrying all its tags.** `off` is a required boolean.
+`holiday`, `special` and `short` are optional strings, absent when there is no
+such tag and never null or empty. CD-27's present-and-null rule is for a
+value the producer could not measure; an untagged date is fully known, so
+absence is the honest statement. `off` is required because a boolean is
+always knowable, and `off: false` beside a holiday says something (Ken works
+it).
+
+**Bounds are sized to the card, not to the longest name in the world.**
+`holiday` and `special` are at most 31 characters, which fits
+`Martin Luther King Jr. Day` and `Independence Day (observed)`. `short` is at
+most 12 characters. `days` holds at most 64 entries, roughly five times
+what a 120-day window holds today. In C a cap truncates and flags, keeping
+the **earliest** 64, because those include the month on screen. An entry that
+is malformed, untagged or outside the window is skipped and counted. A
+record whose window is missing, malformed or inverted is rejected whole,
+because without a window no absence means anything.
+
+**No `v` field**, following CD-28: the version lives in the key, and a
+breaking change is `kdash:calendar:v2`. A writer may still send `v`, and
+readers ignore it. WI 4663's sketch listed `v`; this is the one departure
+from it.
+
+**The reader's value cap rose from 8 KB to 16 KB.** A full record (64
+entries, every string at its bound) is 9,378 bytes, and `VALUE_MAX` is a
+clamp on a reply hiredis has already allocated, so raising it costs nothing.
+`test_feed` measures the full record against it, as it does the korg pulse.
+
+Rejected: a per-month key (`kdash:calendar:2026-11`). It moves the window
+arithmetic into every reader and turns a month boundary into a missing key.
+Also rejected: carrying weekends or every date with a tag set. That puts 120
+mostly empty entries on the wire for a card that knows what a Saturday is.
+
 ## Open questions
 
 - **OQ-2 — Redis ACL writer/reader split** (see CD-2).

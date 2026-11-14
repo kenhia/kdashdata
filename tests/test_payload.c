@@ -1351,5 +1351,176 @@ int main(void) {
         CHECK(strcmp(h.hostname, "kai") == 0, "parsed under a length bound");
     }
 
+    /* ---- kdash:calendar (CD-30) ---- */
+    {
+        kdash_calendar_t cal;
+#define CAL_HEAD                                                               \
+    "{\"ts\":1794643200.5,\"expected_refresh_s\":3600,"                        \
+    "\"from\":\"2026-11-01\",\"to\":\"2027-02-12\","
+
+        /* This month as the program's acceptance names it: the 11th, a run of
+         * three days off, and the 27th carrying TWO tags in one entry. */
+        CHECK(PARSE(kdash_parse_calendar,
+                    CAL_HEAD "\"days\":["
+                    "{\"date\":\"2026-11-11\",\"off\":false,"
+                    "\"holiday\":\"Veterans Day\",\"short\":\"Veterans\"},"
+                    "{\"date\":\"2026-11-25\",\"off\":true},"
+                    "{\"date\":\"2026-11-26\",\"off\":true,"
+                    "\"holiday\":\"Thanksgiving\",\"short\":\"Thanksgiving\"},"
+                    "{\"date\":\"2026-11-27\",\"off\":true,"
+                    "\"special\":\"Ken's birthday\",\"short\":\"Bday\"}],"
+                    "\"v\":1,\"unknown_future_field\":{\"x\":1}}",
+                    &cal),
+              "full calendar, with `v` and an unknown field ignored");
+        CHECK(cal.ts > 1794643200.0 && cal.expected_refresh_s == 3600.0, "head");
+        CHECK(strcmp(cal.from, "2026-11-01") == 0 &&
+                  strcmp(cal.to, "2027-02-12") == 0,
+              "window");
+        CHECK(cal.days_count == 4 && cal.days_skipped == 0 &&
+                  !cal.days_truncated,
+              "four days, nothing skipped or cut");
+        CHECK(!cal.days[0].off &&
+                  strcmp(cal.days[0].holiday, "Veterans Day") == 0 &&
+                  cal.days[0].special[0] == '\0' &&
+                  strcmp(cal.days[0].short_label, "Veterans") == 0,
+              "a worked holiday: off false, named, no special");
+        CHECK(cal.days[1].off && cal.days[1].holiday[0] == '\0' &&
+                  cal.days[1].special[0] == '\0' &&
+                  cal.days[1].short_label[0] == '\0',
+              "a bare day off: absent strings read as empty");
+
+        const kdash_calendar_day_t *d = kdash_calendar_day(&cal, "2026-11-27");
+        CHECK(d && d->off && strcmp(d->special, "Ken's birthday") == 0 &&
+                  strcmp(d->short_label, "Bday") == 0,
+              "the 27th is a day off AND a birthday, in one entry");
+        CHECK(kdash_calendar_day(&cal, "2026-11-12") == NULL,
+              "an untagged date inside the window has no entry");
+        CHECK(kdash_calendar_covers(&cal, "2026-11-14"), "today is covered");
+        CHECK(kdash_calendar_covers(&cal, "2026-11-01") &&
+                  kdash_calendar_covers(&cal, "2027-02-12"),
+              "the window is inclusive at both ends");
+        CHECK(!kdash_calendar_covers(&cal, "2026-10-31") &&
+                  !kdash_calendar_covers(&cal, "2027-02-13"),
+              "outside the window is not covered: the stale condition");
+        CHECK(kdash_calendar_day(&cal, "2027-03-01") == NULL,
+              "and outside it there is no entry to find");
+
+        /* All three tags at once: an observed holiday Ken takes off, which is
+         * also a special day, with one short label for the whole entry. */
+        CHECK(PARSE(kdash_parse_calendar,
+                    "{\"ts\":1783015200,\"expected_refresh_s\":3600,"
+                    "\"from\":\"2026-07-01\",\"to\":\"2026-09-30\",\"days\":["
+                    "{\"date\":\"2026-07-03\",\"off\":true,"
+                    "\"holiday\":\"Independence Day (observed)\","
+                    "\"special\":\"Lake trip\",\"short\":\"July 4th\"},"
+                    "{\"date\":\"2026-07-04\",\"off\":false,"
+                    "\"holiday\":\"Independence Day\"}]}",
+                    &cal),
+              "an entry with all three tags");
+        d = kdash_calendar_day(&cal, "2026-07-03");
+        CHECK(d && d->off &&
+                  strcmp(d->holiday, "Independence Day (observed)") == 0 &&
+                  strcmp(d->special, "Lake trip") == 0 &&
+                  strcmp(d->short_label, "July 4th") == 0,
+              "off, holiday, special and short all carried");
+
+        /* Nothing tagged: a statement, and every covered date is untagged. */
+        CHECK(PARSE(kdash_parse_calendar, CAL_HEAD "\"days\":[]}", &cal),
+              "empty days");
+        CHECK(cal.days_count == 0 && cal.days_skipped == 0 &&
+                  kdash_calendar_covers(&cal, "2026-11-14") &&
+                  kdash_calendar_day(&cal, "2026-11-14") == NULL,
+              "an empty list still covers its window");
+
+        /* Bad entries are skipped and counted; the record survives them. */
+        CHECK(PARSE(kdash_parse_calendar,
+                    CAL_HEAD "\"days\":["
+                    "{\"date\":\"2026-11-02\",\"off\":false},"
+                    "{\"date\":\"2026-10-31\",\"off\":true},"
+                    "{\"date\":\"2027-02-13\",\"off\":true},"
+                    "{\"date\":\"2026-11-03\",\"off\":true,\"holiday\":null},"
+                    "{\"date\":\"2026-11-04\",\"off\":true,\"special\":\"\"},"
+                    "{\"date\":\"2026-11-05\",\"off\":true,"
+                    "\"short\":\"Thirteen chrs\"},"
+                    "{\"date\":\"2026-11-06\",\"off\":true,"
+                    "\"holiday\":\"abcdefghijklmnopqrstuvwxyz012345\"},"
+                    "{\"date\":\"2026-11-07\",\"off\":\"yes\"},"
+                    "{\"date\":\"2026-11-08\",\"holiday\":\"No off\"},"
+                    "{\"date\":\"11/09/2026\",\"off\":true},"
+                    "\"2026-11-10\","
+                    "{\"date\":\"2026-11-26\",\"off\":true,"
+                    "\"holiday\":\"Thanksgiving\"}]}",
+                    &cal),
+              "a record with eleven bad entries and one good one");
+        CHECK(cal.days_count == 1 && cal.days_skipped == 11 &&
+                  strcmp(cal.days[0].date, "2026-11-26") == 0,
+              "only the good entry kept, %d skipped", cal.days_skipped);
+        CHECK(kdash_calendar_day(&cal, "2026-11-02") == NULL,
+              "an untagged entry is not a tagged day");
+
+        /* Over the cap: the EARLIEST 64 kept, because they hold this month. */
+        {
+            static char big[16384];
+            int n = snprintf(big, sizeof(big),
+                             "{\"ts\":1794643200,\"expected_refresh_s\":3600,"
+                             "\"from\":\"2026-01-01\",\"to\":\"2026-12-31\","
+                             "\"days\":[");
+            for (int i = 0; i < 70; i++)
+                n += snprintf(big + n, sizeof(big) - n,
+                              "%s{\"date\":\"2026-%02d-%02d\",\"off\":true}",
+                              i ? "," : "", 1 + i / 28, 1 + i % 28);
+            n += snprintf(big + n, sizeof(big) - n, "]}");
+            CHECK(PARSE(kdash_parse_calendar, big, &cal), "70 entries parse");
+            CHECK(cal.days_count == KDASH_CALENDAR_DAYS_MAX &&
+                      cal.days_truncated && cal.days_skipped == 0,
+                  "64 kept and flagged");
+            CHECK(strcmp(cal.days[0].date, "2026-01-01") == 0 &&
+                      strcmp(cal.days[63].date, "2026-03-08") == 0,
+                  "the earliest 64, last kept \"%s\"", cal.days[63].date);
+        }
+
+        /* Record-level rejections: without a window, no absence means anything. */
+        CHECK(!PARSE(kdash_parse_calendar,
+                     "{\"ts\":1,\"expected_refresh_s\":3600,"
+                     "\"from\":\"2026-11-01\",\"days\":[]}",
+                     &cal),
+              "`to` absent rejects");
+        CHECK(!PARSE(kdash_parse_calendar,
+                     "{\"ts\":1,\"expected_refresh_s\":3600,"
+                     "\"from\":\"2026-11-01\",\"to\":\"2026-10-31\",\"days\":[]}",
+                     &cal),
+              "an inverted window rejects");
+        CHECK(!PARSE(kdash_parse_calendar,
+                     "{\"ts\":1,\"expected_refresh_s\":3600,"
+                     "\"from\":\"2026-11-1\",\"to\":\"2027-02-12\",\"days\":[]}",
+                     &cal),
+              "a malformed `from` rejects");
+        CHECK(!PARSE(kdash_parse_calendar, CAL_HEAD "\"days\":{}}", &cal),
+              "days that is not an array rejects");
+        CHECK(!PARSE(kdash_parse_calendar,
+                     "{\"ts\":1,\"expected_refresh_s\":3600,"
+                     "\"from\":\"2026-11-01\",\"to\":\"2027-02-12\"}",
+                     &cal),
+              "days absent rejects; empty is the way to say none");
+        CHECK(!PARSE(kdash_parse_calendar,
+                     "{\"ts\":1,\"from\":\"2026-11-01\","
+                     "\"to\":\"2027-02-12\",\"days\":[]}",
+                     &cal),
+              "a missing cadence rejects");
+        CHECK(!PARSE(kdash_parse_calendar,
+                     "{\"ts\":1794643200000,\"expected_refresh_s\":3600,"
+                     "\"from\":\"2026-11-01\",\"to\":\"2027-02-12\",\"days\":[]}",
+                     &cal),
+              "a millisecond ts rejects");
+        CHECK(cal.days_count == 0 && cal.from[0] == '\0' &&
+                  !kdash_calendar_covers(&cal, "2026-11-14"),
+              "a rejected record is zeroed and covers nothing");
+        CHECK(!kdash_calendar_covers(NULL, "2026-11-14") &&
+                  kdash_calendar_day(NULL, "2026-11-14") == NULL &&
+                  kdash_calendar_day(&cal, NULL) == NULL,
+              "NULL in, false/NULL out");
+#undef CAL_HEAD
+    }
+
     return TEST_RESULT();
 }

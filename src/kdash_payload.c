@@ -1256,3 +1256,95 @@ bool kdash_parse_klams_status(const char *json, size_t len,
     cJSON_Delete(root);
     return ok;
 }
+
+/* ---- kdash:calendar (CD-30) ---- */
+
+/* An optional tag string: absent is "" and true; present must be a string of
+ * 1..outsz-1 chars, copied whole, or the entry is malformed. Null is not
+ * absence -- the schema says an untagged date omits the field. */
+static bool opt_tag(const cJSON *item, const char *field, char *out,
+                    size_t outsz) {
+    if (!cJSON_GetObjectItemCaseSensitive(item, field)) {
+        out[0] = '\0';
+        return true;
+    }
+    return req_name(item, field, out, outsz);
+}
+
+static bool in_window(const char *date, const char *from, const char *to) {
+    return strcmp(date, from) >= 0 && strcmp(date, to) <= 0;
+}
+
+static bool take_calendar_day(const cJSON *item, const kdash_calendar_t *cal,
+                              kdash_calendar_day_t *d) {
+    memset(d, 0, sizeof(*d));
+    if (!cJSON_IsObject(item) || !req_date(item, "date", d->date))
+        return false;
+    const cJSON *off = cJSON_GetObjectItemCaseSensitive(item, "off");
+    if (!cJSON_IsBool(off))
+        return false;
+    d->off = cJSON_IsTrue(off);
+    if (!opt_tag(item, "holiday", d->holiday, sizeof(d->holiday)) ||
+        !opt_tag(item, "special", d->special, sizeof(d->special)) ||
+        !opt_tag(item, "short", d->short_label, sizeof(d->short_label)))
+        return false;
+    /* An entry with no tag says nothing; one outside the window contradicts
+     * the record's own statement of what it covers. */
+    if (!d->off && d->holiday[0] == '\0' && d->special[0] == '\0')
+        return false;
+    return in_window(d->date, cal->from, cal->to);
+}
+
+bool kdash_parse_calendar(const char *json, size_t len, kdash_calendar_t *out) {
+    if (!out)
+        return false;
+    memset(out, 0, sizeof(*out));
+
+    cJSON *root = parse_object(json, len);
+    if (!root)
+        return false;
+
+    const cJSON *days = cJSON_GetObjectItemCaseSensitive(root, "days");
+    bool ok = req_status_head(root, &out->ts, &out->expected_refresh_s) &&
+              req_date(root, "from", out->from) &&
+              req_date(root, "to", out->to) &&
+              strcmp(out->from, out->to) <= 0 && cJSON_IsArray(days);
+
+    if (ok) {
+        /* Not walk_array: whether an entry is kept depends on the window, and
+         * the cap applies to KEPT entries, so the earliest 64 good dates
+         * survive even when a bad one sits among them. */
+        const cJSON *item = NULL;
+        cJSON_ArrayForEach(item, days) {
+            kdash_calendar_day_t d;
+            if (!take_calendar_day(item, out, &d)) {
+                out->days_skipped++;
+            } else if (out->days_count < KDASH_CALENDAR_DAYS_MAX) {
+                out->days[out->days_count++] = d;
+            } else {
+                out->days_truncated = true;
+            }
+        }
+    }
+
+    if (!ok)
+        memset(out, 0, sizeof(*out));
+    cJSON_Delete(root);
+    return ok;
+}
+
+bool kdash_calendar_covers(const kdash_calendar_t *cal, const char *date) {
+    if (!cal || !date || cal->from[0] == '\0' || cal->to[0] == '\0')
+        return false;
+    return in_window(date, cal->from, cal->to);
+}
+
+const kdash_calendar_day_t *kdash_calendar_day(const kdash_calendar_t *cal,
+                                               const char *date) {
+    if (!kdash_calendar_covers(cal, date))
+        return NULL;
+    for (int i = 0; i < cal->days_count; i++)
+        if (strcmp(cal->days[i].date, date) == 0)
+            return &cal->days[i];
+    return NULL;
+}

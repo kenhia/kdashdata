@@ -672,4 +672,63 @@ bool kdash_parse_klams_status(const char *json, size_t len,
 bool kdash_klams_health_from_str(const char *s, kdash_klams_health_t *out);
 const char *kdash_klams_health_str(kdash_klams_health_t h);
 
+/* ---- kdash:calendar (CD-30) ---------------------------------------------
+ *
+ * The tagged days for the time and calendar card: Ken's days off, holidays
+ * and special days, already expanded by the publisher to concrete dates. Every
+ * date is `YYYY-MM-DD` in America/Los_Angeles, so a caller compares strings and
+ * does no calendar arithmetic -- but it must take `today` in that zone, not
+ * from a UTC system clock.
+ *
+ * Freshness is NOT ts-first here. Tags change rarely, so a caller keeps
+ * drawing the last good record; kdash_cadence_stale() on `ts` is a muted hint
+ * at most. The real stale condition is a window that no longer covers today:
+ * kdash_calendar_covers() false, and then the card draws its grid untagged. */
+
+#define KDASH_CALENDAR_DAYS_MAX  64 /* the schema's maxItems             */
+#define KDASH_CALENDAR_NAME_MAX  32 /* 31 chars + NUL, `holiday`/`special` */
+#define KDASH_CALENDAR_SHORT_MAX 13 /* 12 chars + NUL, `short`             */
+
+typedef struct {
+    char date[KDASH_DATE_MAX];               /* `YYYY-MM-DD`               */
+    bool off;                                /* a personal day off         */
+    char holiday[KDASH_CALENDAR_NAME_MAX];   /* "" when not a holiday      */
+    char special[KDASH_CALENDAR_NAME_MAX];   /* "" when not a special day  */
+    char short_label[KDASH_CALENDAR_SHORT_MAX]; /* wire `short`; "" = none */
+} kdash_calendar_day_t;
+
+typedef struct {
+    double ts;                 /* required, positive */
+    double expected_refresh_s; /* required, >= 1     */
+
+    /* The window, inclusive. Inside it a date with no entry is untagged;
+     * outside it a date is unknown. from <= to always holds after a parse. */
+    char from[KDASH_DATE_MAX];
+    char to[KDASH_DATE_MAX];
+
+    /* Ascending by date, as the writer sent it. */
+    kdash_calendar_day_t days[KDASH_CALENDAR_DAYS_MAX];
+    int  days_count;
+    int  days_skipped;   /* malformed, untagged, or outside the window */
+    bool days_truncated; /* the FIRST (earliest) 64 were kept          */
+} kdash_calendar_t;
+
+/* Every top-level field is required, `days` included (empty is a statement).
+ * A missing, malformed or inverted window rejects the record. An entry is
+ * kept only if it has a valid `date` and boolean `off`, carries at least one
+ * tag (`off` true, `holiday` or `special`), and lies inside the window; any
+ * other entry is skipped and counted. A string tag that is present must be a
+ * non-empty string within its bound, or the entry is malformed. */
+bool kdash_parse_calendar(const char *json, size_t len, kdash_calendar_t *out);
+
+/* True when `date` (`YYYY-MM-DD`) lies inside the record's window. False for
+ * a NULL argument or a zeroed (unparsed) record. Pass today's local date: false
+ * is the calendar's stale condition. */
+bool kdash_calendar_covers(const kdash_calendar_t *cal, const char *date);
+
+/* The entry for `date`, or NULL when it is untagged (or outside the window, or
+ * either argument is NULL). Linear: at most 64 entries. */
+const kdash_calendar_day_t *kdash_calendar_day(const kdash_calendar_t *cal,
+                                               const char *date);
+
 #endif /* KDASH_PAYLOAD_H */

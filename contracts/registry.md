@@ -136,6 +136,7 @@ first key arrived with the publisher wrappers in sprint 003.
 | `kdash:weather:{loc}` | latest-value, ts-owned | kweather on kai, every 10 min (not yet — see below) | none | [weather](schemas/kdash-weather.schema.json) — **v1** |
 | `kdash:korg:pulse` | latest-value, ts-owned | korg's `bin/korg-pulse` on kai, every 5 min | none | [korg-pulse](schemas/kdash-korg-pulse.schema.json) — **v1** |
 | `kdash:klams:status` | latest-value, ts-owned | klams-monitor on kubs0, every 60 s | none | [klams-status](schemas/kdash-klams-status.schema.json) — **v1** |
+| `kdash:calendar` | latest-value, ts-owned | korg on kai, hourly and on every change (not yet — see below) | none | [calendar](schemas/kdash-calendar.schema.json) — **v1** |
 
 `selftest` is a publish canary, not a dashboard feed: running it from a host
 proves that host's whole publish path — khlenv discovery, `REDISCLI_AUTH`, key
@@ -709,6 +710,61 @@ library's existing spelling for an unknown stamp. Over-long `scanners` and
 `subsystems` keep the first 8, over-long `new_per_day` keeps the newest 14,
 and each is flagged. **Writer**: klams-monitor on kubs0, every
 60 s (its `[kdash_status]` section, klams sprint 059), through `kdash-pub set`.
+
+### `kdash:calendar` — tagged days for the time and calendar card (sprint 025)
+
+kdashdata WI 4663, slice 1 of program korg:4669 (kpidash row 3). **v1, field
+names pinned** (CD-30): a breaking change is `kdash:calendar:v2`. The key is
+provider-neutral, like `kdash:weather:{loc}`: korg holds the tagged-days list
+today, but the feed describes days, not korg.
+
+**The consumer** is kpidash's 2×1 time and calendar card. The card draws the
+24-hour clock, the month grid and the weekends itself. This feed carries only
+the dates that have something to say: Ken's days off, holidays and special
+days.
+
+- **Concrete dates only.** Yearly repeats, "fourth Thursday of November" and
+  observed-weekday rules are the publisher's business. Every entry is one
+  `YYYY-MM-DD`, and a reader does no date arithmetic beyond comparing those
+  strings.
+- **Dates are America/Los_Angeles**, the home's timezone. The fleet's Linux
+  hosts run `Etc/UTC`, so a consumer that takes `today` from the system clock
+  without the zone is wrong for eight hours of every day.
+- **The window is `from`..`to`, inclusive.** `from` is the first day of the
+  current month, so the visible month is always whole. `to` is at least 90
+  days ahead. Inside the window, a date with no entry is affirmatively
+  untagged. Outside it, a date is unknown.
+- **One entry per tagged date**, sorted ascending, carrying all of that
+  date's tags: `off` (required boolean, a personal day off), `holiday` and
+  `special` (each an optional name of 1..31 characters), and `short` (an
+  optional label of at most 12 characters for tight spaces). An absent
+  string means no such tag. It is never null and never empty. `off` is
+  independent of `holiday`: a holiday Ken works is `off: false`. A holiday
+  on a weekend is listed on its date, and the weekday it is observed on is
+  its own entry, named `… (observed)`. At most 64 entries.
+- **Producer obligations the validator cannot check** (no `anyOf`, no date
+  comparison, CD-24): every entry carries at least one tag, lies inside the
+  window, and appears once; and `to` is not before `from`.
+
+**Freshness** is not the cadence rule's to decide here. Tags change rarely, so
+the card **keeps drawing the last good record**. An old `ts`, judged with
+`kdash_cadence_stale()` against `expected_refresh_s` (3600 for an hourly
+publisher), is a muted hint at most and **never a reason to blank the
+calendar**. The real stale condition is a window that no longer covers today:
+`kdash_calendar_covers()` false. Then the card draws the grid and weekends
+untagged.
+
+**C reader**: `kdash_calendar()` in `kdash_feed.h`. It is one GET on an
+ordinary central-stem handle, parsed by `kdash_parse_calendar()` in
+`kdash_payload.h`, which is in `kdash_core` (kpidash links only that). A
+record with a bad or inverted window is rejected. An entry that is malformed,
+carries no tag or lies outside the window is skipped and counted in
+`days_skipped`. Past 64 the **first** (earliest) entries are kept and
+`days_truncated` is set, because the earliest include this month.
+`kdash_calendar_day()` looks one date up and returns NULL for an untagged one.
+**Writer**: korg on kai (korg:4667, not yet built), hourly and on every change
+to the list, through `kdash-pub set kdash:calendar '<json>'`. `kdash` is
+already in both allowlists.
 
 ### Provisional: `kdash:korg:*` — korg data for the panels (CD-26, sprint 018)
 

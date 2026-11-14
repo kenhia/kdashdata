@@ -385,6 +385,48 @@ static void dump_status(kdash_conn_t *c, long long now) {
     }
 }
 
+/* The tagged-days feed (CD-30). Its staleness is the window, not `ts`: today
+ * is taken in America/Los_Angeles, the zone the feed's dates are in, because
+ * this host's clock is UTC. */
+static void dump_calendar(kdash_conn_t *c, long long now) {
+    printf("\n== calendar (kdash:calendar) ==\n");
+
+    char today[KDASH_DATE_MAX] = "";
+    time_t t = (time_t)now;
+    struct tm tm;
+    setenv("TZ", "America/Los_Angeles", 1);
+    tzset();
+    if (localtime_r(&t, &tm))
+        strftime(today, sizeof(today), "%Y-%m-%d", &tm);
+
+    kdash_calendar_t cal;
+    switch (kdash_calendar(c, &cal)) {
+    case KDASH_UNAVAIL:
+        printf("  unavailable\n");
+        return;
+    case KDASH_ABSENT:
+        printf("  no record\n");
+        return;
+    case KDASH_OK:
+        break;
+    }
+    printf("  %s..%s  %d day(s), %d skipped%s  today %s %s%s\n", cal.from,
+           cal.to, cal.days_count, cal.days_skipped,
+           cal.days_truncated ? " [truncated]" : "", today,
+           kdash_calendar_covers(&cal, today) ? "covered" : "NOT COVERED [stale]",
+           kdash_cadence_stale(cal.ts, cal.expected_refresh_s, now,
+                               KDASH_CADENCE_GRACE_S)
+               ? "  [old ts]"
+               : "");
+    for (int i = 0; i < cal.days_count; i++) {
+        const kdash_calendar_day_t *d = &cal.days[i];
+        printf("    %s%s%s%s%s%s%s%s\n", d->date, d->off ? "  off" : "",
+               d->holiday[0] ? "  holiday=" : "", d->holiday,
+               d->special[0] ? "  special=" : "", d->special,
+               d->short_label[0] ? "  short=" : "", d->short_label);
+    }
+}
+
 int main(int argc, char **argv) {
     kdash_conn_opts_t opts = {.app = "kdash-dump"}; /* .stem NULL -> central */
     if (argc > 1)
@@ -411,6 +453,7 @@ int main(int argc, char **argv) {
     dump_apttemps(c, now);
     dump_panel(c, now);
     dump_status(c, now);
+    dump_calendar(c, now);
     dump_claude(cc, now);
 
     /* A dashboard would render "unavailable" here and carry on; a CLI can be

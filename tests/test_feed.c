@@ -42,6 +42,7 @@ static struct {
     const char *value;               /* what get_string hands back            */
     const char *const *hfields;      /* get_hash's flat field,value,... list  */
     int reads;                       /* per-key reads that arrived            */
+    char last_key[64];               /* the key get_string was last asked for */
 } fake;
 
 static void arm(const char *const *keys, int fail_at, int absent_at) {
@@ -86,7 +87,7 @@ static redisReply *bulk(const char *s) {
 static kdash_status_t fake_get_string(kdash_conn_t *c, const char *key,
                                       redisReply **out) {
     (void)c;
-    (void)key;
+    snprintf(fake.last_key, sizeof(fake.last_key), "%s", key);
     *out = NULL;
     kdash_status_t st = fake_next();
     if (st != KDASH_OK)
@@ -155,6 +156,15 @@ static const kdash_feed_io_t FAKE_IO = {
     "\"version\":null,\"uptime_s\":null,\"knowledge\":null,\"facts\":null,"    \
     "\"events\":null,\"scanners\":[],\"subsystems\":[],\"queue_depth\":null,"  \
     "\"queue_capacity\":null,\"backup_at\":null,\"new_per_day\":[]}"
+#define CALENDAR_JSON                                                          \
+    "{\"ts\":1794643200,\"expected_refresh_s\":3600,"                         \
+    "\"from\":\"2026-11-01\",\"to\":\"2027-02-12\",\"days\":["               \
+    "{\"date\":\"2026-11-27\",\"off\":true,\"special\":\"Ken's birthday\"}]}"
+
+/* src/kdash_feed.c's VALUE_MAX, which is private to that unit. A record at
+ * every cap must come in under it, or the reader would truncate a live feed
+ * into invalid JSON and call it ABSENT. */
+#define FEED_VALUE_MAX 16384
 
 static const char *const SERVICE_KEYS[] = {
     "kpidash:services:alpha:kai",
@@ -409,7 +419,8 @@ int main(void) {
                           "%s{\"date\":\"2026-11-%02d\",\"open\":9999999}",
                           d ? "," : "", d + 1);
         n += snprintf(big + n, sizeof(big) - n, "]}");
-        CHECK(n < 8192, "a full-cap korg pulse is %d bytes, under VALUE_MAX", n);
+        CHECK(n < FEED_VALUE_MAX,
+              "a full-cap korg pulse is %d bytes, under VALUE_MAX", n);
 
         arm(NULL, 0, 0);
         fake.value = big;
@@ -442,6 +453,74 @@ int main(void) {
     CHECK(kdash_klams_status(c, &klams) == KDASH_ABSENT,
           "klams status: no publisher yet is ABSENT");
     CHECK(all_zero(&klams, sizeof(klams)), "and out is zeroed");
+
+    /* ---- kdash:calendar (CD-30): one fixed key, one GET ---- */
+
+    kdash_calendar_t cal;
+    arm(NULL, 0, 0);
+    fake.value = CALENDAR_JSON;
+    memset(&cal, POISON, sizeof(cal));
+    CHECK(kdash_calendar(c, &cal) == KDASH_OK, "calendar reads");
+    CHECK(strcmp(fake.last_key, "kdash:calendar") == 0,
+          "from kdash:calendar, got \"%s\"", fake.last_key);
+    CHECK(cal.days_count == 1 && cal.days[0].off &&
+              kdash_calendar_covers(&cal, "2026-11-14"),
+          "and parses");
+
+    arm(NULL, 1, 0);
+    fake.value = CALENDAR_JSON;
+    memset(&cal, POISON, sizeof(cal));
+    CHECK(kdash_calendar(c, &cal) == KDASH_UNAVAIL,
+          "calendar: an unreachable endpoint is UNAVAIL");
+    CHECK(all_zero(&cal, sizeof(cal)), "and out is zeroed");
+
+    arm(NULL, 0, 1);
+    fake.value = CALENDAR_JSON;
+    memset(&cal, POISON, sizeof(cal));
+    CHECK(kdash_calendar(c, &cal) == KDASH_ABSENT,
+          "calendar: no publisher yet is ABSENT");
+    CHECK(all_zero(&cal, sizeof(cal)), "and out is zeroed");
+
+    arm(NULL, 0, 0);
+    fake.value = "{\"ts\":1,\"expected_refresh_s\":3600,\"days\":[]}";
+    memset(&cal, POISON, sizeof(cal));
+    CHECK(kdash_calendar(c, &cal) == KDASH_ABSENT,
+          "a calendar with no window is ABSENT, never an all-untagged month");
+    CHECK(all_zero(&cal, sizeof(cal)), "and out is zeroed");
+
+    /* The largest calendar the schema allows: 64 entries, every string at its
+     * bound, the widest `ts` and cadence. It is the biggest record any schema
+     * here allows, and the reason VALUE_MAX is 16 KB (CD-30). */
+    {
+        static char big[32768];
+        int n = snprintf(big, sizeof(big),
+                         "{\"ts\":1794643200.123456,\"expected_refresh_s\":86400,"
+                         "\"from\":\"2026-01-01\",\"to\":\"2026-12-31\","
+                         "\"days\":[");
+        for (int i = 0; i < KDASH_CALENDAR_DAYS_MAX; i++)
+            n += snprintf(big + n, sizeof(big) - n,
+                          "%s{\"date\":\"2026-%02d-%02d\",\"off\":false,"
+                          "\"holiday\":\"%s\",\"special\":\"%s\","
+                          "\"short\":\"%s\"}",
+                          i ? "," : "", 1 + i / 28, 1 + i % 28,
+                          "hhhhhhhhhhhhhhhhhhhhhhhhhhhhhhh",
+                          "sssssssssssssssssssssssssssssss", "tttttttttttt");
+        n += snprintf(big + n, sizeof(big) - n, "]}");
+        CHECK(n > 8192 && n < FEED_VALUE_MAX,
+              "a full-cap calendar is %d bytes: over the old 8 KB, under "
+              "VALUE_MAX",
+              n);
+
+        arm(NULL, 0, 0);
+        fake.value = big;
+        memset(&cal, POISON, sizeof(cal));
+        CHECK(kdash_calendar(c, &cal) == KDASH_OK, "and reads whole");
+        CHECK(cal.days_count == KDASH_CALENDAR_DAYS_MAX && !cal.days_truncated &&
+                  cal.days_skipped == 0 &&
+                  strlen(cal.days[63].holiday) == 31 &&
+                  strlen(cal.days[63].short_label) == 12,
+              "with every entry and every string whole");
+    }
 
     /* ---- putting it back ---- */
 
