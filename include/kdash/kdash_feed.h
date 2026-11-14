@@ -156,6 +156,14 @@ kdash_status_t kdash_klams_status(kdash_conn_t *c, kdash_klams_status_t *out);
  * is kdash_calendar_covers() against today's local date. */
 kdash_status_t kdash_calendar(kdash_conn_t *c, kdash_calendar_t *out);
 
+/* GET kdash:agents — the last 24 hours of agent sessions as bars (CD-31). One
+ * fixed key on the central stem, one round trip. KDASH_ABSENT means no
+ * publisher has written it, or it is not schema-valid; KDASH_UNAVAIL means the
+ * endpoint did not answer. Judge `ts` with kdash_cadence_stale(), and draw a
+ * bar's right edge with kdash_agents_bar_end(). The record is ~20 KB, so a
+ * caller on a small stack holds it statically. */
+kdash_status_t kdash_agents(kdash_conn_t *c, kdash_agents_t *out);
+
 /* ---- the claude family --------------------------------------------------
  *
  * These live at their OWN endpoint (CD-7), so they need a handle opened on

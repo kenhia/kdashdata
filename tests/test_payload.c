@@ -1458,6 +1458,21 @@ int main(void) {
         CHECK(kdash_calendar_day(&cal, "2026-11-02") == NULL,
               "an untagged entry is not a tagged day");
 
+        /* Names are bounded in CHARACTERS, as the schema counts: 31 accented
+         * characters are 62 bytes and fit; 32 do not. Likewise `short`. */
+        CHECK(PARSE(kdash_parse_calendar,
+                    CAL_HEAD "\"days\":["
+                    "{\"date\":\"2026-11-02\",\"off\":false,\"holiday\":"
+                    "\"ééééééééééééééééééééééééééééééé\",\"short\":\"Día de Ánimo\"},"
+                    "{\"date\":\"2026-11-03\",\"off\":false,\"special\":"
+                    "\"éééééééééééééééééééééééééééééééé\"}]}",
+                    &cal),
+              "two UTF-8 names");
+        CHECK(cal.days_count == 1 && cal.days_skipped == 1 &&
+                  strlen(cal.days[0].holiday) == 62 &&
+                  strcmp(cal.days[0].short_label, "Día de Ánimo") == 0,
+              "31 characters and a 12-character short kept whole, 32 skipped");
+
         /* Over the cap: the EARLIEST 64 kept, because they hold this month. */
         {
             static char big[16384];
@@ -1520,6 +1535,253 @@ int main(void) {
                   kdash_calendar_day(&cal, NULL) == NULL,
               "NULL in, false/NULL out");
 #undef CAL_HEAD
+    }
+
+    /* ---- kdash:agents (CD-31) ---- */
+    {
+        static kdash_agents_t ag; /* ~20 KB: static, as a card would hold it */
+#define AG_HEAD                                                                \
+    "{\"ts\":1794700000.5,\"expected_refresh_s\":60,\"window_s\":86400,"
+#define AG_BAR(id, start, end, state, ship, ovs, extra)                        \
+    "{\"id\":\"" id "\",\"host\":\"kai\",\"name\":\"kdashdata\","             \
+    "\"start\":" #start ",\"end\":" #end ",\"state\":\"" state "\","          \
+    "\"shipped\":" #ship ",\"overseer\":" #ovs extra "}"
+
+        /* An overseer on cleo with a leg on kai hanging from it, a finished
+         * stretch that shipped, and a session waiting on Ken. */
+        CHECK(PARSE(kdash_parse_agents,
+                    AG_HEAD "\"bars\":["
+                    "{\"id\":\"ov1\",\"host\":\"cleo\",\"name\":\"kpidash Agents card\","
+                    "\"start\":1794680000,\"end\":1794700000.5,"
+                    "\"state\":\"working\",\"shipped\":false,\"overseer\":true},"
+                    AG_BAR("leg1", 1794685000, 1794690000, "done", true, false,
+                           ",\"parent\":\"ov1\"") ","
+                    AG_BAR("s3.b2", 1794695000, 1794700000.5, "waiting", false,
+                           false, "") "],"
+                    "\"v\":1,\"unknown_future_field\":{\"x\":1}}",
+                    &ag),
+              "agents record, with `v` and an unknown field ignored");
+        CHECK(ag.ts > 1794700000.0 && ag.expected_refresh_s == 60.0 &&
+                  ag.window_s == 86400.0,
+              "head");
+        CHECK(ag.bars_count == 3 && ag.bars_skipped == 0 &&
+                  !ag.bars_truncated && ag.parents_dropped == 0,
+              "three bars, nothing skipped, cut or dropped");
+        CHECK(strcmp(ag.bars[0].host, "cleo") == 0 && ag.bars[0].overseer &&
+                  ag.bars[0].state == KDASH_AGENT_WORKING &&
+                  ag.bars[0].parent_index == -1 && ag.bars[0].parent[0] == '\0',
+              "the overseer bar");
+        CHECK(ag.bars[1].shipped && ag.bars[1].state == KDASH_AGENT_DONE &&
+                  ag.bars[1].parent_index == 0 &&
+                  strcmp(ag.bars[1].parent, "ov1") == 0,
+              "the leg hangs from the overseer, index %d",
+              ag.bars[1].parent_index);
+        CHECK(ag.bars[2].state == KDASH_AGENT_WAITING &&
+                  strcmp(ag.bars[2].id, "s3.b2") == 0,
+              "the waiting bar");
+
+        /* The right edge. Fresh record: running bars reach now, done bars
+         * stop at `end`. Stale record: running bars stop at `end` too. */
+        long long now = 1794700030;
+        CHECK(kdash_agents_bar_end(&ag, &ag.bars[0], now) == (double)now &&
+                  kdash_agents_bar_end(&ag, &ag.bars[2], now) == (double)now,
+              "fresh: working and waiting bars reach now");
+        CHECK(kdash_agents_bar_end(&ag, &ag.bars[1], now) == 1794690000.0,
+              "a done bar ends at its end");
+        CHECK(kdash_agents_bar_end(&ag, &ag.bars[0], 1794700000) == 1794700000.0,
+              "and an end past the reader's clock is clipped to now");
+        now = 1794700000 + 60 + KDASH_CADENCE_GRACE_S + 1;
+        CHECK(kdash_agents_bar_end(&ag, &ag.bars[0], now) == 1794700000.5,
+              "stale: a running bar stops where the publisher last saw it");
+        CHECK(kdash_agents_bar_end(NULL, &ag.bars[0], now) == 0 &&
+                  kdash_agents_bar_end(&ag, NULL, now) == 0,
+              "NULL in, 0 out");
+
+        /* The state words round-trip. */
+        kdash_agent_state_t st;
+        CHECK(kdash_agent_state_from_str("waiting", &st) &&
+                  st == KDASH_AGENT_WAITING &&
+                  strcmp(kdash_agent_state_str(st), "waiting") == 0 &&
+                  !kdash_agent_state_from_str("Waiting", &st) &&
+                  !kdash_agent_state_from_str("idle", &st),
+              "state words, case-sensitive and closed");
+
+        /* No agent ran in the window: a statement, not an absence. */
+        CHECK(PARSE(kdash_parse_agents, AG_HEAD "\"bars\":[]}", &ag),
+              "empty bars");
+        CHECK(ag.bars_count == 0 && ag.bars_skipped == 0 && ag.ts > 0,
+              "an empty record is a valid record");
+
+        /* Bad bars are skipped and counted; the record survives them. */
+        CHECK(PARSE(kdash_parse_agents,
+                    AG_HEAD "\"bars\":["
+                    AG_BAR("a", 1794690000, 1794691000, "idle", false, false, "") ","
+                    AG_BAR("b", 1794690000, 1794691000, "Done", false, false, "") ","
+                    AG_BAR("c", 1794692000, 1794691000, "done", false, false, "") ","
+                    AG_BAR("d", 1794600000, 1794613000, "done", false, false, "") ","
+                    AG_BAR("abcdefghijklmnopqrstuvwx", 1794690000, 1794691000,
+                           "done", false, false, "") ","
+                    AG_BAR("e f", 1794690000, 1794691000, "done", false, false, "") ","
+                    "{\"id\":\"g\",\"host\":\"a-very-long-host\",\"name\":\"x\","
+                    "\"start\":1794690000,\"end\":1794691000,\"state\":\"done\","
+                    "\"shipped\":false,\"overseer\":false},"
+                    "{\"id\":\"h\",\"host\":\"kai\","
+                    "\"name\":\"abcdefghijklmnopqrstuvwxyz012345\","
+                    "\"start\":1794690000,\"end\":1794691000,\"state\":\"done\","
+                    "\"shipped\":false,\"overseer\":false},"
+                    "{\"id\":\"i\",\"host\":\"kai\",\"name\":\"\","
+                    "\"start\":1794690000,\"end\":1794691000,\"state\":\"done\","
+                    "\"shipped\":false,\"overseer\":false},"
+                    AG_BAR("j", 1794690000, 1794691000, "done", "no", false, "") ","
+                    "{\"id\":\"k\",\"host\":\"kai\",\"name\":\"x\","
+                    "\"start\":1794690000,\"end\":1794691000,\"state\":\"done\","
+                    "\"shipped\":false},"
+                    AG_BAR("l", 1794690000000, 1794691000000, "done", false,
+                           false, "") ","
+                    "\"m\","
+                    AG_BAR("ok", 1794690000, 1794691000, "done", false, false, "") ","
+                    AG_BAR("ok", 1794692000, 1794693000, "done", false, false, "")
+                    "]}",
+                    &ag),
+              "a record with fourteen bad bars and one good one");
+        CHECK(ag.bars_count == 1 && ag.bars_skipped == 14 &&
+                  strcmp(ag.bars[0].id, "ok") == 0 &&
+                  ag.bars[0].start == 1794690000.0,
+              "only the first `ok` kept, %d skipped", ag.bars_skipped);
+
+        /* A name is bounded in CHARACTERS, as the schema counts: 31 non-ASCII
+         * characters fit, though they are 62 bytes. */
+        CHECK(PARSE(kdash_parse_agents,
+                    AG_HEAD "\"bars\":[{\"id\":\"u\",\"host\":\"kai\",\"name\":"
+                    "\"ééééééééééééééééééééééééééééééé\","
+                    "\"start\":1794690000,\"end\":1794691000,\"state\":\"done\","
+                    "\"shipped\":false,\"overseer\":false},"
+                    "{\"id\":\"v\",\"host\":\"kai\",\"name\":"
+                    "\"éééééééééééééééééééééééééééééééé\","
+                    "\"start\":1794690000,\"end\":1794691000,\"state\":\"done\","
+                    "\"shipped\":false,\"overseer\":false}]}",
+                    &ag),
+              "two UTF-8 names");
+        CHECK(ag.bars_count == 1 && ag.bars_skipped == 1 &&
+                  strlen(ag.bars[0].name) == 62,
+              "31 characters kept whole, 32 skipped");
+
+        /* A bar that started before the window but ends inside it is kept with
+         * its true start; the card clips. One that ended before is skipped. */
+        CHECK(PARSE(kdash_parse_agents,
+                    AG_HEAD "\"bars\":["
+                    AG_BAR("early", 1794600000, 1794614000.5, "done", false,
+                           false, "") "]}",
+                    &ag),
+              "a bar straddling the window's left edge");
+        CHECK(ag.bars_count == 1 && ag.bars[0].start == 1794600000.0,
+              "kept, start unclipped");
+
+        /* Parent links: dangling, naming a non-overseer, naming itself,
+         * malformed and null are all dropped; the bars are kept. A parent
+         * that appears LATER in the record still resolves. */
+        CHECK(PARSE(kdash_parse_agents,
+                    AG_HEAD "\"bars\":["
+                    AG_BAR("p1", 1794690000, 1794691000, "done", false, false,
+                           ",\"parent\":\"gone\"") ","
+                    AG_BAR("p2", 1794690000, 1794691000, "done", false, false,
+                           ",\"parent\":\"p1\"") ","
+                    AG_BAR("p3", 1794690000, 1794691000, "done", false, true,
+                           ",\"parent\":\"p3\"") ","
+                    AG_BAR("p4", 1794690000, 1794691000, "done", false, false,
+                           ",\"parent\":7") ","
+                    AG_BAR("p5", 1794690000, 1794691000, "done", false, false,
+                           ",\"parent\":null") ","
+                    AG_BAR("p6", 1794690000, 1794691000, "done", false, false,
+                           ",\"parent\":\"ov\"") ","
+                    AG_BAR("ov", 1794695000, 1794699000, "done", false, true,
+                           "") "]}",
+                    &ag),
+              "a record with five bad parent links and one good one");
+        CHECK(ag.bars_count == 7 && ag.bars_skipped == 0 &&
+                  ag.parents_dropped == 5,
+              "every bar kept, %d links dropped", ag.parents_dropped);
+        CHECK(ag.bars[0].parent_index == -1 && ag.bars[0].parent[0] == '\0' &&
+                  ag.bars[1].parent_index == -1 &&
+                  ag.bars[2].parent_index == -1 &&
+                  ag.bars[3].parent_index == -1 &&
+                  ag.bars[4].parent_index == -1,
+              "a dropped link reads as no parent");
+        CHECK(ag.bars[5].parent_index == 6 &&
+                  strcmp(ag.bars[5].parent, "ov") == 0,
+              "a forward link resolves");
+
+        /* 96 bars, the schema's cap: all kept. 100: the NEWEST 96 kept,
+         * because the card's right edge is now. A link to an evicted overseer
+         * is dropped. */
+        {
+            static char big[65536];
+            int n = snprintf(big, sizeof(big), AG_HEAD "\"bars\":[");
+            for (int i = 0; i < 100; i++)
+                n += snprintf(big + n, sizeof(big) - n,
+                              "%s{\"id\":\"b%d\",\"host\":\"kai\",\"name\":\"x\","
+                              "\"start\":%d,\"end\":%d,\"state\":\"done\","
+                              "\"shipped\":false,\"overseer\":%s%s}",
+                              i ? "," : "", i, 1794690000 + i, 1794690000 + i,
+                              i == 0 ? "true" : "false",
+                              i == 99 ? ",\"parent\":\"b0\"" : "");
+            n += snprintf(big + n, sizeof(big) - n, "]}");
+            CHECK(PARSE(kdash_parse_agents, big, &ag), "100 bars parse");
+            CHECK(ag.bars_count == KDASH_AGENTS_BARS_MAX && ag.bars_truncated &&
+                      ag.bars_skipped == 0,
+                  "96 kept and flagged");
+            CHECK(strcmp(ag.bars[0].id, "b4") == 0 &&
+                      strcmp(ag.bars[95].id, "b99") == 0,
+                  "the newest 96, first kept \"%s\"", ag.bars[0].id);
+            CHECK(ag.bars[95].parent_index == -1 && ag.parents_dropped == 1,
+                  "a link to an evicted overseer is dropped");
+
+            n = snprintf(big, sizeof(big), AG_HEAD "\"bars\":[");
+            for (int i = 0; i < KDASH_AGENTS_BARS_MAX; i++)
+                n += snprintf(big + n, sizeof(big) - n,
+                              "%s{\"id\":\"b%d\",\"host\":\"kai\",\"name\":\"x\","
+                              "\"start\":%d,\"end\":%d,\"state\":\"done\","
+                              "\"shipped\":false,\"overseer\":false}",
+                              i ? "," : "", i, 1794690000 + i, 1794690000 + i);
+            n += snprintf(big + n, sizeof(big) - n, "]}");
+            CHECK(PARSE(kdash_parse_agents, big, &ag) &&
+                      ag.bars_count == KDASH_AGENTS_BARS_MAX &&
+                      !ag.bars_truncated,
+                  "exactly 96 bars: all kept, not flagged");
+        }
+
+        /* Record-level rejections. */
+        CHECK(!PARSE(kdash_parse_agents,
+                     "{\"ts\":1,\"expected_refresh_s\":60,\"bars\":[]}", &ag),
+              "window_s absent rejects");
+        CHECK(!PARSE(kdash_parse_agents,
+                     "{\"ts\":1,\"expected_refresh_s\":60,\"window_s\":60,"
+                     "\"bars\":[]}",
+                     &ag),
+              "a window under an hour rejects");
+        CHECK(!PARSE(kdash_parse_agents,
+                     "{\"ts\":1,\"expected_refresh_s\":60,\"window_s\":86400.5,"
+                     "\"bars\":[]}",
+                     &ag),
+              "a fractional window rejects");
+        CHECK(!PARSE(kdash_parse_agents,
+                     "{\"ts\":1,\"expected_refresh_s\":60,\"window_s\":86400}",
+                     &ag),
+              "bars absent rejects; empty is the way to say none");
+        CHECK(!PARSE(kdash_parse_agents, AG_HEAD "\"bars\":{}}", &ag),
+              "bars that is not an array rejects");
+        CHECK(!PARSE(kdash_parse_agents,
+                     "{\"ts\":1,\"window_s\":86400,\"bars\":[]}", &ag),
+              "a missing cadence rejects");
+        CHECK(!PARSE(kdash_parse_agents,
+                     "{\"ts\":1794700000000,\"expected_refresh_s\":60,"
+                     "\"window_s\":86400,\"bars\":[]}",
+                     &ag),
+              "a millisecond ts rejects");
+        CHECK(ag.bars_count == 0 && ag.ts == 0 && ag.window_s == 0,
+              "a rejected record is zeroed");
+#undef AG_BAR
+#undef AG_HEAD
     }
 
     return TEST_RESULT();

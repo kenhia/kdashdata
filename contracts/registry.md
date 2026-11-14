@@ -136,7 +136,8 @@ first key arrived with the publisher wrappers in sprint 003.
 | `kdash:weather:{loc}` | latest-value, ts-owned | kweather on kai, every 10 min (not yet — see below) | none | [weather](schemas/kdash-weather.schema.json) — **v1** |
 | `kdash:korg:pulse` | latest-value, ts-owned | korg's `bin/korg-pulse` on kai, every 5 min | none | [korg-pulse](schemas/kdash-korg-pulse.schema.json) — **v1** |
 | `kdash:klams:status` | latest-value, ts-owned | klams-monitor on kubs0, every 60 s | none | [klams-status](schemas/kdash-klams-status.schema.json) — **v1** |
-| `kdash:calendar` | latest-value, ts-owned | korg on kai, hourly and on every change (not yet — see below) | none | [calendar](schemas/kdash-calendar.schema.json) — **v1** |
+| `kdash:calendar` | latest-value, ts-owned | korg's `korg-calendar` timer on kai, on change and at least hourly | none | [calendar](schemas/kdash-calendar.schema.json) — **v1** |
+| `kdash:agents` | latest-value, ts-owned | ksitrep on kai, every 60 s (not yet — see below) | none | [agents](schemas/kdash-agents.schema.json) — **v1** |
 
 `selftest` is a publish canary, not a dashboard feed: running it from a host
 proves that host's whole publish path — khlenv discovery, `REDISCLI_AUTH`, key
@@ -762,9 +763,66 @@ carries no tag or lies outside the window is skipped and counted in
 `days_skipped`. Past 64 the **first** (earliest) entries are kept and
 `days_truncated` is set, because the earliest include this month.
 `kdash_calendar_day()` looks one date up and returns NULL for an untagged one.
-**Writer**: korg on kai (korg:4667, not yet built), hourly and on every change
-to the list, through `kdash-pub set kdash:calendar '<json>'`. `kdash` is
-already in both allowlists.
+**Writer**: korg's `korg-calendar` timer on kai (korg sprint 101, `c49e2b6`;
+k-homelab `repo-user-timer`), which checks every minute and writes when the
+record changes and at least hourly, through `kdash-pub set`. Live since
+2026-11-14.
+
+### `kdash:agents` — the last 24 hours of agent sessions as bars (sprint 026)
+
+kdashdata WI 4693, slice 1 of program korg:4699 (kpidash Agents card). **v1,
+field names pinned** (CD-31): a breaking change is `kdash:agents:v2`.
+
+**The consumer** is kpidash's 4×1 Agents card on row 3: a 24-hour timeline
+with one lane of host-coloured bars, legs hung under the overseer they belong
+to, a ship mark where a sprint merged, and yellow for a session waiting on
+Ken. The card draws the axis, the colours and the now line itself. This feed
+carries the bars.
+
+- **A bar is a stretch of activity, not a session.** The publisher merges
+  short gaps and splits at long ones, so one session may give several bars.
+  `id` names a bar (≤ 23 host-token characters, unique in the record), and
+  its only job on the wire is to be the target of `parent`.
+- **Each bar** carries `host` (≤ 15 host-token characters), `name` (1..31
+  characters, the project or session title, truncated by the publisher),
+  `start` and `end` (unix seconds), `state`, `shipped`, `overseer`, and an
+  optional `parent`.
+- **`state`** is `done`, `working` or `waiting`. `waiting` means the session
+  owes Ken an okay or a decision — ksitrep's `okay` and `decide` both map
+  here. A session that is merely idle has no running bar; its last stretch is
+  `done`.
+- **`end` of a running bar is the publish time.** The card draws the now
+  line from its own clock and clips every `end` to now. While the record is
+  fresh, a `working` or `waiting` bar runs to now; once the record is stale
+  (an old `ts` against `expected_refresh_s`, 60 for ksitrep), it stops at its
+  `end`, so a dead publisher does not keep growing bars it last saw an hour
+  ago. `kdash_agents_bar_end()` is that rule in one call.
+- **The window is `window_s` before `ts`** (86400 for the card). Every bar
+  that ended inside it is listed, so a host with no bar there was idle, not
+  unknown. A bar that began before the window keeps its true `start`; the
+  card clips it.
+- **`parent`** names the overseer bar a leg hangs from. It is absent when the
+  bar is not a leg or its overseer's bar is not in the record — never null
+  or empty. `overseer` true marks an overseer's own bars.
+- **At most 96 bars**, sorted by `start` ascending.
+- **Producer obligations the validator cannot check** (CD-24): `start` ≤
+  `end` ≤ `ts`; `end` ≥ `ts − window_s`; ids unique; a `parent` names another
+  bar in the record whose `overseer` is true.
+
+**C reader**: `kdash_agents()` in `kdash_feed.h`. It is one GET on an ordinary
+central-stem handle, parsed by `kdash_parse_agents()` in `kdash_payload.h`,
+which is in `kdash_core` (kpidash links only that). A record without a valid
+window or cadence is rejected. A bar that is malformed, has an unknown
+`state`, ends before it starts, ended before the window, or repeats an
+earlier `id` is skipped and counted in `bars_skipped`. Past 96 the **last**
+(newest) bars are kept and `bars_truncated` is set, because the card's right
+edge is now. A `parent` that does not resolve to another kept overseer bar is
+dropped and counted in `parents_dropped`, and its bar is kept;
+`parent_index` gives the resolved overseer's slot. `name` is bounded in
+characters, as the schema counts, and held in a 128-byte buffer. The record
+is about 21 KB in C, so a card holds it statically. **Writer**: ksitrep on kai
+(korg:4697, not yet built), every 60 s, through
+`kdash-pub set kdash:agents '<json>'`. `kdash` is already in both allowlists.
 
 ### Provisional: `kdash:korg:*` — korg data for the panels (CD-26, sprint 018)
 

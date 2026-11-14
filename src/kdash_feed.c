@@ -13,11 +13,13 @@
 #include "kdash_feed_internal.h"
 
 /* Longest payload we will pull for one record. kpidash's are well under 2 KB.
- * The largest a schema allows is a kdash:calendar at every cap — 64 entries
- * with every string at its bound, about 9.4 KB (CD-30) — and a kdash:korg:pulse
- * at every cap is about 3 KB (CD-28); both measured in test_feed. This is a
+ * The largest a schema allows is a kdash:agents at every cap — 96 bars with
+ * every string at its bound — at about 55 KB when every name is 31 astral
+ * characters written as `\u` escape pairs, and about 23 KB when they are
+ * ASCII (CD-31). A kdash:calendar at every cap is about 9.4 KB (CD-30) and a
+ * kdash:korg:pulse about 3 KB (CD-28); all measured in test_feed. This is a
  * clamp on a reply hiredis has already allocated, not a buffer. */
-#define VALUE_MAX 16384
+#define VALUE_MAX 65536
 
 /* ---- the I/O seam -------------------------------------------------------- */
 /*
@@ -549,6 +551,15 @@ static bool parse_calendar_v(const char *j, size_t n, void *out) {
 
 kdash_status_t kdash_calendar(kdash_conn_t *c, kdash_calendar_t *out) {
     return get_fixed_json(c, KDASH_KEY_CALENDAR, parse_calendar_v, out,
+                          sizeof(*out));
+}
+
+static bool parse_agents_v(const char *j, size_t n, void *out) {
+    return kdash_parse_agents(j, n, out);
+}
+
+kdash_status_t kdash_agents(kdash_conn_t *c, kdash_agents_t *out) {
+    return get_fixed_json(c, KDASH_KEY_AGENTS, parse_agents_v, out,
                           sizeof(*out));
 }
 
