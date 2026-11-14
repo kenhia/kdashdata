@@ -9,8 +9,9 @@
   "properties": {
     "five_hour_pct": { "type": "number", "minimum": 0, "maximum": 100, "description": "Five-hour window utilisation; readers clamp to [0,100] and reject non-finite values" },
     "seven_day_pct": { "type": "number", "minimum": 0, "maximum": 100, "description": "Seven-day window utilisation, same handling" },
-    "five_hour_resets_at": { "type": "integer", "description": "Unix seconds the five-hour window resets; 0 or absent = unknown. A source that does not know it leaves the previous value alone rather than writing 0" },
+    "five_hour_resets_at": { "type": "integer", "description": "Unix seconds the five-hour window resets; 0 or absent = unknown. A source that does not know it leaves the previous value alone rather than writing 0 — except when it reports no five-hour window, which writes 0 (see `five_hour_none`)" },
     "seven_day_resets_at": { "type": "integer", "description": "Unix seconds the seven-day window resets; 0 or absent = unknown" },
+    "five_hour_none": { "type": "integer", "enum": [0, 1], "description": "1 when the source reports NO five-hour window (CD-29): the oauth body's `five_hour` is null, the statusline's `rate_limits` carries no `five_hour`, or a history sample carries no `fh`. Every headline writer states it on EVERY headline write, in the same HSET as `updated_at`: 1 with `five_hour_pct` 0 and `five_hour_resets_at` 0 — written, not left alone, so no earlier writer's five-hour numbers survive beside it — or 0 with real five-hour values. `five_hour_pct` stays required and is written 0, so a reader that predates this field keeps a valid record. Absent means a writer that predates the field, whose `five_hour_pct` is a real reading. Readers treat only exactly 1 as no window, and ignore the five-hour values beside it" },
     "updated_at": { "type": "integer", "description": "Unix seconds of the OBSERVATION behind the headline fields, not of the write. This is the field a writer reads back before publishing, so it must never be advanced by a writer that did not also refresh the values beside it" },
     "expected_refresh_s": { "type": "integer", "description": "How long the headline writer expects between its own writes (statusline 60, poll 300). The reader adds its own grace; absent means a pre-cadence writer and a legacy fixed window" },
     "host": { "type": "string", "pattern": "^[A-Za-z0-9._-]{1,63}$", "description": "Host that made the observation; display and provenance only" },
@@ -46,6 +47,25 @@
     {
       "five_hour_pct": 0,
       "seven_day_pct": 0
+    },
+    {
+      "five_hour_pct": 0,
+      "seven_day_pct": 10.0,
+      "five_hour_resets_at": 0,
+      "seven_day_resets_at": 1763553600,
+      "five_hour_none": 1,
+      "updated_at": 1763082780,
+      "expected_refresh_s": 300,
+      "host": "kai",
+      "source": "oauth",
+      "ts": 1763082781,
+      "scoped_model": "Fable",
+      "scoped_pct": 11.0,
+      "scoped_resets_at": 1763553600,
+      "scoped_active": 0,
+      "scoped_count": 1,
+      "scoped_updated_at": 1763082780,
+      "scoped_expected_refresh_s": 300
     }
   ],
   "x-counterexamples": [
@@ -78,6 +98,21 @@
         "scoped_active": false
       },
       "why": "`scoped_active` is 0/1, not a JSON boolean — and `false == 0` in more than one language, which is exactly why it is written down here"
+    },
+    {
+      "record": {
+        "five_hour_pct": 0,
+        "seven_day_pct": 10.0,
+        "five_hour_none": true
+      },
+      "why": "`five_hour_none` is 0/1 like `scoped_active`, not a JSON boolean; a C reader honours only the integer 1"
+    },
+    {
+      "record": {
+        "five_hour_none": 1,
+        "seven_day_pct": 10.0
+      },
+      "why": "no five-hour window still writes `five_hour_pct`, as 0: it is required, and a reader that predates `five_hour_none` rejects the whole record when it is missing, losing the seven-day gauge with it"
     },
     {
       "record": {

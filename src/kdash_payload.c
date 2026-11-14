@@ -847,7 +847,10 @@ bool kdash_parse_claude_limits(const char *const *fields,
             have_scoped = field_pct(v, &l.scoped_pct);
         else if (strcmp(f, "scoped_resets_at") == 0)
             (void)field_ts(v, &l.scoped_resets_at);
-        else if (strcmp(f, "scoped_active") == 0) {
+        else if (strcmp(f, "five_hour_none") == 0) {
+            double none = 0;
+            l.five_hour_none = field_ts(v, &none) && none == 1;
+        } else if (strcmp(f, "scoped_active") == 0) {
             double active = 0;
             l.scoped_active = field_ts(v, &active) && active != 0;
         } else if (strcmp(f, "scoped_updated_at") == 0)
@@ -858,6 +861,13 @@ bool kdash_parse_claude_limits(const char *const *fields,
 
     if (!have_five || !have_seven)
         return false;
+
+    /* No five-hour window (CD-29): whatever five-hour numbers the hash still
+     * holds were left by some earlier writer, and must not render. */
+    if (l.five_hour_none) {
+        l.five_hour_pct = 0;
+        l.five_hour_resets_at = 0;
+    }
 
     /* Half a scoped set renders as no scoped set at all, rather than as an
      * unlabelled gauge or a label with no number behind it. */

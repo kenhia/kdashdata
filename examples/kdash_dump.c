@@ -289,9 +289,14 @@ static void dump_claude(kdash_conn_t *c, long long now) {
          * scoped set carrying one. */
         bool stale = kdash_claude_limits_stale(&l, now, KDASH_CLAUDE_LIMITS_GRACE_S,
                                                KDASH_CLAUDE_LIMITS_STALE_S);
-        printf("  five-hour %5.1f%%   seven-day %5.1f%%   (observed %llds ago%s)\n",
-               l.five_hour_pct, l.seven_day_pct,
-               kdash_age_s(l.updated_at, now), stale ? ", STALE" : "");
+        if (l.five_hour_none) /* CD-29: the source has no five-hour window */
+            printf("  five-hour  none    seven-day %5.1f%%   (observed %llds ago%s)\n",
+                   l.seven_day_pct, kdash_age_s(l.updated_at, now),
+                   stale ? ", STALE" : "");
+        else
+            printf("  five-hour %5.1f%%   seven-day %5.1f%%   (observed %llds ago%s)\n",
+                   l.five_hour_pct, l.seven_day_pct,
+                   kdash_age_s(l.updated_at, now), stale ? ", STALE" : "");
         if (l.scoped_valid) {
             bool sstale = kdash_claude_limits_scoped_stale(
                 &l, now, KDASH_CLAUDE_LIMITS_GRACE_S, KDASH_CLAUDE_LIMITS_STALE_S);

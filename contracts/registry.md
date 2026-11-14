@@ -836,7 +836,7 @@ grammar, with no hardcoded address anywhere on the write path.
 | Key | Type / pattern | Schema | Notes |
 |---|---|---|---|
 | `claude:session:{host}:{sid}` | HASH, TTL 7200 s | [session](schemas/claude-session.schema.json) | host/project/cwd/status/ts/started_ts + model/title; `status` ∈ working/awaiting/blocked; records missing `status` or numeric `ts` are rejected (resurrection-race guard) |
-| `claude:limits` | HASH, no TTL | [limits](schemas/claude-limits.schema.json) | five_hour/seven_day pcts + resets; writers publish their own cadence (`expected_refresh_s`); the model-scoped window carries its own independent stamp |
+| `claude:limits` | HASH, no TTL | [limits](schemas/claude-limits.schema.json) | five_hour/seven_day pcts + resets; `five_hour_none` 1 when the source reports no five-hour window (CD-29); writers publish their own cadence (`expected_refresh_s`); the model-scoped window carries its own independent stamp |
 | `claude:recent` | event log, capped: LPUSH + LTRIM 0 19 | [recent](schemas/claude-recent.schema.json) | `{host, project, title, ended_ts, dur_s}` |
 
 The two HASH feeds are the only records in this registry that are **not** JSON
@@ -860,6 +860,24 @@ labels and time formatting stay with the panel (CD-16).
 `updated_at` is the *observation* time and a writer must not publish over a
 fresher one. That guard is a read, which is why the publisher CLI has exactly
 one read verb (CD-14).
+
+**No five-hour window** (sprint 024, CD-29). Some plans no longer have a
+five-hour window, and the oauth endpoint then returns `"five_hour": null`.
+`five_hour_pct` stays required, so the record says it with a flag. Every
+headline writer puts it in the same HSET as `updated_at`:
+
+| the source shows | the writer writes | a C reader (`kdash_claude_limits_t`) sees |
+|---|---|---|
+| a five-hour window | `five_hour_none 0`, real `five_hour_pct`, `five_hour_resets_at` if known | `valid`, `!five_hour_none`, the values as published |
+| no five-hour window | `five_hour_none 1`, `five_hour_pct 0`, `five_hour_resets_at 0` | `valid`, `five_hour_none`, both five-hour fields 0 whatever the hash holds |
+| (a writer from before this field) | no `five_hour_none` | `valid`, `!five_hour_none`; its `five_hour_pct` is a reading |
+| nothing usable | — | `KDASH_ABSENT` / `KDASH_UNAVAIL`, or `!valid`; the struct is zeroed, so `five_hour_none` is false. Unknown is never "no window" |
+
+**The writer that observes no window clears the leftovers.** Writing 0 rather
+than leaving the reset alone is deliberate. **A writer that observes a window
+clears the flag.** The reader zeroes a leftover five-hour value beside
+`five_hour_none 1` anyway. The flag rides `updated_at`, so it goes stale with
+the rest of the headline.
 
 **Relocated from `rpidash2:6380`** by program korg:1755, in four slices:
 publisher wrappers and the stem (sprint 003), `kdash-pub` distribution
@@ -925,7 +943,7 @@ written down where the consumer slice will read them (CD-8):
 
 - `kdash:<family>:<…>` — the namespace for new shared feeds (rules.md).
   `selftest`, `panel`, `panelmode`, `panelshot`, `stale`, `agentact`, `net`,
-  `update` and `nas` are the families in it so far, and `korg` is decided but not yet written
-  (CD-26).
+  `update`, `nas`, `weather`, `korg` and `klams` are the families in it so far
+  (`korg` per CD-26, contracted with `klams` by CD-28).
 - `ghcp:*` — outside that namespace by a named exception (CD-21), not by
   omission. New, frozen from day one, and not a migration candidate.

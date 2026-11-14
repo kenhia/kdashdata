@@ -181,12 +181,19 @@ scanners with wrote *and* ran, subsystems, queue, backup), both v1, ts-owned
 and cadence-declared through `expected_refresh_s` (CD-28). libkdash gained
 `kdash_korg_pulse()` and `kdash_klams_status()`, their parsers, and
 `kdash_cadence_stale()`.
+Sprint 024 (korg:4633, slice 6 of program korg:4619) let `claude:limits` say
+that the source reports no five-hour window, which Ken's plan no longer has:
+an optional `five_hour_none` 0/1 flag stated on every headline write, with
+`five_hour_pct` still written (as 0) so old readers keep a valid record. The
+writer that observes no window zeroes the five-hour fields; the reader zeroes
+them too, and exposes `five_hour_none` in `kdash_claude_limits_t` (CD-29).
 See `docs/architecture.md` (decisions
-CD-1…CD-28, open questions OQ-n), `contracts/rules.md`,
+CD-1…CD-29, open questions OQ-n), `contracts/rules.md`,
 `contracts/registry.md`, `include/kdash/kdash.h` for the consumer API, and
 `publishers/README.md` for the publish side and the version-and-skip rule.
-Next: the korg and klams publishers (korg:4616, korg:4617) and kpidash's
-combined card (korg:4618); kpidash's producer and card for the network feed
+Next: kdeskdash's `claude-pub` writing CD-29 (korg:4634) and kpidash's
+no-five-hour limits layout (korg:4635); the korg and klams publishers
+(korg:4616, korg:4617) and kpidash's combined card (korg:4618); kpidash's producer and card for the network feed
 (korg:4066), the ack and the
 restart fix (korg:4158), and cleo's producer (korg:4076); the writers and cards
 for the update and NAS feeds (k-homelab after korg:3627, kpidash WIs 3642 and
