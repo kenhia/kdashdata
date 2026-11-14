@@ -13,10 +13,11 @@
 #include "kdash_feed_internal.h"
 
 /* Longest payload we will pull for one record. kpidash's are well under 2 KB.
- * The largest a schema allows is a kdash:korg:pulse at every cap — 24
- * projects with 47-char names and 30 days of history, about 3 KB — so the
- * status feeds fit with room too (CD-28; measured in test_feed). */
-#define VALUE_MAX 8192
+ * The largest a schema allows is a kdash:calendar at every cap — 64 entries
+ * with every string at its bound, about 9.4 KB (CD-30) — and a kdash:korg:pulse
+ * at every cap is about 3 KB (CD-28); both measured in test_feed. This is a
+ * clamp on a reply hiredis has already allocated, not a buffer. */
+#define VALUE_MAX 16384
 
 /* ---- the I/O seam -------------------------------------------------------- */
 /*
@@ -498,7 +499,7 @@ kdash_status_t kdash_panelshot(kdash_conn_t *c, const char *host,
 
 /* ---- the status feeds: one fixed key, one GET each (CD-28) --------------- */
 
-/* GET a fixed key and parse it as one JSON document. The two status readers
+/* GET a fixed key and parse it as one JSON document. The fixed-key readers
  * differ only in key, parser and record, so this is the whole of each. */
 static kdash_status_t get_fixed_json(kdash_conn_t *c, const char *key,
                                      bool (*parse)(const char *, size_t, void *),
@@ -539,6 +540,15 @@ kdash_status_t kdash_korg_pulse(kdash_conn_t *c, kdash_korg_pulse_t *out) {
 
 kdash_status_t kdash_klams_status(kdash_conn_t *c, kdash_klams_status_t *out) {
     return get_fixed_json(c, KDASH_KEY_KLAMS_STATUS, parse_klams_status_v, out,
+                          sizeof(*out));
+}
+
+static bool parse_calendar_v(const char *j, size_t n, void *out) {
+    return kdash_parse_calendar(j, n, out);
+}
+
+kdash_status_t kdash_calendar(kdash_conn_t *c, kdash_calendar_t *out) {
+    return get_fixed_json(c, KDASH_KEY_CALENDAR, parse_calendar_v, out,
                           sizeof(*out));
 }
 

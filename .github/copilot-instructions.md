@@ -187,13 +187,21 @@ an optional `five_hour_none` 0/1 flag stated on every headline write, with
 `five_hour_pct` still written (as 0) so old readers keep a valid record. The
 writer that observes no window zeroes the five-hour fields; the reader zeroes
 them too, and exposes `five_hour_none` in `kdash_claude_limits_t` (CD-29).
+Sprint 025 (korg:4666, slice 1 of program korg:4669, kpidash row 3) contracted
+`kdash:calendar` v1 with code: the tagged days for kpidash's time and calendar
+card (Ken's days off, holidays, special days), already expanded by the
+publisher to concrete America/Los_Angeles dates, one entry per date carrying
+all its tags, inside a stated `from`..`to` window. A window that no longer
+covers today is the feed's staleness; an old `ts` is a muted hint at most and
+never blanks the calendar (CD-30). libkdash gained `kdash_parse_calendar()`,
+`kdash_calendar_covers()`, `kdash_calendar_day()` and `kdash_calendar()`, and
+the reader's value cap rose to 16 KB for the largest record.
 See `docs/architecture.md` (decisions
-CD-1…CD-29, open questions OQ-n), `contracts/rules.md`,
+CD-1…CD-30, open questions OQ-n), `contracts/rules.md`,
 `contracts/registry.md`, `include/kdash/kdash.h` for the consumer API, and
 `publishers/README.md` for the publish side and the version-and-skip rule.
-Next: kdeskdash's `claude-pub` writing CD-29 (korg:4634) and kpidash's
-no-five-hour limits layout (korg:4635); the korg and klams publishers
-(korg:4616, korg:4617) and kpidash's combined card (korg:4618); kpidash's producer and card for the network feed
+Next: korg's tagged-days list and `kdash:calendar` publisher (korg:4667) and
+kpidash's time and calendar card (korg:4668); kpidash's producer and card for the network feed
 (korg:4066), the ack and the
 restart fix (korg:4158), and cleo's producer (korg:4076); the writers and cards
 for the update and NAS feeds (k-homelab after korg:3627, kpidash WIs 3642 and
