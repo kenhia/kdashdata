@@ -118,3 +118,22 @@ korg:4634 deploys.
   below)" with "korg's `bin/korg-pulse` on kai, every 5 min", and the section's
   "Writer, not yet" sentence to match. This is sequencing, not a decision.
   The overseer holds it (comment 4668).
+
+## Deployed
+
+2026-11-14 01:25Z (2026-11-13 17:25 PST), from merged `main` `d8c40a4` on kai,
+by `.sprint-deploy`'s `recipe: publish` then `recipe: deploy`.
+
+- `just publish`: "nothing to publish: 0.1.0-4837473 already in the store".
+  This sprint changed no publisher input (`publishers/rust/` untouched), so
+  the self-skip is the correct outcome.
+- `just deploy`: kdash-pub 0.1.0-4837473, unchanged, confirmed on kai,
+  kubs0, cleo, kimac and thrall. komarchy and kbook2 timed out and
+  thrall-arch did not resolve; all three are `--host-optional` and were
+  reported SKIPPED, rc 0. The probes ran from kai, through knarr.
+- What this sprint shipped is the contract and libkdash. Nothing in the fleet
+  runs them until consumers re-pin: kdeskdash's `claude-pub` (korg:4634) and
+  kpidash's card (korg:4635) pin `d8c40a4`. No live check of `five_hour_none`
+  is possible until korg:4634's writer deploys.
+- korg PR #110 was still open at ship time, so the `kdash:korg:pulse` writer
+  text was left as it was (see Follow-ups).
