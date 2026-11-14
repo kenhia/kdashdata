@@ -988,6 +988,299 @@ int main(void) {
 #undef BAND
     }
 
+    /* ---- kdash:korg:pulse (CD-28) ---- */
+    {
+        kdash_korg_pulse_t k;
+
+        /* A full record: the schema's first example, trimmed to four
+         * projects and three days. */
+        CHECK(PARSE(kdash_parse_korg_pulse,
+                    "{\"ts\":1794617100.4,\"expected_refresh_s\":60,"
+                    "\"open\":25,\"projects\":16,\"awaiting\":1,\"active\":0,"
+                    "\"queued\":1,\"other_open\":12,"
+                    "\"by_project\":[{\"name\":\"kligd\",\"open\":5},"
+                    "{\"name\":\"k-homelab\",\"open\":4},"
+                    "{\"name\":\"kdeskdash\",\"open\":2},"
+                    "{\"name\":\"kloom\",\"open\":2}],"
+                    "\"history\":[{\"date\":\"2026-11-11\",\"open\":21},"
+                    "{\"date\":\"2026-11-12\",\"open\":22},"
+                    "{\"date\":\"2026-11-13\",\"open\":25}],"
+                    "\"unknown_future_field\":{\"x\":1}}",
+                    &k),
+              "full korg pulse, with an unknown field ignored");
+        CHECK(k.ts > 1794617100.0 && k.expected_refresh_s == 60.0, "head");
+        CHECK(k.open == 25 && k.projects == 16 && k.awaiting == 1 &&
+                  k.active == 0 && k.queued == 1 && k.other_open == 12,
+              "counts");
+        CHECK(k.by_project_count == 4 && !k.by_project_truncated &&
+                  k.by_project_skipped == 0,
+              "four projects, nothing cut or skipped");
+        CHECK(strcmp(k.by_project[0].name, "kligd") == 0 &&
+                  k.by_project[0].open == 5,
+              "the top project is the first entry, in the writer's order");
+        CHECK(k.history_count == 3 &&
+                  strcmp(k.history[2].date, "2026-11-13") == 0 &&
+                  k.history[2].open == k.open,
+              "history oldest first; today's point is the headline");
+
+        /* A minimal record: every count 0, both arrays empty — korg with
+         * nothing open, or a publisher whose flow window is not there yet. */
+        CHECK(PARSE(kdash_parse_korg_pulse,
+                    "{\"ts\":1,\"expected_refresh_s\":1,\"open\":0,"
+                    "\"projects\":0,\"awaiting\":0,\"active\":0,\"queued\":0,"
+                    "\"other_open\":0,\"by_project\":[],\"history\":[]}",
+                    &k),
+              "minimal korg pulse");
+        CHECK(k.by_project_count == 0 && k.history_count == 0 &&
+                  !k.history_truncated,
+              "empty arrays are a statement, not an error");
+
+        /* Empty history beside a real backlog: the transition log does not
+         * reach back yet. The card draws the number without the line. */
+        CHECK(PARSE(kdash_parse_korg_pulse,
+                    "{\"ts\":1794617100,\"expected_refresh_s\":60,\"open\":3,"
+                    "\"projects\":1,\"awaiting\":0,\"active\":0,\"queued\":0,"
+                    "\"other_open\":0,\"by_project\":[{\"name\":\"korg\",\"open\":3}],"
+                    "\"history\":[]}",
+                    &k),
+              "empty history with a non-empty backlog");
+        CHECK(k.open == 3 && k.history_count == 0 && k.by_project_count == 1,
+              "the record stands without its series");
+
+        /* Over-long arrays: 26 projects and 32 days. The FIRST 24 projects
+         * (the largest) and the NEWEST 30 days (today included) are kept. */
+        {
+            char json[4096];
+            int n = snprintf(json, sizeof(json),
+                             "{\"ts\":1794617100,\"expected_refresh_s\":60,"
+                             "\"open\":100,\"projects\":26,\"awaiting\":0,"
+                             "\"active\":0,\"queued\":0,\"other_open\":0,"
+                             "\"by_project\":[");
+            for (int i = 0; i < 26; i++)
+                n += snprintf(json + n, sizeof(json) - n,
+                              "%s{\"name\":\"p%02d\",\"open\":%d}", i ? "," : "",
+                              i + 1, 30 - i);
+            n += snprintf(json + n, sizeof(json) - n, "],\"history\":[");
+            for (int d = 1; d <= 32; d++)
+                n += snprintf(json + n, sizeof(json) - n,
+                              "%s{\"date\":\"2026-10-%02d\",\"open\":%d}",
+                              d > 1 ? "," : "", d, d);
+            snprintf(json + n, sizeof(json) - n, "]}");
+
+            CHECK(PARSE(kdash_parse_korg_pulse, json, &k),
+                  "an over-long record still parses");
+            CHECK(k.by_project_count == KDASH_KORG_PROJECTS_MAX &&
+                      k.by_project_truncated,
+                  "projects capped at 24 and flagged");
+            CHECK(strcmp(k.by_project[0].name, "p01") == 0 &&
+                      strcmp(k.by_project[23].name, "p24") == 0,
+                  "the first 24 — the largest — are the ones kept");
+            CHECK(k.history_count == KDASH_KORG_HISTORY_MAX && k.history_truncated,
+                  "history capped at 30 and flagged");
+            CHECK(strcmp(k.history[0].date, "2026-10-03") == 0 &&
+                      strcmp(k.history[29].date, "2026-10-32") == 0,
+                  "the NEWEST 30 are kept, so today survives the cut");
+        }
+
+        /* A malformed entry is skipped and counted; the record stands. */
+        CHECK(PARSE(kdash_parse_korg_pulse,
+                    "{\"ts\":1,\"expected_refresh_s\":60,\"open\":3,"
+                    "\"projects\":2,\"awaiting\":0,\"active\":0,\"queued\":0,"
+                    "\"other_open\":0,"
+                    "\"by_project\":[{\"name\":\"korg\",\"open\":3},"
+                    "{\"name\":\"klams\",\"open\":0},{\"open\":1},\"x\"],"
+                    "\"history\":[{\"date\":\"11/13/2026\",\"open\":3},"
+                    "{\"date\":\"2026-11-13\",\"open\":3.5},"
+                    "{\"date\":\"2026-11-13\",\"open\":3}]}",
+                    &k),
+              "bad entries do not cost the record");
+        CHECK(k.by_project_count == 1 && k.by_project_skipped == 3,
+              "a zero-open, a nameless and a non-object entry are skipped");
+        CHECK(k.history_count == 1 && k.history_skipped == 2,
+              "a locale date and a fractional count are skipped");
+
+        /* Required fields reject the whole record, and leave it zeroed. */
+        CHECK(!PARSE(kdash_parse_korg_pulse,
+                     "{\"ts\":1,\"expected_refresh_s\":60,\"open\":25,"
+                     "\"projects\":1,\"awaiting\":1,\"active\":0,\"queued\":1,"
+                     "\"by_project\":[],\"history\":[]}",
+                     &k),
+              "other_open absent rejects (the overflow is never silent)");
+        CHECK(k.open == 0 && k.ts == 0, "and the struct is zeroed");
+        CHECK(!PARSE(kdash_parse_korg_pulse,
+                     "{\"ts\":1,\"open\":0,\"projects\":0,\"awaiting\":0,"
+                     "\"active\":0,\"queued\":0,\"other_open\":0,"
+                     "\"by_project\":[],\"history\":[]}",
+                     &k),
+              "expected_refresh_s absent rejects: no cadence, no staleness");
+        CHECK(!PARSE(kdash_parse_korg_pulse,
+                     "{\"ts\":1794617100400,\"expected_refresh_s\":60,\"open\":0,"
+                     "\"projects\":0,\"awaiting\":0,\"active\":0,\"queued\":0,"
+                     "\"other_open\":0,\"by_project\":[],\"history\":[]}",
+                     &k),
+              "a millisecond ts rejects");
+        CHECK(!PARSE(kdash_parse_korg_pulse,
+                     "{\"ts\":1,\"expected_refresh_s\":60,\"open\":-1,"
+                     "\"projects\":0,\"awaiting\":0,\"active\":0,\"queued\":0,"
+                     "\"other_open\":0,\"by_project\":[],\"history\":[]}",
+                     &k),
+              "a negative count rejects");
+        CHECK(!PARSE(kdash_parse_korg_pulse,
+                     "{\"ts\":1,\"expected_refresh_s\":60,\"open\":0,"
+                     "\"projects\":0,\"awaiting\":0,\"active\":0,\"queued\":0,"
+                     "\"other_open\":0,\"by_project\":{},\"history\":[]}",
+                     &k),
+              "a by_project that is not an array rejects");
+        CHECK(!PARSE(kdash_parse_korg_pulse,
+                     "{\"ts\":1,\"expected_refresh_s\":60,\"open\":0,"
+                     "\"projects\":0,\"awaiting\":0,\"active\":0,\"queued\":0,"
+                     "\"other_open\":0,\"by_project\":[]}",
+                     &k),
+              "history absent rejects; empty is the way to say none");
+    }
+
+    /* ---- kdash:klams:status (CD-28) ---- */
+    {
+        kdash_klams_status_t s;
+
+        CHECK(PARSE(kdash_parse_klams_status,
+                    "{\"ts\":1794617160.2,\"expected_refresh_s\":60,"
+                    "\"health\":\"ok\",\"version\":\"0.1.58\",\"uptime_s\":57600,"
+                    "\"knowledge\":228934,\"facts\":40,\"events\":39,"
+                    "\"scanners\":[{\"name\":\"kai\",\"last_wrote_at\":1794616020,"
+                    "\"last_ran_at\":1794616020,\"expected_interval_s\":3600},"
+                    "{\"name\":\"kubs0\",\"last_wrote_at\":1794358800,"
+                    "\"last_ran_at\":1794615480,\"expected_interval_s\":3600}],"
+                    "\"subsystems\":[{\"name\":\"postgres\",\"ok\":true},"
+                    "{\"name\":\"rerank\",\"ok\":false}],"
+                    "\"queue_depth\":0,\"queue_capacity\":1024,"
+                    "\"backup_at\":1794573960,"
+                    "\"new_per_day\":[{\"date\":\"2026-11-12\",\"added\":140},"
+                    "{\"date\":\"2026-11-13\",\"added\":95}]}",
+                    &s),
+              "full klams status");
+        CHECK(s.health == KDASH_KLAMS_OK && strcmp(s.version, "0.1.58") == 0 &&
+                  s.uptime_s == 57600,
+              "health, version, uptime");
+        CHECK(s.knowledge == 228934 && s.facts == 40 && s.events == 39,
+              "corpus counts");
+        CHECK(s.scanners_count == 2 &&
+                  strcmp(s.scanners[1].name, "kubs0") == 0 &&
+                  s.scanners[1].last_wrote_at == 1794358800.0 &&
+                  s.scanners[1].last_ran_at == 1794615480.0 &&
+                  s.scanners[1].expected_interval_s == 3600.0,
+              "wrote and ran are kept apart");
+        CHECK(s.subsystems_count == 2 && s.subsystems[0].ok &&
+                  !s.subsystems[1].ok,
+              "subsystems");
+        CHECK(s.queue_depth == 0 && s.queue_capacity == 1024 &&
+                  s.backup_at == 1794573960.0,
+              "queue and backup");
+        CHECK(s.new_per_day_count == 2 && s.new_per_day[1].added == 95,
+              "new_per_day");
+
+        /* The `down` record: every klams-sourced value null, arrays empty.
+         * This is the minimal record, and it must parse — a fresh `down` is
+         * the publisher saying klams is down. */
+        CHECK(PARSE(kdash_parse_klams_status,
+                    "{\"ts\":1794617160,\"expected_refresh_s\":60,"
+                    "\"health\":\"down\",\"version\":null,\"uptime_s\":null,"
+                    "\"knowledge\":null,\"facts\":null,\"events\":null,"
+                    "\"scanners\":[],\"subsystems\":[],\"queue_depth\":null,"
+                    "\"queue_capacity\":null,\"backup_at\":null,"
+                    "\"new_per_day\":[]}",
+                    &s),
+              "a down record parses");
+        CHECK(s.health == KDASH_KLAMS_DOWN && s.version[0] == '\0', "down, no version");
+        CHECK(s.knowledge == KDASH_COUNT_NULL && s.uptime_s == KDASH_COUNT_NULL &&
+                  s.queue_depth == KDASH_COUNT_NULL &&
+                  s.queue_capacity == KDASH_COUNT_NULL,
+              "null counts read as KDASH_COUNT_NULL, never as 0");
+        CHECK(s.backup_at == 0, "a null stamp reads as 0");
+
+        /* last_ran_at: null is a statement, absent is not. */
+        CHECK(PARSE(kdash_parse_klams_status,
+                    "{\"ts\":1,\"expected_refresh_s\":60,\"health\":\"degraded\","
+                    "\"version\":\"0.1.58\",\"uptime_s\":1,\"knowledge\":1,"
+                    "\"facts\":1,\"events\":1,"
+                    "\"scanners\":[{\"name\":\"kai\",\"last_wrote_at\":null,"
+                    "\"last_ran_at\":null,\"expected_interval_s\":3600},"
+                    "{\"name\":\"kubs0\",\"last_wrote_at\":1794616020,"
+                    "\"expected_interval_s\":3600}],"
+                    "\"subsystems\":[{\"name\":\"embed\"}],\"queue_depth\":0,"
+                    "\"queue_capacity\":1024,\"backup_at\":null,"
+                    "\"new_per_day\":[]}",
+                    &s),
+              "degraded record with a partly-bad scanner list");
+        CHECK(s.health == KDASH_KLAMS_DEGRADED, "degraded");
+        CHECK(s.scanners_count == 1 && s.scanners_skipped == 1 &&
+                  s.scanners[0].last_wrote_at == 0 &&
+                  s.scanners[0].last_ran_at == 0,
+              "the null scanner is kept; the one missing last_ran_at is skipped");
+        CHECK(s.subsystems_count == 0 && s.subsystems_skipped == 1,
+              "a subsystem without `ok` is skipped");
+
+        /* Over-long new_per_day keeps the NEWEST 14. */
+        {
+            char json[2048];
+            int n = snprintf(json, sizeof(json),
+                             "{\"ts\":1,\"expected_refresh_s\":60,\"health\":\"ok\","
+                             "\"version\":\"v\",\"uptime_s\":1,\"knowledge\":1,"
+                             "\"facts\":1,\"events\":1,\"scanners\":[],"
+                             "\"subsystems\":[],\"queue_depth\":0,"
+                             "\"queue_capacity\":1,\"backup_at\":null,"
+                             "\"new_per_day\":[");
+            for (int d = 1; d <= 16; d++)
+                n += snprintf(json + n, sizeof(json) - n,
+                              "%s{\"date\":\"2026-11-%02d\",\"added\":%d}",
+                              d > 1 ? "," : "", d, d);
+            snprintf(json + n, sizeof(json) - n, "]}");
+            CHECK(PARSE(kdash_parse_klams_status, json, &s), "16 days parse");
+            CHECK(s.new_per_day_count == KDASH_KLAMS_DAYS_MAX &&
+                      s.new_per_day_truncated &&
+                      strcmp(s.new_per_day[0].date, "2026-11-03") == 0 &&
+                      s.new_per_day[13].added == 16,
+                  "the newest 14 days are kept and the cut is flagged");
+        }
+
+        CHECK(!PARSE(kdash_parse_klams_status,
+                     "{\"ts\":1,\"expected_refresh_s\":60,\"health\":\"warn\","
+                     "\"version\":null,\"uptime_s\":null,\"knowledge\":null,"
+                     "\"facts\":null,\"events\":null,\"scanners\":[],"
+                     "\"subsystems\":[],\"queue_depth\":null,"
+                     "\"queue_capacity\":null,\"backup_at\":null,"
+                     "\"new_per_day\":[]}",
+                     &s),
+              "health outside the closed set rejects");
+        CHECK(!PARSE(kdash_parse_klams_status,
+                     "{\"ts\":1,\"expected_refresh_s\":60,\"health\":\"down\","
+                     "\"version\":null,\"uptime_s\":null,"
+                     "\"facts\":null,\"events\":null,\"scanners\":[],"
+                     "\"subsystems\":[],\"queue_depth\":null,"
+                     "\"queue_capacity\":null,\"backup_at\":null,"
+                     "\"new_per_day\":[]}",
+                     &s),
+              "knowledge ABSENT rejects even on a down record (CD-27)");
+        CHECK(!PARSE(kdash_parse_klams_status,
+                     "{\"ts\":1,\"expected_refresh_s\":60,\"health\":\"ok\","
+                     "\"version\":\"v\",\"uptime_s\":1,\"knowledge\":1,"
+                     "\"facts\":1,\"events\":1,\"scanners\":[],"
+                     "\"subsystems\":[],\"queue_depth\":0,"
+                     "\"queue_capacity\":1,\"backup_at\":1794573960000,"
+                     "\"new_per_day\":[]}",
+                     &s),
+              "a millisecond backup_at rejects");
+        CHECK(s.health == KDASH_KLAMS_OK && s.knowledge == 0,
+              "a rejected record is zeroed, not left as KDASH_COUNT_NULL");
+
+        kdash_klams_health_t hh;
+        CHECK(kdash_klams_health_from_str("degraded", &hh) &&
+                  hh == KDASH_KLAMS_DEGRADED &&
+                  strcmp(kdash_klams_health_str(hh), "degraded") == 0,
+              "health round-trips through its own word");
+        CHECK(!kdash_klams_health_from_str("OK", &hh), "the set is lowercase");
+    }
+
     /* Buffers are counted, not NUL-terminated: SCAN and GET both hand back
      * lengths, and an embedded NUL must not truncate the parse. */
     {

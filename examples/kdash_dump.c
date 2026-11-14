@@ -326,6 +326,60 @@ static void dump_claude(kdash_conn_t *c, long long now) {
     printf("  %d entry(s), %d skipped\n", n, skipped);
 }
 
+/* The two status feeds (CD-28). Cadence-declared: each record says how often
+ * its writer means to write, and the reader adds its own grace. */
+static void dump_status(kdash_conn_t *c, long long now) {
+    printf("\n== status feeds (kdash:korg:pulse, kdash:klams:status) ==\n");
+
+    kdash_korg_pulse_t k;
+    switch (kdash_korg_pulse(c, &k)) {
+    case KDASH_UNAVAIL:
+        printf("  korg:  unavailable\n");
+        break;
+    case KDASH_ABSENT:
+        printf("  korg:  no record\n");
+        break;
+    case KDASH_OK:
+        printf("  korg:  %d open in %d project(s)  awaiting=%d active=%d "
+               "queued=%d  top=%s %d  history=%d day(s)%s\n",
+               k.open, k.projects, k.awaiting, k.active, k.queued,
+               k.by_project_count ? k.by_project[0].name : "-",
+               k.by_project_count ? k.by_project[0].open : 0, k.history_count,
+               kdash_cadence_stale(k.ts, k.expected_refresh_s, now,
+                                   KDASH_CADENCE_GRACE_S)
+                   ? "  [stale]"
+                   : "");
+        break;
+    }
+
+    kdash_klams_status_t s;
+    switch (kdash_klams_status(c, &s)) {
+    case KDASH_UNAVAIL:
+        printf("  klams: unavailable\n");
+        break;
+    case KDASH_ABSENT:
+        printf("  klams: no record\n");
+        break;
+    case KDASH_OK:
+        printf("  klams: %s %s  knowledge=%lld  %d scanner(s), %d subsystem(s)%s\n",
+               kdash_klams_health_str(s.health),
+               s.version[0] ? s.version : "(no version)", s.knowledge,
+               s.scanners_count, s.subsystems_count,
+               kdash_cadence_stale(s.ts, s.expected_refresh_s, now,
+                                   KDASH_CADENCE_GRACE_S)
+                   ? "  [stale]"
+                   : "");
+        for (int i = 0; i < s.scanners_count; i++)
+            printf("         scanner %-8s wrote %llds ago  ran %s\n",
+                   s.scanners[i].name,
+                   s.scanners[i].last_wrote_at > 0
+                       ? kdash_age_s(s.scanners[i].last_wrote_at, now)
+                       : -1LL,
+                   s.scanners[i].last_ran_at > 0 ? "known" : "unknown");
+        break;
+    }
+}
+
 int main(int argc, char **argv) {
     kdash_conn_opts_t opts = {.app = "kdash-dump"}; /* .stem NULL -> central */
     if (argc > 1)
@@ -351,6 +405,7 @@ int main(int argc, char **argv) {
     dump_services(c, now);
     dump_apttemps(c, now);
     dump_panel(c, now);
+    dump_status(c, now);
     dump_claude(cc, now);
 
     /* A dashboard would render "unavailable" here and carry on; a CLI can be

@@ -12,8 +12,10 @@
 #include "kdash_conn_internal.h"
 #include "kdash_feed_internal.h"
 
-/* Longest payload we will pull for one record. The biggest of the five is a
- * telemetry sample with a disks array; kpidash's are well under 2 KB. */
+/* Longest payload we will pull for one record. kpidash's are well under 2 KB.
+ * The largest a schema allows is a kdash:korg:pulse at every cap — 24
+ * projects with 47-char names and 30 days of history, about 3 KB — so the
+ * status feeds fit with room too (CD-28; measured in test_feed). */
 #define VALUE_MAX 8192
 
 /* ---- the I/O seam -------------------------------------------------------- */
@@ -492,6 +494,52 @@ kdash_status_t kdash_panelshot(kdash_conn_t *c, const char *host,
         return KDASH_ABSENT;
     }
     return KDASH_OK;
+}
+
+/* ---- the status feeds: one fixed key, one GET each (CD-28) --------------- */
+
+/* GET a fixed key and parse it as one JSON document. The two status readers
+ * differ only in key, parser and record, so this is the whole of each. */
+static kdash_status_t get_fixed_json(kdash_conn_t *c, const char *key,
+                                     bool (*parse)(const char *, size_t, void *),
+                                     void *out, size_t outsz) {
+    if (out)
+        memset(out, 0, outsz);
+    if (!c || !out)
+        return KDASH_ABSENT;
+
+    redisReply *r = NULL;
+    kdash_status_t st = feed_io->get_string(c, key, &r);
+    if (st != KDASH_OK)
+        return st;
+
+    size_t len = (size_t)r->len;
+    if (len > VALUE_MAX)
+        len = VALUE_MAX;
+    bool ok = parse(r->str, len, out);
+    feed_io->free_reply(r);
+    if (!ok) {
+        memset(out, 0, outsz);
+        return KDASH_ABSENT;
+    }
+    return KDASH_OK;
+}
+
+static bool parse_korg_pulse_v(const char *j, size_t n, void *out) {
+    return kdash_parse_korg_pulse(j, n, out);
+}
+static bool parse_klams_status_v(const char *j, size_t n, void *out) {
+    return kdash_parse_klams_status(j, n, out);
+}
+
+kdash_status_t kdash_korg_pulse(kdash_conn_t *c, kdash_korg_pulse_t *out) {
+    return get_fixed_json(c, KDASH_KEY_KORG_PULSE, parse_korg_pulse_v, out,
+                          sizeof(*out));
+}
+
+kdash_status_t kdash_klams_status(kdash_conn_t *c, kdash_klams_status_t *out) {
+    return get_fixed_json(c, KDASH_KEY_KLAMS_STATUS, parse_klams_status_v, out,
+                          sizeof(*out));
 }
 
 /* ---- the claude family (HGETALL + LRANGE) -------------------------------- */

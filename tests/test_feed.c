@@ -146,6 +146,15 @@ static const kdash_feed_io_t FAKE_IO = {
 #define SERVICE_JSON  "{\"state\":\"ok\",\"text\":\"up\",\"ts\":1756000000}"
 #define APTTEMPS_JSON "{\"temp_f\":71.5,\"humidity_pct\":40,\"ts\":1756000000}"
 #define HEALTH_JSON   "{\"hostname\":\"kai\",\"last_seen_ts\":1756000000}"
+#define KORG_PULSE_JSON                                                        \
+    "{\"ts\":1794617100,\"expected_refresh_s\":60,\"open\":3,\"projects\":1,"  \
+    "\"awaiting\":0,\"active\":0,\"queued\":0,\"other_open\":0,"               \
+    "\"by_project\":[{\"name\":\"korg\",\"open\":3}],\"history\":[]}"
+#define KLAMS_DOWN_JSON                                                        \
+    "{\"ts\":1794617160,\"expected_refresh_s\":60,\"health\":\"down\","        \
+    "\"version\":null,\"uptime_s\":null,\"knowledge\":null,\"facts\":null,"    \
+    "\"events\":null,\"scanners\":[],\"subsystems\":[],\"queue_depth\":null,"  \
+    "\"queue_capacity\":null,\"backup_at\":null,\"new_per_day\":[]}"
 
 static const char *const SERVICE_KEYS[] = {
     "kpidash:services:alpha:kai",
@@ -348,6 +357,91 @@ int main(void) {
     memset(&health, POISON, sizeof(health));
     CHECK(kdash_health(c, "kai", &health) == KDASH_ABSENT,
           "a missing key is ABSENT, which is a different thing to say");
+
+    /* ---- the status feeds (CD-28): one fixed key, one GET ---- */
+
+    kdash_korg_pulse_t pulse;
+    arm(NULL, 0, 0);
+    fake.value = KORG_PULSE_JSON;
+    memset(&pulse, POISON, sizeof(pulse));
+    CHECK(kdash_korg_pulse(c, &pulse) == KDASH_OK, "korg pulse reads");
+    CHECK(pulse.open == 3 && pulse.by_project_count == 1, "and parses");
+
+    arm(NULL, 1, 0);
+    fake.value = KORG_PULSE_JSON;
+    memset(&pulse, POISON, sizeof(pulse));
+    CHECK(kdash_korg_pulse(c, &pulse) == KDASH_UNAVAIL,
+          "korg pulse: an unreachable endpoint is UNAVAIL");
+    CHECK(all_zero(&pulse, sizeof(pulse)), "and out is zeroed");
+
+    arm(NULL, 0, 1);
+    fake.value = KORG_PULSE_JSON;
+    memset(&pulse, POISON, sizeof(pulse));
+    CHECK(kdash_korg_pulse(c, &pulse) == KDASH_ABSENT,
+          "korg pulse: no publisher yet is ABSENT");
+    CHECK(all_zero(&pulse, sizeof(pulse)), "and out is zeroed");
+
+    arm(NULL, 0, 0);
+    fake.value = "{\"ts\":1,\"open\":3}";
+    memset(&pulse, POISON, sizeof(pulse));
+    CHECK(kdash_korg_pulse(c, &pulse) == KDASH_ABSENT,
+          "a schema-invalid record is ABSENT, never half a card");
+    CHECK(all_zero(&pulse, sizeof(pulse)), "and out is zeroed");
+
+    /* The largest record the schema allows — every cap full, every name at
+     * its 47-char limit, counts at seven digits — must fit VALUE_MAX, or the
+     * reader would truncate it into invalid JSON and call a live feed ABSENT. */
+    {
+        static char big[16384];
+        int n = snprintf(big, sizeof(big),
+                         "{\"ts\":1794617100.123456,\"expected_refresh_s\":86400,"
+                         "\"open\":9999999,\"projects\":9999999,"
+                         "\"awaiting\":9999999,\"active\":9999999,"
+                         "\"queued\":9999999,\"other_open\":9999999,"
+                         "\"by_project\":[");
+        for (int i = 0; i < KDASH_KORG_PROJECTS_MAX; i++)
+            n += snprintf(big + n, sizeof(big) - n,
+                          "%s{\"name\":\"%02d%s\",\"open\":9999999}", i ? "," : "",
+                          i, "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa");
+        n += snprintf(big + n, sizeof(big) - n, "],\"history\":[");
+        for (int d = 0; d < KDASH_KORG_HISTORY_MAX; d++)
+            n += snprintf(big + n, sizeof(big) - n,
+                          "%s{\"date\":\"2026-11-%02d\",\"open\":9999999}",
+                          d ? "," : "", d + 1);
+        n += snprintf(big + n, sizeof(big) - n, "]}");
+        CHECK(n < 8192, "a full-cap korg pulse is %d bytes, under VALUE_MAX", n);
+
+        arm(NULL, 0, 0);
+        fake.value = big;
+        memset(&pulse, POISON, sizeof(pulse));
+        CHECK(kdash_korg_pulse(c, &pulse) == KDASH_OK, "and reads whole");
+        CHECK(pulse.by_project_count == KDASH_KORG_PROJECTS_MAX &&
+                  !pulse.by_project_truncated &&
+                  pulse.history_count == KDASH_KORG_HISTORY_MAX,
+              "with every entry");
+    }
+
+    kdash_klams_status_t klams;
+    arm(NULL, 0, 0);
+    fake.value = KLAMS_DOWN_JSON;
+    memset(&klams, POISON, sizeof(klams));
+    CHECK(kdash_klams_status(c, &klams) == KDASH_OK, "klams status reads");
+    CHECK(klams.health == KDASH_KLAMS_DOWN && klams.knowledge == KDASH_COUNT_NULL,
+          "a down record is a reading, not an absence");
+
+    arm(NULL, 1, 0);
+    fake.value = KLAMS_DOWN_JSON;
+    memset(&klams, POISON, sizeof(klams));
+    CHECK(kdash_klams_status(c, &klams) == KDASH_UNAVAIL,
+          "klams status: an unreachable endpoint is UNAVAIL");
+    CHECK(all_zero(&klams, sizeof(klams)), "and out is zeroed");
+
+    arm(NULL, 0, 1);
+    fake.value = KLAMS_DOWN_JSON;
+    memset(&klams, POISON, sizeof(klams));
+    CHECK(kdash_klams_status(c, &klams) == KDASH_ABSENT,
+          "klams status: no publisher yet is ABSENT");
+    CHECK(all_zero(&klams, sizeof(klams)), "and out is zeroed");
 
     /* ---- putting it back ---- */
 

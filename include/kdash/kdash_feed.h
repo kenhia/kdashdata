@@ -1,7 +1,7 @@
 /**
  * @file kdash_feed.h
  * Typed readers for the schema'd feeds — the five kpidash ones, the three
- * panel control ones, and the three claude ones. A consumer using these needs no
+ * panel control ones, the three claude ones, and the two status feeds. A consumer using these needs no
  * knowledge of key grammar, SCAN, HGETALL, hiredis reply types, or the
  * difference between the two freshness models — which is the whole point of
  * the library existing once instead of three times.
@@ -135,6 +135,18 @@ kdash_status_t kdash_panelmode(kdash_conn_t *c, const char *host,
                                kdash_panelmode_t *out);
 kdash_status_t kdash_panelshot(kdash_conn_t *c, const char *host,
                                kdash_panelshot_t *out);
+
+/* GET kdash:korg:pulse and GET kdash:klams:status — the status feeds (CD-28).
+ * One fixed key each on the central stem, one round trip, no SCAN.
+ *
+ * KDASH_ABSENT means no publisher has written the key, or it is not
+ * schema-valid; KDASH_UNAVAIL means the endpoint did not answer. Neither is
+ * filtered by age: judge `ts` with kdash_cadence_stale() against the record's
+ * own `expected_refresh_s`. For klams, a FRESH record whose health is
+ * KDASH_KLAMS_DOWN is a different statement from a stale one: the first says
+ * klams is down, the second that its publisher is. */
+kdash_status_t kdash_korg_pulse(kdash_conn_t *c, kdash_korg_pulse_t *out);
+kdash_status_t kdash_klams_status(kdash_conn_t *c, kdash_klams_status_t *out);
 
 /* ---- the claude family --------------------------------------------------
  *
