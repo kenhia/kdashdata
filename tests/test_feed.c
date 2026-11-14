@@ -156,6 +156,11 @@ static const kdash_feed_io_t FAKE_IO = {
     "\"version\":null,\"uptime_s\":null,\"knowledge\":null,\"facts\":null,"    \
     "\"events\":null,\"scanners\":[],\"subsystems\":[],\"queue_depth\":null,"  \
     "\"queue_capacity\":null,\"backup_at\":null,\"new_per_day\":[]}"
+#define AGENTS_JSON                                                            \
+    "{\"ts\":1794700000,\"expected_refresh_s\":60,\"window_s\":86400,"        \
+    "\"bars\":[{\"id\":\"ov1\",\"host\":\"cleo\",\"name\":\"overseer\","     \
+    "\"start\":1794690000,\"end\":1794700000,\"state\":\"working\","        \
+    "\"shipped\":false,\"overseer\":true}]}"
 #define CALENDAR_JSON                                                          \
     "{\"ts\":1794643200,\"expected_refresh_s\":3600,"                         \
     "\"from\":\"2026-11-01\",\"to\":\"2027-02-12\",\"days\":["               \
@@ -164,7 +169,7 @@ static const kdash_feed_io_t FAKE_IO = {
 /* src/kdash_feed.c's VALUE_MAX, which is private to that unit. A record at
  * every cap must come in under it, or the reader would truncate a live feed
  * into invalid JSON and call it ABSENT. */
-#define FEED_VALUE_MAX 16384
+#define FEED_VALUE_MAX 65536
 
 static const char *const SERVICE_KEYS[] = {
     "kpidash:services:alpha:kai",
@@ -489,8 +494,8 @@ int main(void) {
     CHECK(all_zero(&cal, sizeof(cal)), "and out is zeroed");
 
     /* The largest calendar the schema allows: 64 entries, every string at its
-     * bound, the widest `ts` and cadence. It is the biggest record any schema
-     * here allows, and the reason VALUE_MAX is 16 KB (CD-30). */
+     * bound, the widest `ts` and cadence. It was the reason VALUE_MAX rose to
+     * 16 KB (CD-30); kdash:agents is now the larger (below). */
     {
         static char big[32768];
         int n = snprintf(big, sizeof(big),
@@ -507,8 +512,7 @@ int main(void) {
                           "sssssssssssssssssssssssssssssss", "tttttttttttt");
         n += snprintf(big + n, sizeof(big) - n, "]}");
         CHECK(n > 8192 && n < FEED_VALUE_MAX,
-              "a full-cap calendar is %d bytes: over the old 8 KB, under "
-              "VALUE_MAX",
+              "a full-cap calendar is %d bytes: over 8 KB, under VALUE_MAX",
               n);
 
         arm(NULL, 0, 0);
@@ -520,6 +524,82 @@ int main(void) {
                   strlen(cal.days[63].holiday) == 31 &&
                   strlen(cal.days[63].short_label) == 12,
               "with every entry and every string whole");
+    }
+
+    /* ---- kdash:agents (CD-31): one fixed key, one GET ---- */
+
+    static kdash_agents_t ag; /* ~20 KB */
+    arm(NULL, 0, 0);
+    fake.value = AGENTS_JSON;
+    memset(&ag, POISON, sizeof(ag));
+    CHECK(kdash_agents(c, &ag) == KDASH_OK, "agents reads");
+    CHECK(strcmp(fake.last_key, "kdash:agents") == 0,
+          "from kdash:agents, got \"%s\"", fake.last_key);
+    CHECK(ag.bars_count == 1 && ag.bars[0].overseer &&
+              ag.bars[0].state == KDASH_AGENT_WORKING,
+          "and parses");
+
+    arm(NULL, 1, 0);
+    fake.value = AGENTS_JSON;
+    memset(&ag, POISON, sizeof(ag));
+    CHECK(kdash_agents(c, &ag) == KDASH_UNAVAIL,
+          "agents: an unreachable endpoint is UNAVAIL");
+    CHECK(all_zero(&ag, sizeof(ag)), "and out is zeroed");
+
+    arm(NULL, 0, 1);
+    fake.value = AGENTS_JSON;
+    memset(&ag, POISON, sizeof(ag));
+    CHECK(kdash_agents(c, &ag) == KDASH_ABSENT,
+          "agents: no publisher yet is ABSENT");
+    CHECK(all_zero(&ag, sizeof(ag)), "and out is zeroed");
+
+    arm(NULL, 0, 0);
+    fake.value = "{\"ts\":1,\"expected_refresh_s\":60,\"bars\":[]}";
+    memset(&ag, POISON, sizeof(ag));
+    CHECK(kdash_agents(c, &ag) == KDASH_ABSENT,
+          "a record with no window is ABSENT, never an idle fleet");
+    CHECK(all_zero(&ag, sizeof(ag)), "and out is zeroed");
+
+    /* The largest record the schema allows: 96 bars, every string at its
+     * bound, every number at its widest, every link present -- and every
+     * name 31 astral characters written as `\uXXXX\uXXXX` escapes, which is
+     * what a writer's default JSON encoder emits (Python's ensure_ascii) and
+     * costs 12 wire bytes per character the schema counts as one. It is the
+     * biggest record any schema here allows, and the reason VALUE_MAX is
+     * 64 KB (CD-31). */
+    {
+        static char name[31 * 12 + 1];
+        for (int i = 0; i < 31; i++)
+            memcpy(name + 12 * i, "\\ud83d\\ude00", 12);
+        name[31 * 12] = '\0';
+        static char big[98304];
+        int n = snprintf(big, sizeof(big),
+                         "{\"ts\":1794700000.123456,\"expected_refresh_s\":86400,"
+                         "\"window_s\":604800,\"bars\":[");
+        for (int i = 0; i < KDASH_AGENTS_BARS_MAX; i++)
+            n += snprintf(big + n, sizeof(big) - n,
+                          "%s{\"id\":\"%023d\",\"host\":\"%s\",\"name\":\"%s\","
+                          "\"start\":1794690000.123456,"
+                          "\"end\":1794699999.123456,\"state\":\"working\","
+                          "\"shipped\":false,\"overseer\":false,"
+                          "\"parent\":\"%023d\"}",
+                          i ? "," : "", i, "hhhhhhhhhhhhhhh", name,
+                          i ? i - 1 : 95);
+        n += snprintf(big + n, sizeof(big) - n, "]}");
+        CHECK(n > 32768 && n < FEED_VALUE_MAX,
+              "a full-cap agents record is %d bytes: over 32 KB, under "
+              "VALUE_MAX",
+              n);
+
+        arm(NULL, 0, 0);
+        fake.value = big;
+        memset(&ag, POISON, sizeof(ag));
+        CHECK(kdash_agents(c, &ag) == KDASH_OK, "and reads whole");
+        CHECK(ag.bars_count == KDASH_AGENTS_BARS_MAX && !ag.bars_truncated &&
+                  ag.bars_skipped == 0 && strlen(ag.bars[95].name) == 31 * 4 &&
+                  strlen(ag.bars[95].id) == 23 &&
+                  strlen(ag.bars[95].host) == 15,
+              "with every bar and every string whole");
     }
 
     /* ---- putting it back ---- */

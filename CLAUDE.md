@@ -196,12 +196,21 @@ covers today is the feed's staleness; an old `ts` is a muted hint at most and
 never blanks the calendar (CD-30). libkdash gained `kdash_parse_calendar()`,
 `kdash_calendar_covers()`, `kdash_calendar_day()` and `kdash_calendar()`, and
 the reader's value cap rose to 16 KB for the largest record.
+Sprint 026 (korg:4696, slice 1 of program korg:4699, kpidash's Agents card)
+contracted `kdash:agents` v1 with code: the last 24 hours of agent sessions as
+bars (stretches of activity, not whole sessions), each with host, name, start
+and end, a `done`/`working`/`waiting` state, ship and overseer flags, and an
+optional `parent` hanging a leg from its overseer's bar. A running bar's `end`
+is the publish time; the card runs it to now only while the record is fresh
+(CD-31). libkdash gained `kdash_parse_agents()`, `kdash_agents()`,
+`kdash_agents_bar_end()` and the state helpers; the value cap rose to 64 KB,
+and the calendar reader's name bounds now count characters, not bytes.
 See `docs/architecture.md` (decisions
-CD-1…CD-30, open questions OQ-n), `contracts/rules.md`,
+CD-1…CD-31, open questions OQ-n), `contracts/rules.md`,
 `contracts/registry.md`, `include/kdash/kdash.h` for the consumer API, and
 `publishers/README.md` for the publish side and the version-and-skip rule.
-Next: korg's tagged-days list and `kdash:calendar` publisher (korg:4667) and
-kpidash's time and calendar card (korg:4668); kpidash's producer and card for the network feed
+Next: ksitrep's activity spans and `kdash:agents` publisher (korg:4697) and
+kpidash's Agents card (korg:4698); kpidash's producer and card for the network feed
 (korg:4066), the ack and the
 restart fix (korg:4158), and cleo's producer (korg:4076); the writers and cards
 for the update and NAS feeds (k-homelab after korg:3627, kpidash WIs 3642 and

@@ -1259,16 +1259,34 @@ bool kdash_parse_klams_status(const char *json, size_t len,
 
 /* ---- kdash:calendar (CD-30) ---- */
 
+/* A required string of 1..`chars` UTF-8 characters, counted the way the
+ * schema's maxLength counts them, so a writer that truncates by characters is
+ * never refused here. The buffer holds `chars` four-byte characters. */
+static bool req_utf8_name(const cJSON *root, const char *field, size_t chars,
+                          char *out, size_t outsz) {
+    const cJSON *o = cJSON_GetObjectItemCaseSensitive(root, field);
+    if (!cJSON_IsString(o) || !o->valuestring)
+        return false;
+    size_t n = strlen(o->valuestring), count = 0;
+    for (size_t i = 0; i < n; i++)
+        if (((unsigned char)o->valuestring[i] & 0xC0) != 0x80)
+            count++;
+    if (count == 0 || count > chars || n + 1 > outsz)
+        return false;
+    memcpy(out, o->valuestring, n + 1);
+    return true;
+}
+
 /* An optional tag string: absent is "" and true; present must be a string of
- * 1..outsz-1 chars, copied whole, or the entry is malformed. Null is not
+ * 1..`chars` characters, copied whole, or the entry is malformed. Null is not
  * absence -- the schema says an untagged date omits the field. */
-static bool opt_tag(const cJSON *item, const char *field, char *out,
-                    size_t outsz) {
+static bool opt_tag(const cJSON *item, const char *field, size_t chars,
+                    char *out, size_t outsz) {
     if (!cJSON_GetObjectItemCaseSensitive(item, field)) {
         out[0] = '\0';
         return true;
     }
-    return req_name(item, field, out, outsz);
+    return req_utf8_name(item, field, chars, out, outsz);
 }
 
 static bool in_window(const char *date, const char *from, const char *to) {
@@ -1284,9 +1302,12 @@ static bool take_calendar_day(const cJSON *item, const kdash_calendar_t *cal,
     if (!cJSON_IsBool(off))
         return false;
     d->off = cJSON_IsTrue(off);
-    if (!opt_tag(item, "holiday", d->holiday, sizeof(d->holiday)) ||
-        !opt_tag(item, "special", d->special, sizeof(d->special)) ||
-        !opt_tag(item, "short", d->short_label, sizeof(d->short_label)))
+    if (!opt_tag(item, "holiday", KDASH_CALENDAR_NAME_CHARS, d->holiday,
+                 sizeof(d->holiday)) ||
+        !opt_tag(item, "special", KDASH_CALENDAR_NAME_CHARS, d->special,
+                 sizeof(d->special)) ||
+        !opt_tag(item, "short", KDASH_CALENDAR_SHORT_CHARS, d->short_label,
+                 sizeof(d->short_label)))
         return false;
     /* An entry with no tag says nothing; one outside the window contradicts
      * the record's own statement of what it covers. */
@@ -1347,4 +1368,191 @@ const kdash_calendar_day_t *kdash_calendar_day(const kdash_calendar_t *cal,
         if (strcmp(cal->days[i].date, date) == 0)
             return &cal->days[i];
     return NULL;
+}
+
+/* ---- kdash:agents (CD-31) ---- */
+
+static const struct {
+    const char *word;
+    kdash_agent_state_t state;
+} AGENT_STATE[] = {
+    {"done", KDASH_AGENT_DONE},
+    {"working", KDASH_AGENT_WORKING},
+    {"waiting", KDASH_AGENT_WAITING},
+};
+
+bool kdash_agent_state_from_str(const char *s, kdash_agent_state_t *out) {
+    if (!s || !out)
+        return false;
+    for (size_t i = 0; i < sizeof(AGENT_STATE) / sizeof(AGENT_STATE[0]); i++) {
+        if (strcmp(s, AGENT_STATE[i].word) == 0) {
+            *out = AGENT_STATE[i].state;
+            return true;
+        }
+    }
+    return false;
+}
+
+const char *kdash_agent_state_str(kdash_agent_state_t s) {
+    for (size_t i = 0; i < sizeof(AGENT_STATE) / sizeof(AGENT_STATE[0]); i++)
+        if (AGENT_STATE[i].state == s)
+            return AGENT_STATE[i].word;
+    return "done";
+}
+
+/* A token-grammar string ([A-Za-z0-9._-]) of 1..outsz-1 chars, copied whole:
+ * `id`, `parent` and `host` are identity on this feed, never truncated. */
+static bool req_short_token(const cJSON *root, const char *field, char *out,
+                            size_t outsz) {
+    const cJSON *o = cJSON_GetObjectItemCaseSensitive(root, field);
+    if (!cJSON_IsString(o) || !o->valuestring)
+        return false;
+    size_t n = strlen(o->valuestring);
+    if (n + 1 > outsz || !kdash_token_ok(o->valuestring, n))
+        return false;
+    memcpy(out, o->valuestring, n + 1);
+    return true;
+}
+
+/* A required unix-seconds stamp, positive and bounded (STAMP_MAX). */
+static bool req_stamp(const cJSON *root, const char *field, double *out) {
+    const cJSON *o = cJSON_GetObjectItemCaseSensitive(root, field);
+    if (!cJSON_IsNumber(o) || !(o->valuedouble > 0) ||
+        o->valuedouble > STAMP_MAX)
+        return false;
+    *out = o->valuedouble;
+    return true;
+}
+
+static bool req_bool(const cJSON *root, const char *field, bool *out) {
+    const cJSON *o = cJSON_GetObjectItemCaseSensitive(root, field);
+    if (!cJSON_IsBool(o))
+        return false;
+    *out = cJSON_IsTrue(o);
+    return true;
+}
+
+/* Fill `b` from one wire bar. The parent link is copied raw and resolved
+ * afterwards, because it may name a bar later in the record; a malformed one
+ * is marked by `*parent_bad` rather than skipping the bar. */
+static bool take_agent_bar(const cJSON *item, const kdash_agents_t *ag,
+                           kdash_agent_bar_t *b, bool *parent_bad) {
+    memset(b, 0, sizeof(*b));
+    b->parent_index = -1;
+    *parent_bad = false;
+    const cJSON *state = cJSON_IsObject(item)
+                             ? cJSON_GetObjectItemCaseSensitive(item, "state")
+                             : NULL;
+    if (!cJSON_IsString(state) ||
+        !kdash_agent_state_from_str(state->valuestring, &b->state) ||
+        !req_short_token(item, "id", b->id, sizeof(b->id)) ||
+        !req_short_token(item, "host", b->host, sizeof(b->host)) ||
+        !req_utf8_name(item, "name", KDASH_AGENTS_NAME_CHARS, b->name,
+                       sizeof(b->name)) ||
+        !req_stamp(item, "start", &b->start) ||
+        !req_stamp(item, "end", &b->end) ||
+        !req_bool(item, "shipped", &b->shipped) ||
+        !req_bool(item, "overseer", &b->overseer))
+        return false;
+    /* A stretch that ends before it starts says nothing; one that ended
+     * before the window opened is outside what the record claims to cover. */
+    if (b->start > b->end || b->end < ag->ts - ag->window_s)
+        return false;
+    if (cJSON_GetObjectItemCaseSensitive(item, "parent") &&
+        !req_short_token(item, "parent", b->parent, sizeof(b->parent))) {
+        b->parent[0] = '\0';
+        *parent_bad = true;
+    }
+    return true;
+}
+
+static int agent_bar_find(const kdash_agents_t *ag, const char *id) {
+    for (int i = 0; i < ag->bars_count; i++)
+        if (strcmp(ag->bars[i].id, id) == 0)
+            return i;
+    return -1;
+}
+
+bool kdash_parse_agents(const char *json, size_t len, kdash_agents_t *out) {
+    if (!out)
+        return false;
+    memset(out, 0, sizeof(*out));
+
+    cJSON *root = parse_object(json, len);
+    if (!root)
+        return false;
+
+    const cJSON *bars = cJSON_GetObjectItemCaseSensitive(root, "bars");
+    long long window;
+    bool ok = req_status_head(root, &out->ts, &out->expected_refresh_s) &&
+              whole(cJSON_GetObjectItemCaseSensitive(root, "window_s"), 3600,
+                    604800, &window) &&
+              cJSON_IsArray(bars);
+
+    if (ok) {
+        out->window_s = (double)window;
+        /* Not walk_array: a bar's fate depends on the window and on the ids
+         * already kept, and the cap applies to KEPT bars. Past the cap the
+         * oldest kept bar is evicted, so the newest 96 survive -- the card's
+         * right edge is now. A malformed parent counts once, at the end, only
+         * if its bar survives. */
+        bool parent_bad[KDASH_AGENTS_BARS_MAX] = {false}; /* parallel to bars */
+        const cJSON *item = NULL;
+        cJSON_ArrayForEach(item, bars) {
+            kdash_agent_bar_t b;
+            bool bad;
+            if (!take_agent_bar(item, out, &b, &bad) ||
+                agent_bar_find(out, b.id) >= 0) {
+                out->bars_skipped++;
+                continue;
+            }
+            if (out->bars_count == KDASH_AGENTS_BARS_MAX) {
+                memmove(&out->bars[0], &out->bars[1],
+                        (KDASH_AGENTS_BARS_MAX - 1) * sizeof(out->bars[0]));
+                memmove(&parent_bad[0], &parent_bad[1],
+                        (KDASH_AGENTS_BARS_MAX - 1) * sizeof(parent_bad[0]));
+                out->bars_count--;
+                out->bars_truncated = true;
+            }
+            parent_bad[out->bars_count] = bad;
+            out->bars[out->bars_count++] = b;
+        }
+
+        /* Resolve links among the bars that survived. */
+        for (int i = 0; i < out->bars_count; i++) {
+            kdash_agent_bar_t *b = &out->bars[i];
+            if (parent_bad[i]) {
+                out->parents_dropped++;
+                continue;
+            }
+            if (b->parent[0] == '\0')
+                continue;
+            int p = agent_bar_find(out, b->parent);
+            if (p >= 0 && p != i && out->bars[p].overseer) {
+                b->parent_index = p;
+            } else {
+                b->parent[0] = '\0';
+                out->parents_dropped++;
+            }
+        }
+    }
+
+    if (!ok)
+        memset(out, 0, sizeof(*out));
+    cJSON_Delete(root);
+    return ok;
+}
+
+double kdash_agents_bar_end(const kdash_agents_t *a, const kdash_agent_bar_t *b,
+                            long long now) {
+    if (!a || !b)
+        return 0;
+    double n = (double)now;
+    double end = b->end < n ? b->end : n;
+    if (b->state == KDASH_AGENT_DONE)
+        return end;
+    return kdash_cadence_stale(a->ts, a->expected_refresh_s, now,
+                               KDASH_CADENCE_GRACE_S)
+               ? end
+               : n;
 }

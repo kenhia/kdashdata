@@ -1,0 +1,418 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/kenhia/kdashdata/contracts/schemas/kdash-agents.schema.json",
+  "title": "kdash agents",
+  "description": "Payload of kdash:agents — latest-value TS-OWNED (STRING JSON, no TTL), exactly 2 segments, on central (KDASH_CENTRAL_REDIS). The last `window_s` seconds (24 hours) of agent sessions across the fleet as BARS, for kpidash's Agents card (row 3, four cells): host-coloured bars, legs hung under their overseer, ship marks, and yellow for a session waiting on Ken. Contract v1 (CD-31). A bar is a STRETCH of activity, not a whole session: the publisher merges gaps it judges short and splits at longer ones, so one session may appear as several bars and `id` names a bar, not a session. Freshness is ts-first: judge `ts` against the record's own `expected_refresh_s` (kdash_cadence_stale). A still-running bar (`working` or `waiting`) carries the publish time as its `end`; the card draws the now line from its OWN clock, clips every `end` to now, and runs a running bar to now while the record is fresh — once it is stale, a running bar stops at its `end` (kdash_agents_bar_end). Field names are pinned; a rename, retype or removal lands as kdash:agents:v2 (rules.md Versioning), never in place.",
+  "type": "object",
+  "required": [
+    "ts",
+    "expected_refresh_s",
+    "window_s",
+    "bars"
+  ],
+  "additionalProperties": true,
+  "properties": {
+    "ts": {
+      "type": "number",
+      "exclusiveMinimum": 0,
+      "maximum": 100000000000,
+      "description": "Unix seconds (float) when the publisher built the record, writer's clock. Bounded at 1e11 so a millisecond stamp fails instead of reading as permanently fresh."
+    },
+    "expected_refresh_s": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 86400,
+      "description": "How long the publisher expects between its own scheduled writes, in seconds; 60 for ksitrep. Past this plus the reader's grace the record is stale: the card mutes, and running bars stop growing."
+    },
+    "window_s": {
+      "type": "integer",
+      "minimum": 3600,
+      "maximum": 604800,
+      "description": "How far back the record looks, in seconds before `ts`; 86400 for the card. Every bar that ENDED within [ts - window_s, ts] is listed, so a host or hour with no bar inside the window is affirmatively idle, not unknown."
+    },
+    "bars": {
+      "type": "array",
+      "maxItems": 96,
+      "description": "Every activity stretch overlapping the window, sorted by `start` ascending. A bar that began before the window keeps its true `start`; the card clips it to the window's left edge. Empty when no agent ran in the window. Producer obligations the validator cannot check (no cross-field comparison, CD-24): `start` <= `end`; `end` >= ts - window_s; `end` <= ts; every `id` unique in the record; a `parent` names a bar in this record whose `overseer` is true, and not the bar itself. The C reader skips and counts a bar that breaks the first, second or fourth; it does not police the third, because the card clips `end` to its own clock anyway. A `parent` that breaks the last is dropped: the bar is kept, the link cleared and counted.",
+      "items": {
+        "type": "object",
+        "required": [
+          "id",
+          "host",
+          "name",
+          "start",
+          "end",
+          "state",
+          "shipped",
+          "overseer"
+        ],
+        "additionalProperties": true,
+        "properties": {
+          "id": {
+            "type": "string",
+            "pattern": "^[A-Za-z0-9._-]{1,23}$",
+            "description": "Opaque bar id chosen by the publisher, unique in the record, the host-token charset. Stable across writes for the same stretch where the publisher can manage it, but a reader never relies on that: it is only the target of `parent`."
+          },
+          "host": {
+            "type": "string",
+            "pattern": "^[A-Za-z0-9._-]{1,15}$",
+            "description": "Fleet host the session ran on (`kai`, `kubs0`, `cleo`), lowercase as `hostname` gives it. The card colours by it and falls back to its 'other' colour for a host it has no colour for."
+          },
+          "name": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 31,
+            "description": "What the card labels the bar with: the project the session works in, or the session's title. At most 31 CHARACTERS (UTF-8; the C reader counts characters, not bytes); the publisher truncates, the reader never does."
+          },
+          "start": {
+            "type": "number",
+            "exclusiveMinimum": 0,
+            "maximum": 100000000000,
+            "description": "Unix seconds when the stretch began. May predate ts - window_s."
+          },
+          "end": {
+            "type": "number",
+            "exclusiveMinimum": 0,
+            "maximum": 100000000000,
+            "description": "Unix seconds when the stretch ended; for a `working` or `waiting` bar, the publish time (`ts`). Never after `ts` and never before `start`."
+          },
+          "state": {
+            "type": "string",
+            "enum": [
+              "done",
+              "working",
+              "waiting"
+            ],
+            "description": "`done`: the stretch is over. `working`: running now. `waiting`: still open and owes Ken an okay or a decision (ksitrep's `okay` and `decide` both map here); the card draws it yellow. A session that is only idle has no running bar: its last stretch is `done`."
+          },
+          "shipped": {
+            "type": "boolean",
+            "description": "A ship (a merged sprint) happened at `end`; the card draws a ship mark there."
+          },
+          "overseer": {
+            "type": "boolean",
+            "description": "This bar belongs to a session overseeing a program; legs hang beneath it and its name is drawn in the overseer colour."
+          },
+          "parent": {
+            "type": "string",
+            "pattern": "^[A-Za-z0-9._-]{1,23}$",
+            "description": "Optional: the `id` of the overseer bar this bar's session is a leg of. Absent when the bar is not a leg, or the overseer's bar is not in the record; never null, never empty."
+          }
+        }
+      }
+    }
+  },
+  "examples": [
+    {
+      "ts": 1794700000.5,
+      "expected_refresh_s": 60,
+      "window_s": 86400,
+      "bars": [
+        {
+          "id": "cleo-4f2a.1",
+          "host": "cleo",
+          "name": "kpidash Agents card",
+          "start": 1794680000,
+          "end": 1794700000.5,
+          "state": "working",
+          "shipped": false,
+          "overseer": true
+        },
+        {
+          "id": "kai-1dcc.1",
+          "host": "kai",
+          "name": "kdashdata",
+          "start": 1794685000,
+          "end": 1794690000,
+          "state": "done",
+          "shipped": true,
+          "overseer": false,
+          "parent": "cleo-4f2a.1"
+        },
+        {
+          "id": "kubs0-77e0.2",
+          "host": "kubs0",
+          "name": "klams",
+          "start": 1794695000,
+          "end": 1794700000.5,
+          "state": "waiting",
+          "shipped": false,
+          "overseer": false
+        }
+      ]
+    },
+    {
+      "ts": 1794700000.5,
+      "expected_refresh_s": 60,
+      "window_s": 86400,
+      "bars": []
+    },
+    {
+      "ts": 1794700000.5,
+      "expected_refresh_s": 60,
+      "window_s": 86400,
+      "bars": [
+        {
+          "id": "kimac-09.1",
+          "host": "kimac",
+          "name": "Café menu — día dos",
+          "start": 1794600000,
+          "end": 1794620000,
+          "state": "done",
+          "shipped": false,
+          "overseer": false
+        }
+      ],
+      "publisher": "ksitrep",
+      "v": 1
+    }
+  ],
+  "x-counterexamples": [
+    {
+      "record": {
+        "ts": 1794700000.5,
+        "expected_refresh_s": 60,
+        "window_s": 86400,
+        "bars": [
+          {
+            "id": "k1",
+            "host": "kai",
+            "name": "kdashdata",
+            "start": 1794690000,
+            "end": 1794691000,
+            "state": "idle",
+            "shipped": false,
+            "overseer": false
+          }
+        ]
+      },
+      "why": "`state` is one of done, working, waiting; an idle session's last stretch is `done`"
+    },
+    {
+      "record": {
+        "ts": 1794700000.5,
+        "expected_refresh_s": 60,
+        "window_s": 86400,
+        "bars": [
+          {
+            "id": "k1",
+            "host": "kai",
+            "name": "kdashdata",
+            "start": 1794690000,
+            "end": 1794691000,
+            "state": "Done",
+            "shipped": false,
+            "overseer": false
+          }
+        ]
+      },
+      "why": "state words are lowercase"
+    },
+    {
+      "record": {
+        "ts": 1794700000.5,
+        "expected_refresh_s": 60,
+        "window_s": 86400,
+        "bars": [
+          {
+            "id": "k1",
+            "host": "kai",
+            "name": "kdashdata",
+            "start": 1794690000,
+            "end": 1794691000,
+            "state": "done",
+            "overseer": false
+          }
+        ]
+      },
+      "why": "`shipped` is required on every bar; no ship is `false`"
+    },
+    {
+      "record": {
+        "ts": 1794700000.5,
+        "expected_refresh_s": 60,
+        "window_s": 86400,
+        "bars": [
+          {
+            "id": "k1",
+            "host": "kai",
+            "name": "kdashdata",
+            "start": 1794690000,
+            "end": 1794691000,
+            "state": "done",
+            "shipped": false,
+            "overseer": "yes"
+          }
+        ]
+      },
+      "why": "`overseer` is a boolean, not a word"
+    },
+    {
+      "record": {
+        "ts": 1794700000.5,
+        "expected_refresh_s": 60,
+        "window_s": 86400,
+        "bars": [
+          {
+            "id": "k1",
+            "host": "kai",
+            "name": "kdashdata",
+            "start": 1794690000,
+            "end": 1794691000,
+            "state": "done",
+            "shipped": false,
+            "overseer": false,
+            "parent": ""
+          }
+        ]
+      },
+      "why": "an absent link is ABSENT, not an empty string"
+    },
+    {
+      "record": {
+        "ts": 1794700000.5,
+        "expected_refresh_s": 60,
+        "window_s": 86400,
+        "bars": [
+          {
+            "id": "k1",
+            "host": "kai",
+            "name": "kdashdata",
+            "start": 1794690000,
+            "end": 1794691000,
+            "state": "done",
+            "shipped": false,
+            "overseer": false,
+            "parent": null
+          }
+        ]
+      },
+      "why": "an absent link is ABSENT, not null"
+    },
+    {
+      "record": {
+        "ts": 1794700000.5,
+        "expected_refresh_s": 60,
+        "window_s": 86400,
+        "bars": [
+          {
+            "id": "abcdefghijklmnopqrstuvwx",
+            "host": "kai",
+            "name": "kdashdata",
+            "start": 1794690000,
+            "end": 1794691000,
+            "state": "done",
+            "shipped": false,
+            "overseer": false
+          }
+        ]
+      },
+      "why": "`id` is at most 23 characters"
+    },
+    {
+      "record": {
+        "ts": 1794700000.5,
+        "expected_refresh_s": 60,
+        "window_s": 86400,
+        "bars": [
+          {
+            "id": "k1",
+            "host": "kai box",
+            "name": "kdashdata",
+            "start": 1794690000,
+            "end": 1794691000,
+            "state": "done",
+            "shipped": false,
+            "overseer": false
+          }
+        ]
+      },
+      "why": "`host` is a host token: no spaces"
+    },
+    {
+      "record": {
+        "ts": 1794700000.5,
+        "expected_refresh_s": 60,
+        "window_s": 86400,
+        "bars": [
+          {
+            "id": "k1",
+            "host": "kai",
+            "name": "abcdefghijklmnopqrstuvwxyz012345",
+            "start": 1794690000,
+            "end": 1794691000,
+            "state": "done",
+            "shipped": false,
+            "overseer": false
+          }
+        ]
+      },
+      "why": "`name` is at most 31 characters; the publisher truncates"
+    },
+    {
+      "record": {
+        "ts": 1794700000.5,
+        "expected_refresh_s": 60,
+        "window_s": 86400,
+        "bars": [
+          {
+            "id": "k1",
+            "host": "kai",
+            "name": "",
+            "start": 1794690000,
+            "end": 1794691000,
+            "state": "done",
+            "shipped": false,
+            "overseer": false
+          }
+        ]
+      },
+      "why": "`name` is never empty"
+    },
+    {
+      "record": {
+        "ts": 1794700000.5,
+        "expected_refresh_s": 60,
+        "window_s": 86400,
+        "bars": [
+          {
+            "id": "k1",
+            "host": "kai",
+            "name": "kdashdata",
+            "start": 1794690000000,
+            "end": 1794691000,
+            "state": "done",
+            "shipped": false,
+            "overseer": false
+          }
+        ]
+      },
+      "why": "a millisecond `start` would sit far in the future"
+    },
+    {
+      "record": {
+        "ts": 1794700000.5,
+        "expected_refresh_s": 60,
+        "window_s": 60,
+        "bars": []
+      },
+      "why": "a window under an hour cannot fill the card"
+    },
+    {
+      "record": {
+        "ts": 1794700000.5,
+        "expected_refresh_s": 60,
+        "bars": []
+      },
+      "why": "`window_s` absent: a record that does not say how far back it looks cannot say a host was idle"
+    },
+    {
+      "record": {
+        "ts": 1794700000.5,
+        "window_s": 86400,
+        "bars": []
+      },
+      "why": "`expected_refresh_s` absent: the writer must declare its cadence (CD-28)"
+    }
+  ]
+}

@@ -686,8 +686,12 @@ const char *kdash_klams_health_str(kdash_klams_health_t h);
  * kdash_calendar_covers() false, and then the card draws its grid untagged. */
 
 #define KDASH_CALENDAR_DAYS_MAX  64 /* the schema's maxItems             */
-#define KDASH_CALENDAR_NAME_MAX  32 /* 31 chars + NUL, `holiday`/`special` */
-#define KDASH_CALENDAR_SHORT_MAX 13 /* 12 chars + NUL, `short`             */
+/* The schema bounds names in CHARACTERS; the buffers hold that many UTF-8
+ * characters of up to 4 bytes each, plus the NUL (sprint 026). */
+#define KDASH_CALENDAR_NAME_CHARS  31 /* `holiday`/`special` */
+#define KDASH_CALENDAR_SHORT_CHARS 12 /* `short`             */
+#define KDASH_CALENDAR_NAME_MAX  (KDASH_CALENDAR_NAME_CHARS * 4 + 1)
+#define KDASH_CALENDAR_SHORT_MAX (KDASH_CALENDAR_SHORT_CHARS * 4 + 1)
 
 typedef struct {
     char date[KDASH_DATE_MAX];               /* `YYYY-MM-DD`               */
@@ -730,5 +734,80 @@ bool kdash_calendar_covers(const kdash_calendar_t *cal, const char *date);
  * either argument is NULL). Linear: at most 64 entries. */
 const kdash_calendar_day_t *kdash_calendar_day(const kdash_calendar_t *cal,
                                                const char *date);
+
+/* ---- kdash:agents (CD-31) -----------------------------------------------
+ *
+ * The last `window_s` (24 h) of agent sessions as bars, for kpidash's Agents
+ * card. A bar is a STRETCH of activity, not a whole session: one session may
+ * produce several, so `id` names a bar. A leg hangs from its overseer's bar
+ * through `parent`.
+ *
+ * Freshness is ts-first, judged with kdash_cadence_stale() on the record's own
+ * `expected_refresh_s`. A still-running bar (`working`/`waiting`) carries the
+ * publish time as its `end`; the card draws the now line from its own clock and
+ * runs such a bar to now while the record is fresh -- kdash_agents_bar_end()
+ * is that rule, so the card does not re-derive it. */
+
+#define KDASH_AGENTS_BARS_MAX 96  /* the schema's maxItems                    */
+#define KDASH_AGENTS_ID_MAX   24  /* 23 token chars + NUL, `id` and `parent`  */
+#define KDASH_AGENTS_HOST_MAX 16  /* 15 token chars + NUL                     */
+#define KDASH_AGENTS_NAME_MAX 128 /* 31 UTF-8 characters (<= 4 bytes) + NUL  */
+#define KDASH_AGENTS_NAME_CHARS 31
+
+typedef enum {
+    KDASH_AGENT_DONE = 0, /* the stretch ended at `end`                    */
+    KDASH_AGENT_WORKING,  /* still running                                  */
+    KDASH_AGENT_WAITING,  /* still open, and owes Ken an okay or a decision */
+} kdash_agent_state_t;
+
+typedef struct {
+    char id[KDASH_AGENTS_ID_MAX];
+    char host[KDASH_AGENTS_HOST_MAX];
+    char name[KDASH_AGENTS_NAME_MAX];
+    double start;              /* unix seconds; may predate the window */
+    double end;                /* unix seconds; >= start; for a running bar,
+                                * the publish time -- see kdash_agents_bar_end() */
+    kdash_agent_state_t state;
+    bool shipped;              /* a ship happened at `end`  */
+    bool overseer;             /* this bar is an overseer's */
+    /* The overseer bar this one hangs from: "" and -1 when there is none, or
+     * when the wire's `parent` did not name a kept overseer bar (dropped). */
+    char parent[KDASH_AGENTS_ID_MAX];
+    int  parent_index;
+} kdash_agent_bar_t;
+
+typedef struct {
+    double ts;                 /* required, positive */
+    double expected_refresh_s; /* required, 1..86400 */
+    double window_s;           /* required, 3600..604800; 86400 for the card */
+
+    /* Ascending by `start`, as the writer sent it. */
+    kdash_agent_bar_t bars[KDASH_AGENTS_BARS_MAX];
+    int  bars_count;
+    int  bars_skipped;    /* malformed, duplicate id, or ended before the window */
+    bool bars_truncated;  /* the LAST (newest) 96 were kept               */
+    int  parents_dropped; /* `parent` present but naming no kept overseer bar */
+} kdash_agents_t;
+
+/* Every top-level field is required, `bars` included (empty is a statement:
+ * no agent ran in the window). A bar is kept only if every required field is
+ * well-formed, its `state` is one of the three words, `start` <= `end`, its
+ * `end` is not before `ts - window_s`, and its `id` is not already taken; any
+ * other bar is skipped and counted. An optional `parent` that does not name a
+ * kept bar with `overseer` true (after truncation) is dropped and counted, and
+ * the bar itself is kept. */
+bool kdash_parse_agents(const char *json, size_t len, kdash_agents_t *out);
+
+/* Map a `state` string to the enum, and back to the schema's own word. */
+bool kdash_agent_state_from_str(const char *s, kdash_agent_state_t *out);
+const char *kdash_agent_state_str(kdash_agent_state_t s);
+
+/* Where the card draws bar `b`'s right edge, given its own clock `now`.
+ * `done`: `end`, clipped to now. `working`/`waiting`: now, while the record is
+ * fresh (not kdash_cadence_stale() with KDASH_CADENCE_GRACE_S); once the
+ * record is stale, `end` clipped to now -- a dead publisher must not keep
+ * stretching bars it last saw an hour ago. 0 for a NULL argument. */
+double kdash_agents_bar_end(const kdash_agents_t *a, const kdash_agent_bar_t *b,
+                            long long now);
 
 #endif /* KDASH_PAYLOAD_H */

@@ -1886,6 +1886,87 @@ arithmetic into every reader and turns a month boundary into a missing key.
 Also rejected: carrying weekends or every date with a tag set. That puts 120
 mostly empty entries on the wire for a card that knows what a Saturday is.
 
+## CD-31 — `kdash:agents` carries activity stretches as bars, and a running bar reaches now only while the record is fresh (sprint 026)
+
+kdashdata WI 4693, slice 1 of program korg:4699. kpidash's row 3 gets a 4×1
+Agents card: a 24-hour timeline of agent sessions, host-coloured, with legs
+hung under their overseer, ship marks, and yellow for a session waiting on Ken.
+The overseer decided the inputs before this sprint: ksitrep records and
+publishes, because every agent host's hooks already report to it; a bar is a
+stretch of activity (short gaps merged), not a whole session; and the
+leg-to-overseer link comes from the hook, not from agents remembering to say
+so. This decision is the wire shape. WI 4693 proposed it, and it landed as
+proposed except where noted.
+
+**One fixed key, `kdash:agents`, ts-owned, no TTL, on central.** It is the
+CD-30 family: one STRING of JSON, `ts` and a required `expected_refresh_s`
+(60), no `v` (CD-28), version in the key. A provider-neutral name, as with
+`kdash:calendar` and `kdash:weather:{loc}`: ksitrep writes it today, but the
+content is sessions, not ksitrep.
+
+**The record states its window.** `window_s` (3600..604800; 86400 for the
+card) is required, and every bar that ended inside `[ts − window_s, ts]` is
+listed, so a host with no bar there was idle rather than unknown. A record
+without a window is rejected, like a calendar without one. A bar that began
+before the window keeps its true `start` and the card clips it; the publisher
+does not invent a start that never happened.
+
+**A running bar's `end` is the publish time, and the reader owns "now".**
+The card draws the now line from its own clock and clips every `end` to it.
+While the record is fresh a `working` or `waiting` bar runs to now; once
+`kdash_cadence_stale()` says the record is old it stops at its `end`. The
+second half is this sprint's, not WI 4693's: without it a dead publisher
+would keep stretching every running bar it last saw, which is the one way this
+card could lie. `kdash_agents_bar_end()` carries the rule, so the card does
+not re-derive it.
+
+**Three states, closed.** `done`, `working`, `waiting`. `waiting` is "owes Ken
+an okay or a decision", both of ksitrep's asking states, because the card
+draws them the same yellow. Idle is not a state: an idle session's last
+stretch is `done`. An unknown word skips the bar rather than guessing a colour
+for it.
+
+**Identity strings use the host-token charset; the label counts characters.**
+`id` (≤ 23) and `host` (≤ 15) match `[A-Za-z0-9._-]`, the grammar every host
+field in this repo already uses, so they can never need escaping. `name` is a
+label and may be any UTF-8 (≤ 31 characters). Its C buffer holds 31 four-byte
+characters, and the reader counts characters as the schema's `maxLength`
+does, so a publisher that truncates by characters is never refused for its
+bytes. The same sprint repaired `kdash:calendar`'s reader, whose `holiday`,
+`special` and `short` buffers were sized in bytes and so skipped a
+schema-valid name with an accent in it; they now hold their bounds in
+characters too. Other feeds' bounded strings are ASCII by grammar or by their
+writers.
+
+**`parent` must name another overseer bar in the same record, or it is
+dropped.** The bar is kept, the link cleared, and `parents_dropped` counted. A
+dangling link happens normally when an overseer's stretch has aged out of the
+window while its leg's has not, so it cannot reject anything. Requiring the
+target to be `overseer` is this sprint's tightening of WI 4693, which said
+"the overseer bar" without saying the reader checks it. The reader resolves
+links after truncation and gives the slot as `parent_index`, so the card does
+no lookup.
+
+**At most 96 bars, and past the cap the newest are kept.** That is the
+opposite of the calendar's earliest-kept rule for the same reason: what
+matters is what is on screen, and the card's right edge is now. Duplicate ids
+keep the first and skip the rest.
+
+**The reader's value cap rose from 16 KB to 64 KB.** WI 4693 asked whether a
+96-bar record fits 16 KB; it does not. Full-cap with ASCII names it is 22.6 KB.
+And because the schema counts characters, a writer whose JSON encoder escapes
+non-ASCII (Python's default) can spend 12 wire bytes on one astral character,
+which takes the true worst case to about 55 KB. `test_feed` measures that
+record. `VALUE_MAX` is a clamp on a reply hiredis has already allocated, so
+raising it costs nothing. `kdash_agents_t` itself is about 21 KB, which the
+header says, so a card on a small stack holds it statically.
+
+Rejected: one bar per session with a list of gaps inside it. It moves the
+merge rule, which the overseer already gave to the publisher, into every
+reader. Also rejected: a per-host key. The card draws all hosts in one
+timeline, and a leg's overseer is usually on another host, so a link would
+have to cross keys.
+
 ## Open questions
 
 - **OQ-2 — Redis ACL writer/reader split** (see CD-2).

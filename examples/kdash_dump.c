@@ -427,6 +427,42 @@ static void dump_calendar(kdash_conn_t *c, long long now) {
     }
 }
 
+/* The agent-session timeline (CD-31). Bars print with the right edge the
+ * card would draw (kdash_agents_bar_end), as minutes before now. */
+static void dump_agents(kdash_conn_t *c, long long now) {
+    printf("\n== agents (kdash:agents) ==\n");
+
+    static kdash_agents_t ag; /* ~21 KB */
+    switch (kdash_agents(c, &ag)) {
+    case KDASH_UNAVAIL:
+        printf("  unavailable\n");
+        return;
+    case KDASH_ABSENT:
+        printf("  no record\n");
+        return;
+    case KDASH_OK:
+        break;
+    }
+    printf("  %d bar(s), %d skipped%s, %d link(s) dropped, window %.0fh%s\n",
+           ag.bars_count, ag.bars_skipped,
+           ag.bars_truncated ? " [truncated]" : "", ag.parents_dropped,
+           ag.window_s / 3600,
+           kdash_cadence_stale(ag.ts, ag.expected_refresh_s, now,
+                               KDASH_CADENCE_GRACE_S)
+               ? "  [stale]"
+               : "");
+    for (int i = 0; i < ag.bars_count; i++) {
+        const kdash_agent_bar_t *b = &ag.bars[i];
+        double end = kdash_agents_bar_end(&ag, b, now);
+        printf("    %-15s %-7s -%5.0fm..-%4.0fm  %s%s%s%s%s\n", b->host,
+               kdash_agent_state_str(b->state), (now - b->start) / 60,
+               (now - end) / 60, b->name, b->overseer ? "  [overseer]" : "",
+               b->shipped ? "  [shipped]" : "",
+               b->parent_index >= 0 ? "  under " : "",
+               b->parent_index >= 0 ? ag.bars[b->parent_index].name : "");
+    }
+}
+
 int main(int argc, char **argv) {
     kdash_conn_opts_t opts = {.app = "kdash-dump"}; /* .stem NULL -> central */
     if (argc > 1)
@@ -454,6 +490,7 @@ int main(int argc, char **argv) {
     dump_panel(c, now);
     dump_status(c, now);
     dump_calendar(c, now);
+    dump_agents(c, now);
     dump_claude(cc, now);
 
     /* A dashboard would render "unavailable" here and carry on; a CLI can be

@@ -61,6 +61,10 @@
  * a v2 lands beside it as `kdash:calendar:v2`. */
 #define KDASH_KEY_CALENDAR "kdash:calendar"
 
+/* The agent-session timeline for the Agents card (CD-31). One fixed key; a v2
+ * lands beside it as `kdash:agents:v2`. */
+#define KDASH_KEY_AGENTS "kdash:agents"
+
 /* The claude family (registry.md). Two of the three are single fixed keys, so
  * they are literals rather than grammars; only the session family is parsed. */
 #define KDASH_KEY_CLAUDE_SESSION_PFX "claude:session:"
