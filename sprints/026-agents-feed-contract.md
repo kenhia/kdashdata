@@ -133,3 +133,22 @@ it landed as proposed, with these additions:
 
 - korg:4697 and korg:4698 pin this sprint's merge commit, named in the wrap-up
   handoff on korg:4696.
+
+## Deployed
+
+2026-11-14 19:45Z (11:45 PST), from merged `main` `d6fb322` (PR #27) on kai,
+by `.sprint-deploy`'s `recipe: publish` then `recipe: deploy`, on the karc
+ship turn.
+
+- `just publish`: "nothing to publish: 0.1.0-4837473 already in the store".
+  No `publishers/` input changed, so the self-skip is correct.
+- `just deploy`: knarr confirmed kdash-pub 0.1.0-4837473, unchanged, on kai,
+  kubs0, cleo, kimac and thrall. komarchy and kbook2 timed out and
+  thrall-arch did not resolve. All three are `--host-optional`; knarr
+  reported them SKIPPED and exited 0. The probes ran from kai, through knarr.
+- What this sprint shipped is the contract and libkdash, and they are live
+  by being on `main`. From `d6fb322`, ctest passed 5 of 5. `kdash_dump`, run
+  on kai with `/etc/khomelab/secrets.env` sourced, read `kdash:agents` as
+  `no record`. That is the correct ABSENT result, because korg:4697's writer
+  is not built yet. The same run read the live `kdash:calendar` with the
+  repaired reader as `7 day(s), 0 skipped`. Consumers pin `d6fb322`.
