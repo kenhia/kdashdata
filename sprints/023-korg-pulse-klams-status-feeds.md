@@ -132,3 +132,27 @@ below.
 - WI 4612 (why kubs0's scanner stopped writing) decides which scanner time
   the combined card draws. Both are on the wire, so the answer needs no
   contract change.
+
+## Deployed
+
+2026-11-13, from merged `main` (`d57e1dc`, PR #24). `/sprint-ship` ran the
+two steps that `.sprint-deploy` declares, on the karc ship turn on kai.
+
+- **`just publish`** was a deliberate no-op. It reported "nothing to
+  publish: 0.1.0-4837473 already in the store", because this sprint changed
+  no publisher input.
+- **`just deploy`**: knarr installed `kdash-pub` `latest` (`0.1.0-4837473`,
+  unchanged) on kai, kubs0, cleo, kimac and thrall. komarchy and kbook2 did
+  not answer, and thrall-arch did not resolve. All three are
+  `--host-optional`, were reported SKIPPED, and the step exited 0.
+
+What this sprint delivered is two contracts and their C readers. They are
+live by being on `main`:
+- `scripts/check.py` on merged `main` reports 22 schemas registered and
+  validating.
+- ctest passes 5 of 5.
+- `kdash_dump`, built from `main` on kai with the CD-12 env file sourced,
+  connected to central and read both keys as `no record`.
+
+No key was written. The first writes are korg:4616's and korg:4617's.
+Consumers pin `d57e1dc`.
