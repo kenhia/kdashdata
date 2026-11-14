@@ -134,8 +134,8 @@ first key arrived with the publisher wrappers in sprint 003.
 | `kdash:update:{host}:{kind}` | latest-value, presence-owned | k-homelab's apt runner, per run (not yet — see below) | none (never) | [update](schemas/kdash-update.schema.json) |
 | `kdash:nas:{host}` | latest-value, expiring | kpidash-client on the NAS host (not yet — see below) | 3× cadence | [nas](schemas/kdash-nas.schema.json) — **v1** |
 | `kdash:weather:{loc}` | latest-value, ts-owned | kweather on kai, every 10 min (not yet — see below) | none | [weather](schemas/kdash-weather.schema.json) — **v1** |
-| `kdash:korg:pulse` | latest-value, ts-owned | a korg-reading publisher, cadence in `expected_refresh_s` (not yet — see below) | none | [korg-pulse](schemas/kdash-korg-pulse.schema.json) — **v1** |
-| `kdash:klams:status` | latest-value, ts-owned | a klams-reading publisher, cadence in `expected_refresh_s` (not yet — see below) | none | [klams-status](schemas/kdash-klams-status.schema.json) — **v1** |
+| `kdash:korg:pulse` | latest-value, ts-owned | korg's `bin/korg-pulse` on kai, every 5 min | none | [korg-pulse](schemas/kdash-korg-pulse.schema.json) — **v1** |
+| `kdash:klams:status` | latest-value, ts-owned | klams-monitor on kubs0, every 60 s | none | [klams-status](schemas/kdash-klams-status.schema.json) — **v1** |
 
 `selftest` is a publish canary, not a dashboard feed: running it from a host
 proves that host's whole publish path — khlenv discovery, `REDISCLI_AUTH`, key
@@ -663,8 +663,9 @@ ordinary central-stem handle, parsed by `kdash_parse_korg_pulse()` in
 `kdash_payload.h`. The parser keeps the first 24 `by_project` entries, which
 are the largest, and the **newest** 30 `history` entries. Anything beyond
 either cap is flagged `*_truncated`, so a record that breaks a cap still
-draws. A malformed array entry is skipped and counted. **Writer, not yet**:
-the publisher slice, korg:4616, through `kdash-pub set kdash:korg:pulse …`.
+draws. A malformed array entry is skipped and counted. **Writer**: korg's
+`bin/korg-pulse` on kai, every 5 min (`korg-pulse.timer`, korg sprint 100),
+through `kdash-pub set`.
 `kdash` is already in both allowlists.
 
 ### `kdash:klams:status` — the klams memory server at a glance (sprint 023)
@@ -706,8 +707,8 @@ cadence is 60 s.
 counts read as `KDASH_COUNT_NULL` (-1), and nullable stamps read as 0, the
 library's existing spelling for an unknown stamp. Over-long `scanners` and
 `subsystems` keep the first 8, over-long `new_per_day` keeps the newest 14,
-and each is flagged. **Writer, not yet**: the klams publisher slice,
-korg:4617.
+and each is flagged. **Writer**: klams-monitor on kubs0, every
+60 s (its `[kdash_status]` section, klams sprint 059), through `kdash-pub set`.
 
 ### Provisional: `kdash:korg:*` — korg data for the panels (CD-26, sprint 018)
 
