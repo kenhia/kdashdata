@@ -820,6 +820,56 @@ int main(void) {
         const char *sl_v[] = {"41", "77", "Fable"};
         CHECK(kdash_parse_claude_limits(sl_f, sl_v, 3, &l), "label without pct");
         CHECK(!l.scoped_valid, "and the reverse is no gauge either");
+
+        /* No five-hour window (CD-29). */
+        CHECK(kdash_parse_claude_limits(f, v, 14, &l) && !l.five_hour_none,
+              "a hash that predates five_hour_none has a five-hour window");
+        CHECK(l.five_hour_pct == 41.5, "and its percentage is a reading");
+
+        const char *nw_f[] = {"five_hour_pct", "seven_day_pct",
+                              "five_hour_resets_at", "seven_day_resets_at",
+                              "five_hour_none", "updated_at",
+                              "expected_refresh_s"};
+        const char *nw_v[] = {"0", "10", "0", "1763553600", "1", "1756600000",
+                              "300"};
+        CHECK(kdash_parse_claude_limits(nw_f, nw_v, 7, &l),
+              "no five-hour window is a valid record");
+        CHECK(l.valid && l.five_hour_none, "and says so");
+        CHECK(l.seven_day_pct == 10.0 && l.seven_day_resets_at == 1763553600.0,
+              "the seven-day gauge is untouched");
+
+        /* The stale leftover: an earlier writer's five-hour numbers are still
+         * in the hash beside the flag. They must not render as a reading. */
+        const char *lo_v[] = {"37", "10", "1756610000", "1763553600", "1",
+                              "1756600000", "300"};
+        CHECK(kdash_parse_claude_limits(nw_f, lo_v, 7, &l) && l.five_hour_none,
+              "leftover five-hour fields beside the flag");
+        CHECK(l.five_hour_pct == 0.0 && l.five_hour_resets_at == 0.0,
+              "are zeroed, whatever the hash holds");
+
+        /* 0 says the window is present; junk never says it is gone. */
+        const char *zero_v[] = {"37", "10", "1756610000", "1763553600", "0",
+                                "1756600000", "300"};
+        CHECK(kdash_parse_claude_limits(nw_f, zero_v, 7, &l) &&
+                  !l.five_hour_none && l.five_hour_pct == 37.0 &&
+                  l.five_hour_resets_at == 1756610000.0,
+              "five_hour_none 0 is a window, published as is");
+        const char *bad_none[] = {"true", "2", "1.0", ""};
+        for (int i = 0; i < 4; i++) {
+            const char *bv[] = {"37", "10", "1756610000", "1763553600",
+                                bad_none[i], "1756600000", "300"};
+            CHECK(kdash_parse_claude_limits(nw_f, bv, 7, &l) &&
+                      !l.five_hour_none && l.five_hour_pct == 37.0,
+                  "only exactly 1 says there is no window");
+        }
+
+        /* Unknown is not "no window": a rejected record is zeroed, and its
+         * flag is false. */
+        const char *rj_f[] = {"five_hour_none", "seven_day_pct"};
+        const char *rj_v[] = {"1", "10"};
+        CHECK(!kdash_parse_claude_limits(rj_f, rj_v, 2, &l) && !l.valid &&
+                  !l.five_hour_none,
+              "a record without five_hour_pct still rejects, flag or not");
     }
 
     /* ---- claude:limits staleness, per gauge ---- */
@@ -838,6 +888,17 @@ int main(void) {
         l.updated_at = (double)(now - 200); /* > 60 + 60 */
         CHECK(kdash_claude_limits_stale(&l, now, grace, legacy),
               "past cadence + grace");
+
+        /* "No five-hour window" is a headline observation like any other: it
+         * rides updated_at and goes stale with it (CD-29). */
+        l.five_hour_none = true;
+        CHECK(kdash_claude_limits_stale(&l, now, grace, legacy),
+              "an old no-window statement is stale, not an all-clear");
+        l.updated_at = (double)(now - 100);
+        CHECK(!kdash_claude_limits_stale(&l, now, grace, legacy),
+              "and a fresh one is fresh");
+        l.five_hour_none = false;
+        l.updated_at = (double)(now - 200);
 
         /* A pre-cadence writer published no cadence; it gets the legacy window
          * rather than being treated as instantly stale. */

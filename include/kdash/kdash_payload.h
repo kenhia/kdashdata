@@ -455,6 +455,16 @@ typedef struct {
     double five_hour_resets_at; /* optional; 0 = unknown                  */
     double seven_day_resets_at; /* optional; 0 = unknown                  */
 
+    /* The source reported NO five-hour window (CD-29): the wire's
+     * `five_hour_none` is 1. When set, five_hour_pct and five_hour_resets_at
+     * are forced to 0 whatever the hash holds, so a leftover from an earlier
+     * writer can never render as a reading. False on a record that predates
+     * the field (its five_hour_pct is a real reading) and on a rejected or
+     * absent record — "no window" is only ever a positive statement, so it
+     * cannot be confused with "unknown", which is `valid == false`. Rides the
+     * headline stamp: kdash_claude_limits_stale() judges it too. */
+    bool five_hour_none;
+
     /* The OBSERVATION time behind the headline fields, not the publish time:
      * several writers on several hosts share this one key, and a writer must
      * not publish over a fresher one. */
@@ -477,7 +487,9 @@ typedef struct {
  * `*_pct` fields are required, numeric and clamped to [0,100]; anything else
  * rejects the record whole and leaves `*out` zeroed. Half a scoped set (a
  * percentage with no label, or the reverse) yields `scoped_valid == false`
- * rather than an unlabelled gauge. */
+ * rather than an unlabelled gauge. `five_hour_none` is set only by a value
+ * that parses as exactly 1; 0, absent or unparseable leaves the five-hour
+ * fields as published. */
 bool kdash_parse_claude_limits(const char *const *fields,
                                const char *const *values, int nfields,
                                kdash_claude_limits_t *out);

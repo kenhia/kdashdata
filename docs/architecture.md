@@ -1745,6 +1745,78 @@ and the klams publisher in klams (korg:4617). Either way the direction is the
 one CD-26 fixed: publisher → central → libkdash → panel. Both write through
 `kdash-pub`, and `kdash` is already in both allowlists.
 
+## CD-29 — `claude:limits` says "no five-hour window" with a flag, and every headline write states it (sprint 024)
+
+kdashdata WI 4630, slice 6 of program korg:4619. On 2026-11-14 the oauth
+usage endpoint returned `"five_hour": null` for Ken's account: no five-hour
+entry anywhere, `limits[]` holding only the weekly windows (evidence on
+kdeskdash WI 4623). The five-hour cap is reported removed on his plan and kept
+on smaller ones. Ken's display ruling: with no five-hour window the cards draw
+seven-day and the model-scoped window, and with one they draw as today. The
+contract had no way to say it. `five_hour_pct` is required, so a writer could
+only publish 0 (indistinguishable from an idle window) or a wrong number. The
+live publisher was doing the second, copying seven-day values into the
+five-hour fields.
+
+**The representation is a new optional field, `five_hour_none` ∈ {0, 1}.**
+1 means the source reports no five-hour window. It is a flag rather than
+dropping `five_hour_pct`, because `five_hour_pct` is required. Removing it is
+a breaking change (rules.md, Versioning), and every reader that predates this
+change rejects the whole record without it, losing the seven-day gauge with
+the five-hour one. So a no-window write still carries `five_hour_pct` 0. An
+old reader draws a 0 % five-hour gauge, which is wrong in the honest
+direction. A new reader knows better.
+
+The flag names the *missing* window, not the present one, for two reasons:
+
+- **A field written before this change is absent from the hash**, and that
+  must read as "has a window": those writers' `five_hour_pct` is a real
+  reading. With a `five_hour_present` flag, absent would have to mean
+  present, which inverts the usual sense of absence.
+- **A zeroed struct must not say "no window".** A rejected or unread record
+  leaves `kdash_claude_limits_t` zeroed (`valid == false`). With
+  `five_hour_none` that zero reads "not stated", so a caller that forgets to
+  check `valid` still cannot confuse *unknown* with *no window*.
+
+**Every headline writer states the flag on every headline write, in the same
+HSET as `updated_at`.** `claude:limits` is one hash with several writers and
+no TTL, so the leftover question is real: who clears a five-hour reading
+another writer left behind? The answer is **the writer that observes no window
+clears it.** It writes `five_hour_none 1`, `five_hour_pct 0` *and*
+`five_hour_resets_at 0`. This is the single exception to "a source that does
+not know the reset leaves it alone", because this source does know: there is
+nothing to reset. A writer that observes a window writes `five_hour_none 0`
+beside its real values, which clears a flag that an earlier no-window write
+left behind. All three writer paths can tell which case they are in. The oauth
+body's `five_hour` is null or an object, the statusline's `rate_limits` has a
+`five_hour` or it does not, and a history sample has an `fh` or it does not.
+No writer needs a "cannot tell" case, so none has to leave the flag alone. A
+writer that loses the `updated_at` guard writes nothing, as before.
+
+**The reader does not trust the writers to have cleaned up.**
+`kdash_parse_claude_limits()` sets `five_hour_none` only when the value parses
+as exactly 1, and when it is set it forces `five_hour_pct` and
+`five_hour_resets_at` to 0 whatever the hash holds. A leftover therefore never
+renders, even from a writer that predates this rule. Any other value (0,
+absent, `true`, `2`, `1.0`) leaves the five-hour fields as published, because
+"no window" must be a positive statement. The flag belongs to the headline
+set and rides `updated_at`, so `kdash_claude_limits_stale()` already judges
+it. An old no-window statement greys the card like an old reading does, and
+is never an all-clear.
+
+**The one gap is a writer that predates the rule.** If a pre-change writer
+writes after a no-window write, its HSET leaves the `five_hour_none 1` flag in
+place beside the five-hour value it just wrote, and a new reader zeroes that
+value. The only such writer is today's `claude-pub.sh`, which is the one
+copying seven-day values into the five-hour fields. Hiding its number is the
+better failure, and the gap closes when kdeskdash WI 4623 deploys fleet-wide.
+
+Rejected: dropping `five_hour_pct` in a `claude:limits:v2` key. That is a
+second key for every writer and reader to move to, for a field a flag
+handles additively. Also rejected: a sentinel value (`-1`) in `five_hour_pct`.
+That changes the field's meaning, and old readers clamp it to 0 anyway, so
+nothing would be gained.
+
 ## Open questions
 
 - **OQ-2 — Redis ACL writer/reader split** (see CD-2).
