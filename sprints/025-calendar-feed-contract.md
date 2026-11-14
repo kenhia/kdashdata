@@ -123,3 +123,22 @@ and left the spelling to this leg.
 
 - korg:4667 and korg:4668 pin this sprint's merge commit, named in the wrap-up
   handoff on korg:4666.
+
+## Deployed
+
+2026-11-14 08:49Z (00:49 PST), from merged `main` `b1ad6af` (PR #26) on kai,
+by `.sprint-deploy`'s `recipe: publish` then `recipe: deploy`, on the karc
+ship turn.
+
+- `just publish`: "nothing to publish: 0.1.0-4837473 already in the store".
+  No `publishers/` input changed, so the self-skip is correct.
+- `just deploy`: knarr confirmed kdash-pub 0.1.0-4837473, unchanged, on kai,
+  kubs0, cleo, kimac and thrall. komarchy and kbook2 timed out and
+  thrall-arch did not resolve. All three are `--host-optional`; knarr
+  reported them SKIPPED and exited 0. The probes ran from kai, through knarr.
+- What this sprint shipped is the contract and libkdash, and they are live
+  by being on `main`. From `b1ad6af`, ctest passed 5 of 5 and `check.py`
+  reported 23 schemas validating. `kdash_dump`, run on kai with
+  `/etc/khomelab/secrets.env` sourced, read `kdash:calendar` as `no record`.
+  That is the correct ABSENT result, because korg:4667's writer is not built
+  yet. Consumers pin `b1ad6af`.
