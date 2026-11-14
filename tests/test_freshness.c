@@ -59,6 +59,26 @@ int main(void) {
     CHECK(kdash_ladder(100, 100, 50) == KDASH_STALE, "inverted thresholds");
     CHECK(kdash_ladder(99, 100, 50) == KDASH_FRESH, "inverted, below both");
 
+    /* ---- cadence-declared staleness (CD-28) ---- */
+    {
+        const long long now = 1794617200;
+        /* 60 s cadence + 60 s grace: stale only past 120 s. */
+        CHECK(!kdash_cadence_stale((double)(now - 120), 60, now, 60),
+              "exactly cadence + grace is still fresh");
+        CHECK(kdash_cadence_stale((double)(now - 121), 60, now, 60),
+              "one second past is stale");
+        CHECK(!kdash_cadence_stale((double)(now - 299), 300, now, 0),
+              "the writer's own cadence sets the window, not a constant");
+        CHECK(kdash_cadence_stale(0, 60, now, KDASH_CADENCE_GRACE_S),
+              "a zero stamp (rejected parse, absent key) is always stale");
+        CHECK(!kdash_cadence_stale((double)(now + 3600), 60, now, 60),
+              "skew reads as fresh, as everywhere else");
+        CHECK(kdash_cadence_stale((double)(now - 61), -5, now, 60),
+              "a non-positive cadence counts as 0");
+        CHECK(kdash_cadence_stale((double)(now - 61), 60, now, -60),
+              "a negative grace counts as 0");
+    }
+
     /* ---- labels ---- */
     CHECK(strcmp(kdash_freshness_label(KDASH_FRESH), "fresh") == 0, "fresh label");
     CHECK(strcmp(kdash_freshness_label(KDASH_IDLE), "idle") == 0, "idle label");

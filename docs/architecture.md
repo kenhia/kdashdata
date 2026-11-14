@@ -1660,6 +1660,91 @@ to its source field. The one ruling with an alternative: usage is the pool's
 answers "how full is my NAS", and raidz parity is not data. The contract is
 [`kdash-nas`](../contracts/schemas/kdash-nas.schema.json).
 
+## CD-28 — Status feeds for a system of record: `kdash:korg:pulse` and `kdash:klams:status`, cadence-declared (sprint 023)
+
+korg WI 4610, slice 2 of program korg:4619 (kpidash row 2). Ken picked a
+combined korg + klams card for one 1×1 cell (mock-up "KORG + KLAMS"). The
+standalone "KORG PULSE" and "KLAMS" cards on the same page show a fuller
+field set. The brief asked for that fuller set to be contracted now, so that
+a standalone card needs no version bump later. The contracts are
+[`kdash-korg-pulse`](../contracts/schemas/kdash-korg-pulse.schema.json) and
+[`kdash-klams-status`](../contracts/schemas/kdash-klams-status.schema.json),
+each with a section in the [registry](../contracts/registry.md).
+
+What is new, and why it gets a number rather than being CD-27 applied again:
+these are the first feeds that **summarise a system of record** instead of
+reporting a host. That raises four questions CD-26 and CD-27 did not answer.
+
+1. **The keys.** `kdash:korg:pulse` joins CD-26's `kdash:korg:*` family as
+   its first *built* key. It is a third key beside the two still-provisional
+   ones, not one of them. `board` and `rate_of_fire` were sized for kfdc's
+   panels, and the card needs neither whole: it needs one snapshot whose `ts`
+   covers a count, three lanes, a per-project split and a series. CD-26's
+   rule that one key is one consistent snapshot therefore argues for a key of
+   its own. `kdash:klams:status` opens a `kdash:klams:` family on the same
+   pattern. Both are three segments, single fixed keys, ts-owned and
+   unexpired.
+2. **The version is in the key, not the payload.** The brief suggested a `v`
+   field. CD-27 already settled the question: a breaking change is a new key
+   (`kdash:korg:v2:pulse`), which a v1 reader skips. A payload field is one
+   every reader would have to check, and none of them would. So the contract
+   has no `v` field. Under the additive rule a writer may still send one, and
+   readers ignore it.
+3. **Freshness is cadence-declared.** Each record carries the writer's
+   `expected_refresh_s`. The reader greys the record once `ts` is older than
+   that cadence plus a grace. This is `claude:limits`' per-gauge rule, now the
+   default for status feeds, and the library has one function for it:
+   `kdash_cadence_stale()`, with `KDASH_CADENCE_GRACE_S` = 60 s as the
+   default grace. A fixed per-family window like `services`' 60 s would put
+   the publisher's cadence in two repos. A declared cadence lets the
+   publisher change it in one place. The field is **required**, because a
+   record that does not state its cadence cannot be judged stale at all.
+4. **The publisher copies, and says when it cannot.** CD-26's "copy, never
+   re-derive" is extended to klams. `open` is korg's own `backlog` figure
+   (`work_item_flow`, equal to `list_work_items`' `total`). `history` is that
+   column day by day, so the headline and the line's last point cannot
+   disagree. `health` is klams's own verdict. When klams does not answer, the
+   publisher **still writes**: `health: "down"`, with every klams-sourced
+   value null and both arrays empty. A fresh `down` therefore means klams is
+   down, and an ageing `ts` means the publisher is. Without the `down` record
+   the two would look the same. The weather collector publishes nothing on
+   failure, and that is right for weather, where nothing downstream needs to
+   tell those two cases apart. Here something does.
+
+Four rulings with alternatives:
+
+- **The `by_project` overflow is a count, `other_open`.** It is not an
+  "other" pseudo-entry in the list. A pseudo-entry would be a project named
+  by convention, which the card would have to special-case, and a real
+  project could one day take that name. `other_open` also absorbs items with
+  no project. With `projects`, the card can say how many projects the 24-entry
+  cap left out. The overflow field is required even when it is 0, because a
+  capped list must name its overflow (CD-26).
+- **`last_ran_at` is required and nullable**, not optional as the brief
+  suggested. CD-27 rule 4 applies: absence is indistinguishable from a
+  dropped field, while null says "no source for this". The field exists at
+  all because *wrote* is not *ran*. The mock-up's kubs0 scanner ran 28
+  minutes before the page was drawn and last wrote three days earlier. Which
+  of those the card should draw is WI 4612's question, and this contract
+  carries both so that the answer needs no contract change.
+- **`new_per_day` is required, and may be empty.** The brief marked it
+  optional, but the same reasoning as `last_ran_at` applies. Sending `[]` is
+  free for a publisher that keeps no series.
+- **A cap in the reader truncates and flags. It does not reject.** The
+  schema caps every array, and the gate holds every example to the caps. The
+  C parser keeps what fits and sets `*_truncated`, as telemetry's `disks`
+  and panelmode's `settings` already do. It keeps the **first** entries of a
+  largest-first list and the **newest** entries of an oldest-first series,
+  because a series cut from the end would lose today. A record one entry
+  over a cap is still worth drawing.
+
+**Where the writers live is not decided here.** CD-26 named korg-dash as the
+korg publisher's default home and said the defaults may change when the work
+is planned. Program korg:4619 filed the korg publisher in korg (korg:4616)
+and the klams publisher in klams (korg:4617). Either way the direction is the
+one CD-26 fixed: publisher → central → libkdash → panel. Both write through
+`kdash-pub`, and `kdash` is already in both allowlists.
+
 ## Open questions
 
 - **OQ-2 — Redis ACL writer/reader split** (see CD-2).

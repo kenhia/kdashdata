@@ -173,11 +173,21 @@ Sprint 022 (korg:4598, slice 3 of program korg:4599) removed the
 kpidash-internal keys nothing reads or writes any more — activities, repos,
 fortune, and the `graph` / `fortune_dev` commands — from the registry, after
 kpidash sprints 032 and 036 removed their readers and last writers.
+Sprint 023 (korg:4615, slice 2 of program korg:4619) contracted the two feeds
+behind kpidash's korg + klams card, this time with code: `kdash:korg:pulse`
+(korg's backlog, lanes, a 24-capped per-project split whose overflow is named
+in `other_open`, and a 30-day series) and `kdash:klams:status` (health, corpus,
+scanners with wrote *and* ran, subsystems, queue, backup), both v1, ts-owned
+and cadence-declared through `expected_refresh_s` (CD-28). libkdash gained
+`kdash_korg_pulse()` and `kdash_klams_status()`, their parsers, and
+`kdash_cadence_stale()`.
 See `docs/architecture.md` (decisions
-CD-1…CD-27, open questions OQ-n), `contracts/rules.md`,
+CD-1…CD-28, open questions OQ-n), `contracts/rules.md`,
 `contracts/registry.md`, `include/kdash/kdash.h` for the consumer API, and
 `publishers/README.md` for the publish side and the version-and-skip rule.
-Next: kpidash's producer and card for that feed (korg:4066), the ack and the
+Next: the korg and klams publishers (korg:4616, korg:4617) and kpidash's
+combined card (korg:4618); kpidash's producer and card for the network feed
+(korg:4066), the ack and the
 restart fix (korg:4158), and cleo's producer (korg:4076); the writers and cards
 for the update and NAS feeds (k-homelab after korg:3627, kpidash WIs 3642 and
 3956); the rest of program

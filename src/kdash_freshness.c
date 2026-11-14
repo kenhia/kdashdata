@@ -29,6 +29,16 @@ kdash_freshness_t kdash_ladder(long long age_s, long long idle_s,
     return KDASH_FRESH;
 }
 
+bool kdash_cadence_stale(double ts, double expected_refresh_s, long long now,
+                         long long grace_s) {
+    if (ts <= 0)
+        return true;
+    long long cadence = expected_refresh_s > 0 ? (long long)expected_refresh_s : 0;
+    if (grace_s < 0)
+        grace_s = 0;
+    return kdash_age_s(ts, now) > cadence + grace_s;
+}
+
 const char *kdash_freshness_label(kdash_freshness_t f) {
     switch (f) {
     case KDASH_IDLE:

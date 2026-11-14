@@ -15,6 +15,7 @@
  */
 #include "kdash/kdash_payload.h"
 
+#include <limits.h>
 #include <math.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -926,6 +927,322 @@ bool kdash_parse_claude_recent(const char *json, size_t len,
         memset(out, 0, sizeof(*out));
     }
 
+    cJSON_Delete(root);
+    return ok;
+}
+
+/* ---- the status feeds (CD-28) ------------------------------------------- */
+
+/* Upper bound on a unix-seconds stamp, the schemas' `maximum`. A millisecond
+ * stamp exceeds it, which is the point: it would otherwise read as a record
+ * from the far future, i.e. as permanently fresh. */
+#define STAMP_MAX 1e11
+
+/* A JSON number that is a whole number in [min, max]. `integer` in the schema
+ * means exactly this; 3.5 projects is a malformed record, not 3. */
+static bool whole(const cJSON *o, double min, double max, long long *out) {
+    if (!cJSON_IsNumber(o))
+        return false;
+    double v = o->valuedouble;
+    if (!(v >= min && v <= max) || floor(v) != v)
+        return false;
+    *out = (long long)v;
+    return true;
+}
+
+/* Required whole number, small enough for an int. */
+static bool req_count(const cJSON *root, const char *field, double min,
+                      int *out) {
+    long long v;
+    if (!whole(cJSON_GetObjectItemCaseSensitive(root, field), min, INT_MAX, &v))
+        return false;
+    *out = (int)v;
+    return true;
+}
+
+/* Required, nullable whole number: present-and-null is KDASH_COUNT_NULL,
+ * ABSENT rejects (CD-27 — absence and null are different statements). */
+static bool req_count_or_null(const cJSON *root, const char *field, double min,
+                              long long *out) {
+    const cJSON *o = cJSON_GetObjectItemCaseSensitive(root, field);
+    if (cJSON_IsNull(o)) {
+        *out = KDASH_COUNT_NULL;
+        return true;
+    }
+    return whole(o, min, 9007199254740992.0 /* 2^53 */, out);
+}
+
+/* Required, nullable unix-seconds stamp: null is 0, which is the library's
+ * existing spelling for an unknown stamp. */
+static bool req_stamp_or_null(const cJSON *root, const char *field,
+                              double *out) {
+    const cJSON *o = cJSON_GetObjectItemCaseSensitive(root, field);
+    if (cJSON_IsNull(o)) {
+        *out = 0;
+        return true;
+    }
+    if (!cJSON_IsNumber(o) || !(o->valuedouble > 0) ||
+        o->valuedouble > STAMP_MAX || floor(o->valuedouble) != o->valuedouble)
+        return false;
+    *out = o->valuedouble;
+    return true;
+}
+
+/* `ts` (positive float, bounded) and `expected_refresh_s` (whole, 1..86400):
+ * the head both status feeds share. */
+static bool req_status_head(const cJSON *root, double *ts, double *cadence) {
+    const cJSON *t = cJSON_GetObjectItemCaseSensitive(root, "ts");
+    if (!cJSON_IsNumber(t) || !(t->valuedouble > 0) || t->valuedouble > STAMP_MAX)
+        return false;
+    long long c;
+    if (!whole(cJSON_GetObjectItemCaseSensitive(root, "expected_refresh_s"), 1,
+               86400, &c))
+        return false;
+    *ts = t->valuedouble;
+    *cadence = (double)c;
+    return true;
+}
+
+/* A required string of 1..outsz-1 chars, copied whole. Unlike copy_str() it
+ * refuses rather than truncates: two names that differ past the cut would
+ * otherwise render as one. */
+static bool req_name(const cJSON *root, const char *field, char *out,
+                     size_t outsz) {
+    const cJSON *o = cJSON_GetObjectItemCaseSensitive(root, field);
+    if (!cJSON_IsString(o) || !o->valuestring)
+        return false;
+    size_t n = strlen(o->valuestring);
+    if (n == 0 || n + 1 > outsz)
+        return false;
+    memcpy(out, o->valuestring, n + 1);
+    return true;
+}
+
+/* `YYYY-MM-DD`, exactly: the schema's pattern. */
+static bool req_date(const cJSON *root, const char *field,
+                     char out[KDASH_DATE_MAX]) {
+    const cJSON *o = cJSON_GetObjectItemCaseSensitive(root, field);
+    if (!cJSON_IsString(o) || !o->valuestring || strlen(o->valuestring) != 10)
+        return false;
+    const char *s = o->valuestring;
+    for (int i = 0; i < 10; i++) {
+        bool dash = (i == 4 || i == 7);
+        if (dash ? s[i] != '-' : (s[i] < '0' || s[i] > '9'))
+            return false;
+    }
+    memcpy(out, s, 11);
+    return true;
+}
+
+/* Walk a required array, keeping at most `max` entries. `keep_newest` keeps
+ * the LAST `max` (an oldest-first series, whose tail is today) instead of the
+ * first. Each kept-range item goes to `take`, which fills slot `n` and returns
+ * false for a malformed entry — skipped and counted, never fatal. Returns false
+ * only when the field is absent or not an array: that rejects the record. */
+static bool walk_array(const cJSON *root, const char *field, int max,
+                       bool keep_newest,
+                       bool (*take)(const cJSON *item, void *slots, int n),
+                       void *slots, int *count, int *skipped, bool *truncated) {
+    const cJSON *arr = cJSON_GetObjectItemCaseSensitive(root, field);
+    if (!cJSON_IsArray(arr))
+        return false;
+    int size = cJSON_GetArraySize(arr);
+    int skip_head = 0;
+    if (size > max) {
+        *truncated = true;
+        if (keep_newest)
+            skip_head = size - max;
+    }
+    int i = 0;
+    const cJSON *item = NULL;
+    cJSON_ArrayForEach(item, arr) {
+        if (i++ < skip_head)
+            continue;
+        if (*count >= max)
+            break;
+        if (take(item, slots, *count))
+            (*count)++;
+        else
+            (*skipped)++;
+    }
+    return true;
+}
+
+/* ---- kdash:korg:pulse ---- */
+
+static bool take_korg_project(const cJSON *item, void *slots, int n) {
+    kdash_korg_project_t *p = &((kdash_korg_project_t *)slots)[n];
+    memset(p, 0, sizeof(*p));
+    if (cJSON_IsObject(item) && req_name(item, "name", p->name, sizeof(p->name)) &&
+        req_count(item, "open", 1, &p->open))
+        return true;
+    memset(p, 0, sizeof(*p));
+    return false;
+}
+
+static bool take_korg_day(const cJSON *item, void *slots, int n) {
+    kdash_korg_day_t *d = &((kdash_korg_day_t *)slots)[n];
+    memset(d, 0, sizeof(*d));
+    if (cJSON_IsObject(item) && req_date(item, "date", d->date) &&
+        req_count(item, "open", 0, &d->open))
+        return true;
+    memset(d, 0, sizeof(*d));
+    return false;
+}
+
+bool kdash_parse_korg_pulse(const char *json, size_t len,
+                            kdash_korg_pulse_t *out) {
+    if (!out)
+        return false;
+    memset(out, 0, sizeof(*out));
+
+    cJSON *root = parse_object(json, len);
+    if (!root)
+        return false;
+
+    bool ok = req_status_head(root, &out->ts, &out->expected_refresh_s) &&
+              req_count(root, "open", 0, &out->open) &&
+              req_count(root, "projects", 0, &out->projects) &&
+              req_count(root, "awaiting", 0, &out->awaiting) &&
+              req_count(root, "active", 0, &out->active) &&
+              req_count(root, "queued", 0, &out->queued) &&
+              req_count(root, "other_open", 0, &out->other_open) &&
+              walk_array(root, "by_project", KDASH_KORG_PROJECTS_MAX, false,
+                         take_korg_project, out->by_project,
+                         &out->by_project_count, &out->by_project_skipped,
+                         &out->by_project_truncated) &&
+              walk_array(root, "history", KDASH_KORG_HISTORY_MAX, true,
+                         take_korg_day, out->history, &out->history_count,
+                         &out->history_skipped, &out->history_truncated);
+
+    if (!ok)
+        memset(out, 0, sizeof(*out));
+    cJSON_Delete(root);
+    return ok;
+}
+
+/* ---- kdash:klams:status ---- */
+
+static const struct {
+    const char *word;
+    kdash_klams_health_t health;
+} KLAMS_HEALTH[] = {
+    {"ok", KDASH_KLAMS_OK},
+    {"degraded", KDASH_KLAMS_DEGRADED},
+    {"down", KDASH_KLAMS_DOWN},
+};
+
+bool kdash_klams_health_from_str(const char *s, kdash_klams_health_t *out) {
+    if (!s || !out)
+        return false;
+    for (size_t i = 0; i < sizeof(KLAMS_HEALTH) / sizeof(KLAMS_HEALTH[0]); i++) {
+        if (strcmp(s, KLAMS_HEALTH[i].word) == 0) {
+            *out = KLAMS_HEALTH[i].health;
+            return true;
+        }
+    }
+    return false;
+}
+
+const char *kdash_klams_health_str(kdash_klams_health_t h) {
+    for (size_t i = 0; i < sizeof(KLAMS_HEALTH) / sizeof(KLAMS_HEALTH[0]); i++)
+        if (KLAMS_HEALTH[i].health == h)
+            return KLAMS_HEALTH[i].word;
+    return "down";
+}
+
+static bool take_klams_scanner(const cJSON *item, void *slots, int n) {
+    kdash_klams_scanner_t *s = &((kdash_klams_scanner_t *)slots)[n];
+    memset(s, 0, sizeof(*s));
+    long long interval;
+    if (cJSON_IsObject(item) && req_name(item, "name", s->name, sizeof(s->name)) &&
+        req_stamp_or_null(item, "last_wrote_at", &s->last_wrote_at) &&
+        req_stamp_or_null(item, "last_ran_at", &s->last_ran_at) &&
+        whole(cJSON_GetObjectItemCaseSensitive(item, "expected_interval_s"), 1,
+              604800, &interval)) {
+        s->expected_interval_s = (double)interval;
+        return true;
+    }
+    memset(s, 0, sizeof(*s));
+    return false;
+}
+
+static bool take_klams_subsystem(const cJSON *item, void *slots, int n) {
+    kdash_klams_subsystem_t *s = &((kdash_klams_subsystem_t *)slots)[n];
+    memset(s, 0, sizeof(*s));
+    const cJSON *ok = cJSON_IsObject(item)
+                          ? cJSON_GetObjectItemCaseSensitive(item, "ok")
+                          : NULL;
+    if (cJSON_IsBool(ok) && req_name(item, "name", s->name, sizeof(s->name))) {
+        s->ok = cJSON_IsTrue(ok);
+        return true;
+    }
+    memset(s, 0, sizeof(*s));
+    return false;
+}
+
+static bool take_klams_day(const cJSON *item, void *slots, int n) {
+    kdash_klams_day_t *d = &((kdash_klams_day_t *)slots)[n];
+    memset(d, 0, sizeof(*d));
+    if (cJSON_IsObject(item) && req_date(item, "date", d->date) &&
+        whole(cJSON_GetObjectItemCaseSensitive(item, "added"), 0,
+              9007199254740992.0, &d->added))
+        return true;
+    memset(d, 0, sizeof(*d));
+    return false;
+}
+
+/* `version`: a string of at most 31 chars, or null (""). Required either way. */
+static bool req_version(const cJSON *root, char *out, size_t outsz) {
+    const cJSON *o = cJSON_GetObjectItemCaseSensitive(root, "version");
+    if (cJSON_IsNull(o)) {
+        out[0] = '\0';
+        return true;
+    }
+    if (!cJSON_IsString(o) || !o->valuestring ||
+        strlen(o->valuestring) + 1 > outsz)
+        return false;
+    memcpy(out, o->valuestring, strlen(o->valuestring) + 1);
+    return true;
+}
+
+bool kdash_parse_klams_status(const char *json, size_t len,
+                              kdash_klams_status_t *out) {
+    if (!out)
+        return false;
+    memset(out, 0, sizeof(*out));
+
+    cJSON *root = parse_object(json, len);
+    if (!root)
+        return false;
+
+    const cJSON *h = cJSON_GetObjectItemCaseSensitive(root, "health");
+    bool ok = req_status_head(root, &out->ts, &out->expected_refresh_s) &&
+              cJSON_IsString(h) && h->valuestring &&
+              kdash_klams_health_from_str(h->valuestring, &out->health) &&
+              req_version(root, out->version, sizeof(out->version)) &&
+              req_count_or_null(root, "uptime_s", 0, &out->uptime_s) &&
+              req_count_or_null(root, "knowledge", 0, &out->knowledge) &&
+              req_count_or_null(root, "facts", 0, &out->facts) &&
+              req_count_or_null(root, "events", 0, &out->events) &&
+              req_count_or_null(root, "queue_depth", 0, &out->queue_depth) &&
+              req_count_or_null(root, "queue_capacity", 1, &out->queue_capacity) &&
+              req_stamp_or_null(root, "backup_at", &out->backup_at) &&
+              walk_array(root, "scanners", KDASH_KLAMS_SCANNERS_MAX, false,
+                         take_klams_scanner, out->scanners,
+                         &out->scanners_count, &out->scanners_skipped,
+                         &out->scanners_truncated) &&
+              walk_array(root, "subsystems", KDASH_KLAMS_SUBSYSTEMS_MAX, false,
+                         take_klams_subsystem, out->subsystems,
+                         &out->subsystems_count, &out->subsystems_skipped,
+                         &out->subsystems_truncated) &&
+              walk_array(root, "new_per_day", KDASH_KLAMS_DAYS_MAX, true,
+                         take_klams_day, out->new_per_day,
+                         &out->new_per_day_count, &out->new_per_day_skipped,
+                         &out->new_per_day_truncated);
+
+    if (!ok)
+        memset(out, 0, sizeof(*out));
     cJSON_Delete(root);
     return ok;
 }

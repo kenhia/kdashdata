@@ -1,7 +1,8 @@
 /**
  * @file kdash_payload.h
  * Pure parsers for the schema'd payloads — the five kpidash feeds, the three
- * panel control feeds, and the three claude ones. No Redis, no sockets.
+ * panel control feeds, the three claude ones and the two status feeds (CD-28).
+ * No Redis, no sockets.
  * Host-testable.
  *
  * **Two payload shapes, two parser signatures.** Every kpidash feed is a JSON
@@ -511,5 +512,152 @@ typedef struct {
  * rejected whole. */
 bool kdash_parse_claude_recent(const char *json, size_t len,
                                kdash_claude_recent_t *out);
+
+/* ---- the status feeds (CD-28) -------------------------------------------
+ *
+ * kdash:korg:pulse and kdash:klams:status are one JSON document under one
+ * fixed key each, ts-owned, and cadence-declared: the writer publishes
+ * `expected_refresh_s` and the caller judges age with kdash_cadence_stale().
+ *
+ * Their arrays are CAPPED by the schema, and an over-long one is not a
+ * rejected record. The parser keeps what the cap allows and sets
+ * `*_truncated`, the same way telemetry's `disks` and panelmode's `settings`
+ * already behave, because a card that can draw 24 projects should still draw
+ * them when a publisher sent 25. Which end it keeps is per array, and chosen
+ * so the kept part is the part a card draws: the FIRST entries of a
+ * largest-first list, the NEWEST entries of an oldest-first series (a series
+ * truncated from the end would lose today). A malformed entry is skipped and
+ * counted in `*_skipped`; the record survives it.
+ *
+ * Nullable values are present-and-null on the wire (CD-27). Here a null count
+ * is KDASH_COUNT_NULL and a null stamp is 0, the library's existing spelling
+ * for an unknown stamp. An ABSENT required field still rejects the record:
+ * absent and null are different statements. */
+
+/* "The producer could not measure this." Counts are never negative on the
+ * wire (every schema says `minimum: 0`), so -1 cannot collide with a value. */
+#define KDASH_COUNT_NULL (-1)
+
+#define KDASH_DATE_MAX 11 /* `YYYY-MM-DD` + NUL */
+
+/* ---- kdash:korg:pulse ---- */
+
+#define KDASH_KORG_PROJECTS_MAX 24 /* the schema's maxItems */
+#define KDASH_KORG_HISTORY_MAX  30 /* the schema's maxItems */
+
+typedef struct {
+    char name[KDASH_PROJECT_MAX]; /* korg project name; schema maxLength 47 */
+    int open;                     /* >= 1 */
+} kdash_korg_project_t;
+
+typedef struct {
+    char date[KDASH_DATE_MAX]; /* `YYYY-MM-DD`, korg's board timezone */
+    int open;                  /* backlog at that day's end */
+} kdash_korg_day_t;
+
+typedef struct {
+    double ts;                 /* required, positive */
+    double expected_refresh_s; /* required, >= 1 */
+
+    int open;       /* korg's backlog: non-terminal, unarchived, all projects */
+    int projects;   /* projects holding at least one open item               */
+    int awaiting;   /* the Awaiting Ken lane                                 */
+    int active;     /* proposals in status `active`                          */
+    int queued;     /* proposals in status `proposed`                        */
+    int other_open; /* open items no `by_project` entry shows                */
+
+    /* Largest first, as the writer sent it. by_project[0] is the top project
+     * when by_project_count > 0. */
+    kdash_korg_project_t by_project[KDASH_KORG_PROJECTS_MAX];
+    int  by_project_count;
+    int  by_project_skipped;
+    bool by_project_truncated; /* the first 24 were kept */
+
+    /* Oldest first; history[history_count - 1] is today when non-empty. */
+    kdash_korg_day_t history[KDASH_KORG_HISTORY_MAX];
+    int  history_count;
+    int  history_skipped;
+    bool history_truncated; /* the NEWEST 30 were kept */
+} kdash_korg_pulse_t;
+
+/* Every top-level field is required, the two arrays included (an empty array
+ * is a statement; an absent one is not). Counts must be whole numbers >= 0. */
+bool kdash_parse_korg_pulse(const char *json, size_t len,
+                            kdash_korg_pulse_t *out);
+
+/* ---- kdash:klams:status ---- */
+
+#define KDASH_KLAMS_NAME_MAX       32 /* 31 chars + NUL, the schema's maxLength */
+#define KDASH_KLAMS_SCANNERS_MAX   8
+#define KDASH_KLAMS_SUBSYSTEMS_MAX 8
+#define KDASH_KLAMS_DAYS_MAX       14
+
+/* klams's own verdict, copied. Closed: an unknown word rejects the record. */
+typedef enum {
+    KDASH_KLAMS_OK = 0,   /* every subsystem answers                      */
+    KDASH_KLAMS_DEGRADED, /* klams answers, a subsystem does not          */
+    KDASH_KLAMS_DOWN,     /* klams did not answer its publisher           */
+} kdash_klams_health_t;
+
+typedef struct {
+    char name[KDASH_KLAMS_NAME_MAX];
+    double last_wrote_at;       /* 0 = never wrote                          */
+    double last_ran_at;         /* 0 = the publisher has no source for it   */
+    double expected_interval_s; /* >= 1: the scanner's schedule             */
+} kdash_klams_scanner_t;
+
+typedef struct {
+    char name[KDASH_KLAMS_NAME_MAX];
+    bool ok;
+} kdash_klams_subsystem_t;
+
+typedef struct {
+    char date[KDASH_DATE_MAX];
+    long long added; /* knowledge records created that day */
+} kdash_klams_day_t;
+
+typedef struct {
+    double ts;                 /* required, positive */
+    double expected_refresh_s; /* required, >= 1 */
+    kdash_klams_health_t health;
+
+    char version[KDASH_KLAMS_NAME_MAX]; /* "" when null */
+
+    /* KDASH_COUNT_NULL when klams could not supply them. */
+    long long uptime_s;
+    long long knowledge;
+    long long facts;
+    long long events;
+    long long queue_depth;
+    long long queue_capacity;
+
+    double backup_at; /* 0 = no backup known */
+
+    kdash_klams_scanner_t scanners[KDASH_KLAMS_SCANNERS_MAX];
+    int  scanners_count;
+    int  scanners_skipped;
+    bool scanners_truncated; /* the first 8 were kept */
+
+    kdash_klams_subsystem_t subsystems[KDASH_KLAMS_SUBSYSTEMS_MAX];
+    int  subsystems_count;
+    int  subsystems_skipped;
+    bool subsystems_truncated; /* the first 8 were kept */
+
+    /* Oldest first; the last is today when non-empty. */
+    kdash_klams_day_t new_per_day[KDASH_KLAMS_DAYS_MAX];
+    int  new_per_day_count;
+    int  new_per_day_skipped;
+    bool new_per_day_truncated; /* the NEWEST 14 were kept */
+} kdash_klams_status_t;
+
+/* Every top-level field is required, nullable ones included: a `down` record
+ * carries them all as null. A scanner entry missing `last_ran_at` (rather than
+ * carrying null) is skipped, which is the schema's rule at entry level. */
+bool kdash_parse_klams_status(const char *json, size_t len,
+                              kdash_klams_status_t *out);
+
+/* Map a `health` string to the enum, and back to the schema's own word. */
+bool kdash_klams_health_from_str(const char *s, kdash_klams_health_t *out);
+const char *kdash_klams_health_str(kdash_klams_health_t h);
 
 #endif /* KDASH_PAYLOAD_H */

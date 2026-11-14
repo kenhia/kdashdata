@@ -18,6 +18,8 @@
  *   kdash:panel:<host>                          exactly 3 segments
  *   kdash:panelmode:<host>                      exactly 3 segments
  *   kdash:panelshot:<host>                      exactly 3 segments
+ *   kdash:korg:pulse                            one shared key
+ *   kdash:klams:status                          one shared key
  *   claude:session:<host>:<sid>                 4 segments, last is opaque
  *   claude:limits                               one shared key
  *   claude:recent                               one shared key
@@ -48,6 +50,12 @@
 #define KDASH_KEY_PANEL_PFX     "kdash:panel:"
 #define KDASH_KEY_PANELMODE_PFX "kdash:panelmode:"
 #define KDASH_KEY_PANELSHOT_PFX "kdash:panelshot:"
+
+/* The kdash namespace's status feeds (CD-28). One fixed key each, so literals
+ * rather than grammars: nothing is discovered, so there is nothing to parse.
+ * A v2 lands beside these as `kdash:korg:v2:pulse` (rules.md Versioning). */
+#define KDASH_KEY_KORG_PULSE   "kdash:korg:pulse"
+#define KDASH_KEY_KLAMS_STATUS "kdash:klams:status"
 
 /* The claude family (registry.md). Two of the three are single fixed keys, so
  * they are literals rather than grammars; only the session family is parsed. */

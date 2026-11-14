@@ -85,6 +85,13 @@
 #define KDASH_CLAUDE_LIMITS_GRACE_S 60
 #define KDASH_CLAUDE_LIMITS_STALE_S (60 * 60)
 
+/* The cadence-declared ts-owned feeds (CD-28: kdash:korg:pulse,
+ * kdash:klams:status) carry their writer's own `expected_refresh_s`, so the
+ * window is the WRITER's cadence plus this reader-side grace rather than a
+ * number fixed here. The same rule claude:limits has used per gauge since its
+ * cadence field landed, made the default for new status feeds. */
+#define KDASH_CADENCE_GRACE_S 60
+
 typedef enum {
     KDASH_FRESH = 0, /* published state is current — trust it            */
     KDASH_IDLE,      /* no news for idle_s — probably parked             */
@@ -105,6 +112,14 @@ bool kdash_ts_stale(double ts, long long now, long long window_s);
  * treated as idle_s, so a caller cannot configure an unreachable state. */
 kdash_freshness_t kdash_ladder(long long age_s, long long idle_s,
                                long long stale_s);
+
+/* Cadence-declared staleness (CD-28). True when `ts` is older than the
+ * writer's `expected_refresh_s` plus `grace_s`. A stamp of 0 or below — what a
+ * rejected parse or a KDASH_ABSENT read leaves — is ALWAYS stale, so a caller
+ * that ignores the read status still greys the card. A non-positive cadence or
+ * grace counts as 0; skew reads as fresh, as everywhere else here. */
+bool kdash_cadence_stale(double ts, double expected_refresh_s, long long now,
+                         long long grace_s);
 
 /* Fixed lowercase label ("fresh", "idle", "stale"). Never NULL. */
 const char *kdash_freshness_label(kdash_freshness_t f);

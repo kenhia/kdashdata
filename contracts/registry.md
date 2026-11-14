@@ -134,6 +134,8 @@ first key arrived with the publisher wrappers in sprint 003.
 | `kdash:update:{host}:{kind}` | latest-value, presence-owned | k-homelab's apt runner, per run (not yet — see below) | none (never) | [update](schemas/kdash-update.schema.json) |
 | `kdash:nas:{host}` | latest-value, expiring | kpidash-client on the NAS host (not yet — see below) | 3× cadence | [nas](schemas/kdash-nas.schema.json) — **v1** |
 | `kdash:weather:{loc}` | latest-value, ts-owned | kweather on kai, every 10 min (not yet — see below) | none | [weather](schemas/kdash-weather.schema.json) — **v1** |
+| `kdash:korg:pulse` | latest-value, ts-owned | a korg-reading publisher, cadence in `expected_refresh_s` (not yet — see below) | none | [korg-pulse](schemas/kdash-korg-pulse.schema.json) — **v1** |
+| `kdash:klams:status` | latest-value, ts-owned | a klams-reading publisher, cadence in `expected_refresh_s` (not yet — see below) | none | [klams-status](schemas/kdash-klams-status.schema.json) — **v1** |
 
 `selftest` is a publish canary, not a dashboard feed: running it from a host
 proves that host's whole publish path — khlenv discovery, `REDISCLI_AUTH`, key
@@ -614,12 +616,106 @@ set` (kweather WI 4574 installs it). **Reader**: kpidash's filler card. No C
 reader ships with this contract; the card's session asks for one if it wants
 it.
 
+### `kdash:korg:pulse` — the korg backlog at a glance (sprint 023)
+
+korg WI 4610, slice 2 of program korg:4619 (kpidash row 2). **v1, field names
+pinned** (CD-28): a breaking change is `kdash:korg:v2:pulse`. The first
+*built* key of CD-26's `kdash:korg:*` family, and it inherits all of CD-26:
+publisher → central → libkdash → panel, and the publisher **copies korg's
+figures and never re-derives them**.
+
+**The consumers** are kpidash's korg + klams card, which shares one 1×1 cell
+and reads `open`, `history`, `awaiting`, `active` and `by_project`, and a
+standalone korg card, which adds `queued` and `projects`. Nobody has built the
+standalone card yet. Its fields are contracted now so that building it later
+needs no version bump.
+
+- **`open` is korg's backlog**: work items in any non-terminal status (open,
+  resolved, done, parked), unarchived, all projects. It is exactly today's
+  `backlog` from `work_item_flow` and `total` from `list_work_items`. `history`
+  is the same figure, day by day, oldest first, at most 30 entries, copied
+  from `work_item_flow`'s `backlog` column. So the sparkline's last point and
+  the headline number cannot disagree. The series is shorter, or empty, while
+  korg's transition log does not reach back 30 days. Missing days are absent
+  and never zero-filled, because 0 is a real backlog level.
+- **`by_project` is capped at 24 and its overflow is named.** It is ordered
+  largest first, with ties by name. A project with no open item is omitted.
+  `other_open` counts every open item the list does not show: projects past
+  the cap, plus items with no project. `projects − len(by_project)` is how
+  many projects the cap left out. The sum of `by_project[].open` plus
+  `other_open` equals `open`. That is a producer obligation, because the
+  validator has no arithmetic (CD-24).
+- **`awaiting`** is the length of korg's Awaiting Ken lane. It uses korg's
+  own word, not kfdc's *Commander's Call*, because this feed reports a count
+  and does not render kfdc's board. **`active`** counts proposals in status
+  `active`. **`queued`** counts proposals in status `proposed`, which is the
+  Planning queue. Parked proposals are excluded, because they are not
+  startable.
+
+**Freshness** is reader-owned and cadence-declared (CD-28). The writer
+publishes `expected_refresh_s`. The reader calls `kdash_cadence_stale()` (in
+`kdash_freshness.h`), which greys the record once `ts` is older than that
+cadence plus a grace, by default `KDASH_CADENCE_GRACE_S`. The suggested
+cadence is 60 s, the board read's cadence in CD-26.
+
+**C reader**: `kdash_korg_pulse()` in `kdash_feed.h`. It is one GET on an
+ordinary central-stem handle, parsed by `kdash_parse_korg_pulse()` in
+`kdash_payload.h`. The parser keeps the first 24 `by_project` entries, which
+are the largest, and the **newest** 30 `history` entries. Anything beyond
+either cap is flagged `*_truncated`, so a record that breaks a cap still
+draws. A malformed array entry is skipped and counted. **Writer, not yet**:
+the publisher slice, korg:4616, through `kdash-pub set kdash:korg:pulse …`.
+`kdash` is already in both allowlists.
+
+### `kdash:klams:status` — the klams memory server at a glance (sprint 023)
+
+korg WI 4610, same slice. **v1, field names pinned** (CD-28): a breaking
+change is `kdash:klams:v2:status`. This is the first key in the `kdash:klams:`
+family. Its publisher reads klams's own health and stats and copies them,
+which is CD-26's rule applied to a second system of record.
+
+**The consumers**: the combined card reads `health`, `knowledge`, `scanners`
+and `subsystems`. The standalone klams card adds `version`, `uptime_s`, the
+queue, `backup_at` and `new_per_day`.
+
+- **`health`** is a closed set: `ok`, `degraded` or `down`. `degraded` means
+  klams answered but a subsystem did not. `down` means klams itself did not
+  answer the publisher. **The publisher still writes a `down` record**, with
+  every klams-sourced value null and both arrays empty. That keeps two
+  failures apart that would otherwise look the same: a fresh `down` means
+  klams is down, and an ageing `ts` means the publisher is.
+- **`scanners`** has at most 8 entries. Each carries `last_wrote_at`,
+  `last_ran_at` and `expected_interval_s`, so the card can draw its draining
+  freshness bar without keeping a table of its own. **Wrote is not ran.** A
+  scanner that runs every hour and finds nothing new is healthy, and one
+  that has stopped running is not. `last_wrote_at` alone cannot tell them
+  apart. The mock-up's kubs0 row is exactly that case: it last wrote three
+  days ago and last ran 28 minutes ago (WI 4612). `last_ran_at` is
+  **required and nullable**: a publisher with no source for it sends `null`,
+  and the card says so instead of guessing (CD-27).
+- **`subsystems`** has at most 8 entries of `{name, ok}`: postgres, qdrant,
+  embed and rerank today. **`queue_depth` / `queue_capacity`** and
+  **`backup_at`** are present-and-null whenever klams cannot supply them.
+- **`new_per_day`**: knowledge records added per day, oldest first, at most
+  14 entries. Only the standalone card draws it, and it may be empty.
+
+**Freshness** follows the same cadence rule as the korg pulse. The suggested
+cadence is 60 s.
+
+**C reader**: `kdash_klams_status()` / `kdash_parse_klams_status()`. Nullable
+counts read as `KDASH_COUNT_NULL` (-1), and nullable stamps read as 0, the
+library's existing spelling for an unknown stamp. Over-long `scanners` and
+`subsystems` keep the first 8, over-long `new_per_day` keeps the newest 14,
+and each is flagged. **Writer, not yet**: the klams publisher slice,
+korg:4617.
+
 ### Provisional: `kdash:korg:*` — korg data for the panels (CD-26, sprint 018)
 
-**Decided, not built.** No key below is written yet, and neither has a schema
-or a reader. The rows exist so the next person to build a korg widget finds
-the decision before reaching for korg's HTTP API. A panel **never** calls korg
-directly (CD-26 rejects that option on the record).
+**Decided, not built.** Neither key below is written yet, and neither has a
+schema or a reader. The rows exist so that the next person to build a korg
+widget finds the decision before reaching for korg's HTTP API. A panel
+**never** calls korg directly (CD-26 rejects that option on the record). The
+family's first *built* key is `kdash:korg:pulse`, above.
 
 | Key | Type / pattern | Writer (cadence) | TTL | Schema |
 |---|---|---|---|---|
