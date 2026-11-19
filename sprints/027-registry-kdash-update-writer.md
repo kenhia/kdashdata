@@ -58,3 +58,20 @@ vocabulary and does not enumerate kinds. The rules add nothing for a new kind.
 The vendored copies in kpidash and kdeskdash `lib/kdashdata` follow on their
 next sync. kmon's dead `APT_UPDATE_DEPLOYER` exclusion is relay 2 of the same
 handoff and belongs to kmon.
+
+## Deployed
+
+Merged as `ce59b4e` (PR #28), 2026-11-18 18:05 PST, from karc leg
+`kdashdata-bac8db` on kai. The deploy steps came from `.sprint-deploy` and ran
+from merged `main`:
+
+- **`just publish`**: a deliberate no-op. The recipe printed "nothing to publish:
+  0.1.0-4837473 already in the store". This sprint left the `kdash-pub` inputs
+  untouched.
+- **`just deploy`**: rc 0. knarr installed `kdash-pub 0.1.0-4837473`, the
+  unchanged `latest`, on kai, kubs0, cleo and thrall. It skipped komarchy,
+  kbook2 and kimac (ssh timed out) and thrall-arch (its name did not resolve).
+  All four are `--host-optional`, so the skips are normal outcomes.
+
+There is nothing live to smoke-test. The sprint changed contract prose and a
+schema `description`, which no binary reads.
