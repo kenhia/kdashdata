@@ -131,7 +131,7 @@ first key arrived with the publisher wrappers in sprint 003.
 | `kdash:agentact:{host}:{sid}` | latest-value, expiring | klaude-top `--publish` (~2 s tick) | ~10 s | [agentact](schemas/kdash-agentact.schema.json) |
 | `kdash:net:{host}` | latest-value, expiring | kpidash-client / kpidash-client-win (~5 s) | 15 s | [net](schemas/kdash-net.schema.json) — **v1** |
 | `kdash:net:ack:{host}` | latest-value, expiring | Ken or an agent, on demand (`SET … EX 86400`) | 24 h | [net-ack](schemas/kdash-net-ack.schema.json) |
-| `kdash:update:{host}:{kind}` | latest-value, presence-owned | k-homelab's apt runner, per run (not yet — see below) | none (never) | [update](schemas/kdash-update.schema.json) |
+| `kdash:update:{host}:{kind}` | latest-value, presence-owned | k-homelab's apt runner, per run | none (never) | [update](schemas/kdash-update.schema.json) |
 | `kdash:nas:{host}` | latest-value, expiring | kpidash-client on the NAS host (not yet — see below) | 3× cadence | [nas](schemas/kdash-nas.schema.json) — **v1** |
 | `kdash:weather:{loc}` | latest-value, ts-owned | kweather on kai, every 10 min (not yet — see below) | none | [weather](schemas/kdash-weather.schema.json) — **v1** |
 | `kdash:korg:pulse` | latest-value, ts-owned | korg's `bin/korg-pulse` on kai, every 5 min | none | [korg-pulse](schemas/kdash-korg-pulse.schema.json) — **v1** |
@@ -496,7 +496,8 @@ column's "ack'd" marker shows its age and the schema requires it.
 korg WI 3641. A flag per host **per kind of issue**, so two issues on one host
 — a held package and a pending reboot — show together and clear separately.
 kpidash already renders one card per host from sub-keys this way for `stale`.
-Known kinds: `ring-stopped`, `reboot-awaiting`, `held`, `gate-failed`. The
+Known kinds: `ring-stopped`, `reboot-awaiting`, `held`, `gate-failed`,
+`approval-awaiting`, `overdue`. The
 vocabulary is **open**: a reader renders an unknown kind by its `issue` line,
 never drops it, because a dropped flag is a silent all-clear.
 
@@ -506,14 +507,13 @@ parse still shows the host as needing attention. `since` is carried across
 runs by read-modify-write (`kdash-pub get`), never restamped. `issue` is the
 one line the card renders. `ref` optionally names the korg node.
 
-**Writer, not yet.** k-homelab's weekly apt run (proposal korg:3627) writes
-**`kdash:stale:{host}:apt-update` today** (k-homelab WI 3640, Ken's interim
-call, 2026-10-08). That feed's words are wrong for this ("stale" means a
-deployer could not reach the host; this host was reached) and its `reason`
-is not rendered. When k-homelab moves its writer here, it drops `apt-update`
-from the stale feed **in the same change**, so no host is ever flagged twice.
-**Reader**: kpidash's dedicated update-issue card (WI 3642), not yet built. No
-C reader ships with this contract.
+**Writer**: k-homelab's apt run, `bin/update-flag` (k-homelab sprint 132, WI
+4821, 2026-11-18). The `apt-update` deployer is gone from `kdash:stale:` in the
+same change. Kinds it raises: `ring-stopped`, `gate-failed`, `held` (a risk
+class held for Ken), `reboot-awaiting`, `approval-awaiting`, `overdue` (work
+deferred to the ring's own schedule, still pending after it). **Reader**:
+kpidash's update card (sprint 028, WI 3642, CLIENT-PROTOCOL §8e). No C reader
+ships with this contract.
 
 ### `kdash:nas:{host}` — NAS health for the big panel (sprint 020)
 
