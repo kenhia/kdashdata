@@ -205,6 +205,11 @@ is the publish time; the card runs it to now only while the record is fresh
 (CD-31). libkdash gained `kdash_parse_agents()`, `kdash_agents()`,
 `kdash_agents_bar_end()` and the state helpers; the value cap rose to 64 KB,
 and the calendar reader's name bounds now count characters, not bytes.
+Sprint 027 (korg:4824, a relay from k-homelab sprint 132) brought the
+`kdash:update` registry entry up to date: its writer, k-homelab's
+`bin/update-flag`, shipped on 2026-11-18, together with two new kinds,
+`approval-awaiting` and `overdue`. The reader is kpidash's update card. The
+change is docs only; the vocabulary stays open and no CD changed.
 See `docs/architecture.md` (decisions
 CD-1…CD-31, open questions OQ-n), `contracts/rules.md`,
 `contracts/registry.md`, `include/kdash/kdash.h` for the consumer API, and
@@ -212,9 +217,8 @@ CD-1…CD-31, open questions OQ-n), `contracts/rules.md`,
 Next: ksitrep's activity spans and `kdash:agents` publisher (korg:4697) and
 kpidash's Agents card (korg:4698); kpidash's producer and card for the network feed
 (korg:4066), the ack and the
-restart fix (korg:4158), and cleo's producer (korg:4076); the writers and cards
-for the update and NAS feeds (k-homelab after korg:3627, kpidash WIs 3642 and
-3956); the rest of program
+restart fix (korg:4158), and cleo's producer (korg:4076); the writer and card
+for the NAS feed (kpidash WI 3956); the rest of program
 korg:2935 — kdeskdash folds rpidash2's pair Redis into central (korg:2932),
 then panel state to a file and commands from central (korg:2933), then
 k-homelab retires the three servers (korg:2934). After that: kdeskdash's

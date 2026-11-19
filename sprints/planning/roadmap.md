@@ -76,10 +76,11 @@
   retiring the duplicate claude logic sprint 006 knowingly left in place. Not
   urgent: migrating a panel people look at daily is a different risk from
   adding a reader.
-- The writers and readers for sprint 020's contracts: k-homelab moves its apt
-  runner from `kdash:stale:*:apt-update` to `kdash:update:*` (after korg:3627),
-  kpidash's update card (WI 3642), the gratch NAS producer and big panel
-  (WI 3956), and the network-card ack (korg:4158).
+- The writers and readers for sprint 020's contracts: the gratch NAS producer
+  and big panel (WI 3956), and the network-card ack (korg:4158). The update
+  feed's are done: k-homelab sprint 132 moved its apt runner to
+  `kdash:update:*`, and kpidash sprint 028 built the card (registry updated in
+  sprint 027).
 - ~~kstudiodash's first consumption of the library (korg:1728)~~ — gone with
   kstudio (2026-10-20). kpidash and kdeskdash are the library's consumers now.
 
