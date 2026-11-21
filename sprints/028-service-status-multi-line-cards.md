@@ -91,3 +91,20 @@ None.
 
 - kpidash pins this repo as `lib/kdashdata`. The next kpidash slice
   (korg:4853) starts by moving that pin to this sprint's merge commit.
+
+## Deployed
+
+2026-11-20 ~18:00 PST, from merged `main` (`d3f2d09`, PR #29), by the steps
+`.sprint-deploy` declares, run from kai:
+
+- `just publish`: **deliberate no-op.** "nothing to publish: 0.1.0-4837473
+  already in the store". This sprint changed no publisher input (schema, C
+  library and docs only).
+- `just deploy`: exit 0. `kdash-pub 0.1.0-4837473` (unchanged) was confirmed
+  on kai, kubs0, cleo, kimac and thrall. komarchy and kbook2 did not answer
+  ssh (connection timed out), and thrall-arch did not resolve. All three are
+  `--host-optional` and were reported SKIPPED, which is the normal outcome
+  for a sleeping host.
+
+Nothing live reads the new fields yet. The first reader is kpidash's service
+card (korg:4853), whose `lib/kdashdata` pin moves to `d3f2d09`.
