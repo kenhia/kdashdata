@@ -70,6 +70,9 @@
 
 ## Next
 
+- The reader and writer for sprint 028's multi-line service cards (CD-32):
+  kpidash's service card draws `title`, `lines` and `span` (korg:4853, after
+  moving its `lib/kdashdata` pin), then argus publishes them (korg:4854).
 - kdeskdash's Copilot publisher (korg:2755), unblocked by sprint 013, and the
   k-homelab recipe behind it (korg:2756).
 - kdeskdash adopts the `claude:*` readers (korg:2218, work item 1783),

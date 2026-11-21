@@ -214,6 +214,130 @@ int main(void) {
               "missing text");
     }
 
+    /* ---- service status: multi-line layout (sprint 028) ---- */
+    {
+        kdash_service_t s;
+        memset(&s, 0, sizeof(s));
+
+        /* No layout fields parses exactly as before, with the defaults. */
+        CHECK(PARSE(kdash_parse_service,
+                    "{\"ts\":1,\"state\":\"ok\",\"text\":\"plain\"}", &s),
+              "plain service payload");
+        CHECK(!s.has_title && s.title[0] == '\0', "absent title");
+        CHECK(s.span == 1, "absent span is 1");
+        CHECK(s.n_lines == 0, "absent lines");
+
+        /* Every field round-trips: the schema's argus example. */
+        CHECK(PARSE(kdash_parse_service,
+                    "{\"ts\":1,\"state\":\"ok\",\"text\":\"fallback\","
+                    "\"title\":\"argus\",\"span\":2,\"lines\":["
+                    "{\"t\":\"4 watches\",\"size\":\"L\"},"
+                    "\"all quiet\","
+                    "\"\","
+                    "{\"t\":\"next 18:30\",\"size\":\"S\",\"align\":\"R\","
+                    "\"color\":\"#8899aA\",\"future\":true}]}",
+                    &s),
+              "multi-line service payload");
+        CHECK(strcmp(s.text, "fallback") == 0, "text kept as the fallback");
+        CHECK(s.has_title && strcmp(s.title, "argus") == 0, "title");
+        CHECK(s.span == 2, "span 2");
+        CHECK(s.n_lines == 4, "four lines");
+        CHECK(strcmp(s.lines[0].t, "4 watches") == 0 &&
+                  s.lines[0].size == KDASH_LINE_L &&
+                  s.lines[0].align == KDASH_ALIGN_C && !s.lines[0].has_color,
+              "object line with size only takes the other defaults");
+        CHECK(strcmp(s.lines[1].t, "all quiet") == 0 &&
+                  s.lines[1].size == KDASH_LINE_M &&
+                  s.lines[1].align == KDASH_ALIGN_C && !s.lines[1].has_color,
+              "bare string line is every default");
+        CHECK(s.lines[2].t[0] == '\0', "\"\" is a spacer line");
+        CHECK(strcmp(s.lines[3].t, "next 18:30") == 0 &&
+                  s.lines[3].size == KDASH_LINE_S &&
+                  s.lines[3].align == KDASH_ALIGN_R && s.lines[3].has_color &&
+                  s.lines[3].color == 0x8899AA,
+              "every line field, mixed-case hex, unknown field ignored");
+
+        /* Exactly eight is the ceiling and is kept. */
+        CHECK(PARSE(kdash_parse_service,
+                    "{\"ts\":1,\"state\":\"ok\",\"text\":\"x\",\"lines\":"
+                    "[\"1\",\"2\",\"3\",\"4\",\"5\",\"6\",\"7\",\"8\"]}",
+                    &s),
+              "eight lines");
+        CHECK(s.n_lines == 8 && strcmp(s.lines[7].t, "8") == 0,
+              "eight lines kept");
+
+        /* An empty array is legal and means "draw text". */
+        CHECK(PARSE(kdash_parse_service,
+                    "{\"ts\":1,\"state\":\"ok\",\"text\":\"x\",\"lines\":[]}",
+                    &s),
+              "empty lines");
+        CHECK(s.n_lines == 0, "empty lines draws text");
+
+        /* Each schema counterexample on `lines`: the RECORD survives (an
+         * optional field is malformed, not the record), `lines` is dropped
+         * whole and `text` is what draws. Valid lines in front of the bad one
+         * must not leak through. */
+        static const char *const bad_lines[] = {
+            "[\"1\",\"2\",\"3\",\"4\",\"5\",\"6\",\"7\",\"8\",\"9\"]",
+            "[\"ok\",{\"t\":\"big\",\"size\":\"XL\"}]",
+            "[\"ok\",{\"t\":\"warn\",\"color\":\"red\"}]",
+            "[\"ok\",{\"size\":\"L\"}]",
+            "[\"ok\",\"one\\ntwo\"]",
+            "[\"ok\",{\"t\":\"x\",\"align\":\"left\"}]",
+            "[\"ok\",{\"t\":\"x\",\"color\":\"#12345\"}]",
+            "[\"ok\",{\"t\":\"x\",\"color\":\"#12345g\"}]",
+            "[\"ok\",{\"t\":7}]",
+            "[\"ok\",3]",
+            "\"not an array\"",
+        };
+        for (size_t i = 0; i < sizeof(bad_lines) / sizeof(bad_lines[0]); i++) {
+            char json[256];
+            snprintf(json, sizeof(json),
+                     "{\"ts\":1,\"state\":\"down\",\"text\":\"plain\","
+                     "\"title\":\"t\",\"lines\":%s}",
+                     bad_lines[i]);
+            CHECK(PARSE(kdash_parse_service, json, &s),
+                  "bad lines %zu keeps the record", i);
+            CHECK(s.n_lines == 0 && s.lines[0].t[0] == '\0',
+                  "bad lines %zu dropped whole", i);
+            CHECK(strcmp(s.text, "plain") == 0 && s.state == KDASH_SVC_DOWN &&
+                      s.has_title,
+                  "bad lines %zu leaves the rest", i);
+        }
+
+        /* `span` outside 1/2, and a title that is not one line, are absent. */
+        static const char *const bad_span[] = {"3", "0", "1.5", "\"2\""};
+        for (size_t i = 0; i < sizeof(bad_span) / sizeof(bad_span[0]); i++) {
+            char json[96];
+            snprintf(json, sizeof(json),
+                     "{\"ts\":1,\"state\":\"ok\",\"text\":\"x\",\"span\":%s}",
+                     bad_span[i]);
+            CHECK(PARSE(kdash_parse_service, json, &s), "bad span %s", bad_span[i]);
+            CHECK(s.span == 1, "bad span %s reads as 1", bad_span[i]);
+        }
+        CHECK(PARSE(kdash_parse_service,
+                    "{\"ts\":1,\"state\":\"ok\",\"text\":\"x\","
+                    "\"title\":\"a\\nb\"}",
+                    &s),
+              "multi-line title keeps the record");
+        CHECK(!s.has_title && s.title[0] == '\0', "multi-line title is absent");
+        CHECK(PARSE(kdash_parse_service,
+                    "{\"ts\":1,\"state\":\"ok\",\"text\":\"x\",\"title\":5}", &s),
+              "numeric title keeps the record");
+        CHECK(!s.has_title, "numeric title is absent");
+
+        /* `text` stays required even with `lines`, and a rejected record
+         * leaves the layout half zeroed too — span included. */
+        s.span = 2;
+        s.n_lines = 3;
+        CHECK(!PARSE(kdash_parse_service,
+                     "{\"ts\":1,\"state\":\"ok\",\"lines\":[\"only\"]}", &s),
+              "lines without text is rejected");
+        CHECK(s.span == 0 && s.n_lines == 0 && !s.has_title &&
+                  s.lines[0].t[0] == '\0',
+              "rejected record zeroes the layout fields");
+    }
+
     /* ---- apttemps ---- */
     {
         kdash_apttemps_t a;

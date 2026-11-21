@@ -264,16 +264,139 @@ const char *kdash_service_state_str(kdash_service_state_t s) {
     return "unknown";
 }
 
-bool kdash_parse_service(const char *json, size_t len, kdash_service_t *out) {
-    if (!out)
-        return false;
-    /* Identity lives on the key, and the reader may have filled it already —
-     * so zero only the payload half. */
+/* Zero the payload half; identity lives on the key, and the reader may have
+ * filled it already. */
+static void service_zero_payload(kdash_service_t *out) {
     out->ts = 0;
     out->state = KDASH_SVC_OK;
     out->text[0] = '\0';
     out->has_icon = false;
     out->icon = 0;
+    out->has_title = false;
+    out->title[0] = '\0';
+    out->span = 0; /* a rejected record is fully zeroed; success sets 1 */
+    out->n_lines = 0;
+    memset(out->lines, 0, sizeof(out->lines));
+}
+
+/* The schema's `^[^\n\r]*$`: a line, or a title, is one line. */
+static bool one_line(const char *s) {
+    return strpbrk(s, "\n\r") == NULL;
+}
+
+/* `#rrggbb`, exactly. */
+static bool parse_hex_color(const char *s, uint32_t *out) {
+    if (strlen(s) != 7 || s[0] != '#')
+        return false;
+    uint32_t v = 0;
+    for (int i = 1; i < 7; i++) {
+        char c = s[i];
+        int d;
+        if (c >= '0' && c <= '9')
+            d = c - '0';
+        else if (c >= 'a' && c <= 'f')
+            d = c - 'a' + 10;
+        else if (c >= 'A' && c <= 'F')
+            d = c - 'A' + 10;
+        else
+            return false;
+        v = (v << 4) | (uint32_t)d;
+    }
+    *out = v;
+    return true;
+}
+
+/* One optional one-letter enum field of a line object. Absent leaves *out at
+ * its default and succeeds; present must be a string naming one of `words`
+ * (whose index is the enum value), or the line is malformed. */
+static bool line_letter(const cJSON *item, const char *field,
+                        const char *const words[3], int *out) {
+    const cJSON *o = cJSON_GetObjectItemCaseSensitive(item, field);
+    if (!o)
+        return true;
+    if (!cJSON_IsString(o) || !o->valuestring)
+        return false;
+    for (int i = 0; i < 3; i++) {
+        if (strcmp(o->valuestring, words[i]) == 0) {
+            *out = i;
+            return true;
+        }
+    }
+    return false;
+}
+
+/* One element of `lines`: a bare string, or an object with a required `t`.
+ * False on anything the schema rejects, which drops the whole array. */
+static bool parse_service_line(const cJSON *item, kdash_service_line_t *ln) {
+    /* Index order matches the enums: 0 is the default. */
+    static const char *const SIZES[3] = {"M", "S", "L"};
+    static const char *const ALIGNS[3] = {"C", "L", "R"};
+
+    memset(ln, 0, sizeof(*ln));
+    const cJSON *t = item;
+    if (cJSON_IsObject(item))
+        t = cJSON_GetObjectItemCaseSensitive(item, "t");
+    if (!cJSON_IsString(t) || !t->valuestring || !one_line(t->valuestring))
+        return false;
+    /* Truncate like `text`: a display string, not identity. */
+    snprintf(ln->t, sizeof(ln->t), "%s", t->valuestring);
+    if (!cJSON_IsObject(item))
+        return true;
+
+    int size = 0, align = 0;
+    if (!line_letter(item, "size", SIZES, &size) ||
+        !line_letter(item, "align", ALIGNS, &align))
+        return false;
+    ln->size = (kdash_line_size_t)size;
+    ln->align = (kdash_line_align_t)align;
+
+    const cJSON *c = cJSON_GetObjectItemCaseSensitive(item, "color");
+    if (c) {
+        if (!cJSON_IsString(c) || !c->valuestring ||
+            !parse_hex_color(c->valuestring, &ln->color))
+            return false;
+        ln->has_color = true;
+    }
+    return true;
+}
+
+/* The optional layout fields. Each is an optional field, so a malformed one is
+ * absent — and `lines` is absent WHOLE: a card drawing seven of eight lines,
+ * or lines with one style silently defaulted, is a layout nobody wrote. */
+static void parse_service_layout(const cJSON *root, kdash_service_t *out) {
+    out->span = 1;
+    const cJSON *title = cJSON_GetObjectItemCaseSensitive(root, "title");
+    if (cJSON_IsString(title) && title->valuestring &&
+        one_line(title->valuestring)) {
+        snprintf(out->title, sizeof(out->title), "%s", title->valuestring);
+        out->has_title = true;
+    }
+
+    const cJSON *span = cJSON_GetObjectItemCaseSensitive(root, "span");
+    if (cJSON_IsNumber(span) &&
+        (span->valuedouble == 1.0 || span->valuedouble == 2.0))
+        out->span = (int)span->valuedouble;
+
+    const cJSON *lines = cJSON_GetObjectItemCaseSensitive(root, "lines");
+    if (!cJSON_IsArray(lines) ||
+        cJSON_GetArraySize(lines) > KDASH_SVC_LINES_MAX)
+        return;
+    int n = 0;
+    const cJSON *item;
+    cJSON_ArrayForEach(item, lines) {
+        if (!parse_service_line(item, &out->lines[n])) {
+            memset(out->lines, 0, sizeof(out->lines));
+            return;
+        }
+        n++;
+    }
+    out->n_lines = n;
+}
+
+bool kdash_parse_service(const char *json, size_t len, kdash_service_t *out) {
+    if (!out)
+        return false;
+    service_zero_payload(out);
 
     cJSON *root = parse_object(json, len);
     if (!root)
@@ -294,12 +417,9 @@ bool kdash_parse_service(const char *json, size_t len, kdash_service_t *out) {
             out->has_icon = true;
             out->icon = (int)icon;
         }
+        parse_service_layout(root, out);
     } else {
-        out->ts = 0;
-        out->state = KDASH_SVC_OK;
-        out->text[0] = '\0';
-        out->has_icon = false;
-        out->icon = 0;
+        service_zero_payload(out);
     }
 
     cJSON_Delete(root);

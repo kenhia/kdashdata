@@ -35,6 +35,7 @@
 
 #include <stdbool.h>
 #include <stddef.h>
+#include <stdint.h>
 
 #include "kdash/kdash_freshness.h"
 #include "kdash/kdash_keys.h"
@@ -130,6 +131,30 @@ typedef enum {
     KDASH_SVC_UNKNOWN,
 } kdash_service_state_t;
 
+/* Multi-line cards (sprint 028). Each enum's zero is the schema's default, so
+ * a zeroed line is a centred, medium, default-coloured one. */
+#define KDASH_SVC_LINES_MAX 8 /* the schema's maxItems */
+
+typedef enum {
+    KDASH_LINE_M = 0, /* default */
+    KDASH_LINE_S,
+    KDASH_LINE_L,
+} kdash_line_size_t;
+
+typedef enum {
+    KDASH_ALIGN_C = 0, /* default — how `text` is drawn */
+    KDASH_ALIGN_L,
+    KDASH_ALIGN_R,
+} kdash_line_align_t;
+
+typedef struct {
+    char t[KDASH_TEXT_MAX]; /* "" is a blank spacer line */
+    kdash_line_size_t size;
+    kdash_line_align_t align;
+    bool has_color;   /* false: the reader's default foreground */
+    uint32_t color;   /* 0xRRGGBB */
+} kdash_service_line_t;
+
 typedef struct {
     /* Identity comes from the KEY, which is authoritative over any payload
      * echo (schema note). The parser never writes these; the reader fills
@@ -139,9 +164,22 @@ typedef struct {
 
     double ts;                    /* required */
     kdash_service_state_t state;  /* required; must be one of the enum words */
-    char text[KDASH_TEXT_MAX];    /* required */
+    char text[KDASH_TEXT_MAX];    /* required — the fallback when n_lines is 0 */
     bool has_icon;
     int icon;                     /* optional */
+
+    /* Optional layout (sprint 028). `title` "" means "use `name`"; `span` is
+     * 1 unless the payload said 2 (0 only in a rejected record). `n_lines` > 0
+     * means draw `lines` INSTEAD of `text`. A malformed `lines` — too many, a
+     * bad element, any bad field — is dropped whole (n_lines 0), never
+     * half-kept: the card falls back to `text` rather than losing the record
+     * or drawing a partial layout. The border colour is not here on purpose:
+     * it stays the reader's, from `state` and freshness. */
+    bool has_title;
+    char title[KDASH_TEXT_MAX];
+    int span;
+    int n_lines;
+    kdash_service_line_t lines[KDASH_SVC_LINES_MAX];
 } kdash_service_t;
 
 /* Parses only the payload half; `out->name`/`out->host` are left untouched so

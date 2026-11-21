@@ -1967,6 +1967,38 @@ reader. Also rejected: a per-host key. The card draws all hosts in one
 timeline, and a leg's overseer is usually on another host, so a link would
 have to cross keys.
 
+## CD-32 — A service card's layout rides the same key as optional fields, and the border stays the reader's (sprint 028)
+
+kdashdata WI 4846, slice 1 of program korg:4855. Ken wanted status cards that
+carry several lines, starting with `argus`, and left the shape to the agent.
+`kpidash:services:{name}:{host}` gains three optional fields: `title`,
+`lines` (at most 8, each a bare string or `{t, size, align, color}` with
+`size` ∈ S/M/L, `align` ∈ L/C/R, `color` `#rrggbb`) and `span` ∈ {1, 2}.
+The schema is the authority for the shape. The decisions are these:
+
+- **Same key, additive.** The schema already had `additionalProperties: true`,
+  so every reader that predates this ignores the new fields and keeps drawing
+  `text`. **`text` stays required.** It is the fallback for those readers and
+  for a reader that finds `lines` malformed.
+- **The client gets coarse words, not a layout engine.** Three sizes the
+  reader maps to fonts it already has, three alignments, a hex colour. No
+  fonts by name, no pixel positions, no markup inside strings, no newlines
+  inside a line.
+- **The border colour is not client-controlled.** It stays a function of
+  `state` and freshness on the reader's side, so a dead publisher still goes
+  red whatever its last record asked for.
+- **A malformed `lines` is dropped whole, and the record survives.** That is
+  rules.md's "a malformed optional is absent", applied at the array: one bad
+  element voids every line, because seven of eight lines, or a line with one
+  style quietly defaulted, is a layout nobody wrote. `kdash_parse_service()`
+  then reports `n_lines` 0, and the card reads `text`. A card that vanishes
+  is worse than one that reads plainly.
+
+Rejected: a magic code inside `text`. No honest schema can parse it, and it
+shows as garbage on every reader that has not learned it. Also rejected: a
+second key family. That means two discovery scans, two freshness rules and two
+eviction paths for what is one card.
+
 ## Open questions
 
 - **OQ-2 — Redis ACL writer/reader split** (see CD-2).

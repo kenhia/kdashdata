@@ -80,6 +80,14 @@ The payload deliberately carries **no cadence field** — the shape has two
 consumers and adding one was declined (handoff korg:2309); a publisher whose
 cadence is not the default tells its consumer, not its readers. A red card
 means "nobody is publishing", not "that host is down" — check the publisher.
+**Multi-line cards (sprint 028, CD-32).** A `services` payload may add
+`title`, `lines` (at most 8; each a string or `{t, size, align, color}`) and
+`span` (1 or 2). `text` stays required as the fallback, and a reader that
+finds `lines` malformed drops the whole array and draws `text`. The border
+colour is never the publisher's: it stays `state` plus freshness. libkdash
+exposes the fields on `kdash_service_t`. The first reader is kpidash's
+service card (korg:4853) and the first writer is argus (korg:4854).
+kdeskdash writes this namespace and never reads it.
 
 **Bands (`apttemps`).** What counts as cold / ok / warm / hot is part of the
 shared data model, not each panel's taste: `kdash_apttemps_band()` in

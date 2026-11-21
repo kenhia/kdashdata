@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://github.com/kenhia/kdashdata/contracts/schemas/kpidash-service-status.schema.json",
   "title": "kpidash service status",
-  "description": "Payload of kpidash:services:{name}:{host} — latest-value, no TTL, reader-owned staleness via ts, where the window is the CONSUMER'S and is per service rather than a number this schema fixes: kpidash's default is 60 s, and a daily publisher gets its own (`kmon` has had 26 h since kpidash sprint 018, and publishes this key once per nightly). See kpidash's docs/CLIENT-PROTOCOL.md §8a. There is deliberately no cadence field in the payload — the shape has two consumers and adding one was declined (korg:2309). Key is always 4 segments; {host} sentinel `_` means no host. Identity is (name, host); the key is authoritative over any payload echo.",
+  "description": "Payload of kpidash:services:{name}:{host} — latest-value, no TTL, reader-owned staleness via ts, where the window is the CONSUMER'S and is per service rather than a number this schema fixes: kpidash's default is 60 s, and a daily publisher gets its own (`kmon` has had 26 h since kpidash sprint 018, and publishes this key once per nightly). See kpidash's docs/CLIENT-PROTOCOL.md §8a. There is deliberately no cadence field in the payload — the shape has two consumers and adding one was declined (korg:2309). Key is always 4 segments; {host} sentinel `_` means no host. Identity is (name, host); the key is authoritative over any payload echo. Since kdashdata sprint 028 a publisher may lay out a multi-line card with the optional `title`, `lines` and `span`; `text` stays required as the one-line fallback for every reader that does not know them. The border colour is deliberately NOT client-controlled: it stays a function of `state` and freshness on the reader's side, so a dead publisher still goes red whatever it last asked for.",
   "type": "object",
   "required": ["ts", "state", "text"],
   "additionalProperties": true,
@@ -14,7 +14,31 @@
     },
     "text": { "type": "string", "description": "Short status text shown on the card" },
     "host": { "type": "string", "description": "Echo of the key's host segment, display only" },
-    "icon": { "type": "integer", "description": "Optional icon index (kpidash lv_font_icons_56)" }
+    "icon": { "type": "integer", "description": "Optional icon index (kpidash lv_font_icons_56); absent means no icon" },
+    "title": {
+      "type": "string",
+      "pattern": "^[^\\n\\r]*$",
+      "description": "Card heading. Absent: the key's {name}, as before sprint 028."
+    },
+    "lines": {
+      "type": "array",
+      "maxItems": 8,
+      "description": "Body lines, top to bottom. When present and non-empty a reader draws these INSTEAD of `text`; empty or absent, it draws `text`. A reader that finds `lines` malformed drops the whole array and falls back to `text` — a card that vanishes is worse than one that reads plainly.",
+      "items": {
+        "type": ["string", "object"],
+        "description": "A bare string is shorthand for {\"t\": <string>} with every default. The string keyword here (`pattern`) applies to the shorthand, the object keywords (`required`, `properties`) to the long form — JSON Schema applies each keyword only to the instance type it is about.",
+        "pattern": "^[^\\n\\r]*$",
+        "required": ["t"],
+        "additionalProperties": true,
+        "properties": {
+          "t": { "type": "string", "pattern": "^[^\\n\\r]*$", "description": "The line. \"\" is a blank spacer line. No newlines inside." },
+          "size": { "type": "string", "enum": ["S", "M", "L"], "description": "Coarse size; absent: M. The reader maps these to fonts it already has." },
+          "align": { "type": "string", "enum": ["L", "C", "R"], "description": "Alignment; absent: C, which is how `text` is drawn." },
+          "color": { "type": "string", "pattern": "^#[0-9a-fA-F]{6}$", "description": "Text colour, #rrggbb. Absent: the reader's default foreground." }
+        }
+      }
+    },
+    "span": { "type": "integer", "enum": [1, 2], "description": "Card width in card units. Absent: 1." }
   },
   "examples": [
     {
@@ -28,6 +52,27 @@
       "ts": 1758500012.4,
       "state": "unknown",
       "text": "no data yet"
+    },
+    {
+      "ts": 1763690000.0,
+      "state": "ok",
+      "text": "argus: 4 watches, all quiet",
+      "host": "kubs0",
+      "icon": 5,
+      "title": "argus",
+      "span": 2,
+      "lines": [
+        { "t": "4 watches", "size": "L" },
+        "all quiet since 06:10",
+        "",
+        { "t": "next sweep 18:30", "size": "S", "align": "R", "color": "#8899aa" }
+      ]
+    },
+    {
+      "ts": 1763690000.0,
+      "state": "unhealthy",
+      "text": "1 watch firing",
+      "lines": []
     }
   ],
   "x-counterexamples": [
@@ -53,6 +98,68 @@
         "text": "slow"
       },
       "why": "`unhealthy` is the word this contract uses for that; a synonym is a new state the consumer has no ladder for"
+    },
+    {
+      "record": {
+        "ts": 1763690000.0,
+        "state": "ok",
+        "text": "x",
+        "lines": ["1", "2", "3", "4", "5", "6", "7", "8", "9"]
+      },
+      "why": "`lines` holds at most 8; a ninth has nowhere to go on a card, and clipping it silently would hide the line the publisher put last on purpose"
+    },
+    {
+      "record": {
+        "ts": 1763690000.0,
+        "state": "ok",
+        "text": "x",
+        "lines": [{ "t": "big", "size": "XL" }]
+      },
+      "why": "`size` is the closed S/M/L set a reader maps to fonts it has; XL names a font no reader promises"
+    },
+    {
+      "record": {
+        "ts": 1763690000.0,
+        "state": "ok",
+        "text": "x",
+        "lines": [{ "t": "warn", "color": "red" }]
+      },
+      "why": "`color` is #rrggbb only; a colour name is a vocabulary every reader would have to agree on"
+    },
+    {
+      "record": {
+        "ts": 1763690000.0,
+        "state": "ok",
+        "text": "x",
+        "lines": [{ "size": "L" }]
+      },
+      "why": "a line object must carry `t`; a styled nothing is not a spacer — `\"\"` is"
+    },
+    {
+      "record": {
+        "ts": 1763690000.0,
+        "state": "ok",
+        "text": "x",
+        "lines": ["one\ntwo"]
+      },
+      "why": "a line is one line; a newline inside it is layout the reader never agreed to, so it is two entries"
+    },
+    {
+      "record": {
+        "ts": 1763690000.0,
+        "state": "ok",
+        "text": "x",
+        "span": 3
+      },
+      "why": "`span` is 1 or 2 card units; a wider card is a layout the dashboard has no slot for"
+    },
+    {
+      "record": {
+        "ts": 1763690000.0,
+        "state": "ok",
+        "lines": ["only lines"]
+      },
+      "why": "`text` stays required even with `lines`: it is the fallback for every reader that does not know `lines`, and for one that finds them malformed"
     }
   ]
 }
