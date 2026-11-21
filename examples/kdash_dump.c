@@ -128,6 +128,16 @@ static void dump_services(kdash_conn_t *c, long long now) {
                svcs[i].host[0] ? svcs[i].host : "(no host)",
                kdash_service_state_str(svcs[i].state), svcs[i].text,
                stale ? "  [stale]" : "");
+        /* Multi-line layout (CD-32), when the publisher sent one. */
+        if (svcs[i].has_title || svcs[i].span != 1)
+            printf("    title=\"%s\" span=%d\n", svcs[i].title, svcs[i].span);
+        for (int j = 0; j < svcs[i].n_lines; j++) {
+            const kdash_service_line_t *ln = &svcs[i].lines[j];
+            printf("    | %c%c ", "MSL"[ln->size], "CLR"[ln->align]);
+            if (ln->has_color)
+                printf("#%06x ", (unsigned)ln->color);
+            printf("%s\n", ln->t);
+        }
     }
     printf("  %d card(s), %d skipped\n", n, skipped);
 }

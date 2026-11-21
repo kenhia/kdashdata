@@ -210,11 +210,18 @@ Sprint 027 (korg:4824, a relay from k-homelab sprint 132) brought the
 `bin/update-flag`, shipped on 2026-11-18, together with two new kinds,
 `approval-awaiting` and `overdue`. The reader is kpidash's update card. The
 change is docs only; the vocabulary stays open and no CD changed.
+Sprint 028 (korg:4851, slice 1 of program korg:4855) let a
+`kpidash:services` card carry several lines: optional `title`, `lines` (at
+most 8, each a string or `{t, size, align, color}`) and `span` (1 or 2) on the
+same key, with `text` still required as the fallback. A malformed `lines` is
+dropped whole and the card reads `text`, and the border colour stays the
+reader's (CD-32). `kdash_service_t` gained the fields.
 See `docs/architecture.md` (decisions
-CD-1…CD-31, open questions OQ-n), `contracts/rules.md`,
+CD-1…CD-32, open questions OQ-n), `contracts/rules.md`,
 `contracts/registry.md`, `include/kdash/kdash.h` for the consumer API, and
 `publishers/README.md` for the publish side and the version-and-skip rule.
-Next: ksitrep's activity spans and `kdash:agents` publisher (korg:4697) and
+Next: kpidash's service card draws the multi-line fields (korg:4853), then
+argus publishes them (korg:4854); ksitrep's activity spans and `kdash:agents` publisher (korg:4697) and
 kpidash's Agents card (korg:4698); kpidash's producer and card for the network feed
 (korg:4066), the ack and the
 restart fix (korg:4158), and cleo's producer (korg:4076); the writer and card
