@@ -996,6 +996,94 @@ int main(void) {
               "a record without five_hour_pct still rejects, flag or not");
     }
 
+    /* ---- codex:limits (CD-33) ---- */
+    {
+        kdash_codex_limits_t l;
+        const char *f[] = {"five_hour_none", "five_hour_pct",
+                           "five_hour_resets_at", "seven_day_pct",
+                           "seven_day_resets_at", "updated_at",
+                           "expected_refresh_s", "host", "source",
+                           "plan_type", "ts", "unknown_future"};
+        /* The schema's Plus example. */
+        const char *plus[] = {"0", "42.5", "1795579200", "11.5", "1796104200",
+                              "1795572000", "300", "kai", "rollout", "plus",
+                              "1795572001", "x"};
+        CHECK(kdash_parse_codex_limits(f, plus, 12, &l), "plus example");
+        CHECK(l.valid && !l.five_hour_none && l.five_hour_pct == 42.5 &&
+                  l.five_hour_resets_at == 1795579200.0 &&
+                  l.seven_day_pct == 11.5 &&
+                  l.seven_day_resets_at == 1796104200.0,
+              "both windows");
+        CHECK(l.updated_at == 1795572000.0 && l.expected_refresh_s == 300.0 &&
+                  strcmp(l.host, "kai") == 0 &&
+                  strcmp(l.source, "rollout") == 0 &&
+                  strcmp(l.plan_type, "plus") == 0,
+              "stamp, cadence, host, source, plan");
+
+        /* The schema's Pro example: no five-hour window, stated. */
+        const char *pro[] = {"1", "0", "0", "24.5", "1796104200",
+                             "1795572000", "300", "kai", "rollout", "prolite"};
+        CHECK(kdash_parse_codex_limits(f, pro, 10, &l) && l.five_hour_none &&
+                  l.seven_day_pct == 24.5,
+              "pro example: no five-hour window, seven-day reading");
+
+        /* Leftover five-hour values beside the flag never render. */
+        const char *lo[] = {"1", "37", "1795579200", "24.5", "1796104200",
+                            "1795572000", "300", "kai", "rollout"};
+        CHECK(kdash_parse_codex_limits(f, lo, 9, &l) && l.five_hour_none &&
+                  l.five_hour_pct == 0.0 && l.five_hour_resets_at == 0.0,
+              "five-hour leftovers beside the flag are zeroed");
+
+        /* Every required field is required: drop each in turn. */
+        for (int drop = 0; drop < 9; drop++) {
+            const char *df[8], *dv[8];
+            int n = 0;
+            for (int i = 0; i < 9; i++)
+                if (i != drop) {
+                    df[n] = f[i];
+                    dv[n] = plus[i];
+                    n++;
+                }
+            CHECK(!kdash_parse_codex_limits(df, dv, n, &l) && !l.valid &&
+                      !l.five_hour_none,
+                  "missing %s rejects, zeroed", f[drop]);
+        }
+
+        /* The schema's counterexamples, and other malformed values. */
+        const char *bad[][2] = {
+            {"five_hour_none", "true"}, {"five_hour_none", "2"},
+            {"seven_day_pct", "11.5%"}, {"seven_day_pct", "nan"},
+            {"expected_refresh_s", "0"}, {"expected_refresh_s", "86401"},
+            {"updated_at", "0"},         {"seven_day_resets_at", "-1"},
+            {"host", "kai box"},         {"source", ""},
+        };
+        for (size_t b = 0; b < sizeof(bad) / sizeof(bad[0]); b++) {
+            const char *bv[9];
+            for (int i = 0; i < 9; i++)
+                bv[i] = strcmp(f[i], bad[b][0]) == 0 ? bad[b][1] : plus[i];
+            CHECK(!kdash_parse_codex_limits(f, bv, 9, &l),
+                  "%s=\"%s\" rejects", bad[b][0], bad[b][1]);
+        }
+        CHECK(!kdash_parse_codex_limits(NULL, plus, 9, &l) &&
+                  !kdash_parse_codex_limits(f, plus, 0, &l) &&
+                  !kdash_parse_codex_limits(f, plus, 9, NULL),
+              "NULL or empty in, false out");
+
+        /* Staleness on the observation stamp and the writer's cadence. */
+        CHECK(kdash_parse_codex_limits(f, plus, 9, &l), "reparse");
+        CHECK(!kdash_codex_limits_stale(&l, 1795572000 + 300 + 60, 60),
+              "fresh at cadence plus grace");
+        CHECK(kdash_codex_limits_stale(&l, 1795572000 + 300 + 61, 60),
+              "stale one second past it");
+        CHECK(!kdash_codex_limits_stale(&l, 1795571000, 60),
+              "skew reads fresh");
+        kdash_codex_limits_t z;
+        memset(&z, 0, sizeof(z));
+        CHECK(!kdash_codex_limits_stale(&z, 1795572000, 60) &&
+                  !kdash_codex_limits_stale(NULL, 1795572000, 60),
+              "no record, nothing to judge");
+    }
+
     /* ---- claude:limits staleness, per gauge ---- */
     {
         const long long grace = KDASH_CLAUDE_LIMITS_GRACE_S;
@@ -1703,6 +1791,24 @@ int main(void) {
         CHECK(ag.bars[2].state == KDASH_AGENT_WAITING &&
                   strcmp(ag.bars[2].id, "s3.b2") == 0,
               "the waiting bar");
+        CHECK(ag.bars[1].provider == KDASH_AGENT_PROVIDER_CODEX &&
+                  ag.bars[0].provider == KDASH_AGENT_PROVIDER_OTHER &&
+                  ag.bars[2].provider == KDASH_AGENT_PROVIDER_OTHER,
+              "provider: codex where sent, OTHER where absent");
+        CHECK(kdash_agent_provider_from_str("claude") ==
+                      KDASH_AGENT_PROVIDER_CLAUDE &&
+                  kdash_agent_provider_from_str("ghcp") ==
+                      KDASH_AGENT_PROVIDER_GHCP &&
+                  kdash_agent_provider_from_str("Codex") ==
+                      KDASH_AGENT_PROVIDER_OTHER &&
+                  kdash_agent_provider_from_str(NULL) ==
+                      KDASH_AGENT_PROVIDER_OTHER,
+              "provider words are exact and lowercase; anything else is other");
+        CHECK(strcmp(kdash_agent_provider_str(KDASH_AGENT_PROVIDER_CODEX),
+                     "codex") == 0 &&
+                  strcmp(kdash_agent_provider_str((kdash_agent_provider_t)99),
+                         "other") == 0,
+              "and back");
 
         /* The right edge. Fresh record: running bars reach now, done bars
          * stop at `end`. Stale record: running bars stop at `end` too. */

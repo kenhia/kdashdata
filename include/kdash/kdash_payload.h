@@ -546,6 +546,59 @@ bool kdash_claude_limits_scoped_stale(const kdash_claude_limits_t *l,
                                       long long now, long long grace_s,
                                       long long legacy_window_s);
 
+/* ---- codex:limits (HASH, CD-33) ---- */
+
+#define KDASH_CODEX_HOST_MAX   64 /* the schema's host pattern: 1..63 chars */
+#define KDASH_CODEX_SOURCE_MAX 32 /* provenance label; display only, truncated */
+#define KDASH_CODEX_PLAN_MAX   32 /* optional plan label; display only, truncated */
+
+typedef struct {
+    bool valid; /* false unless every required field parsed */
+
+    /* Windows are identified by DURATION, not by the upstream slot (CD-33):
+     * the 300-minute reading is five_hour_*, the 10080-minute one seven_day_*.
+     * `five_hour_none` is the writer's positive statement that the source has
+     * no 300-minute window; with it set, both five-hour values are forced to
+     * 0 whatever the hash holds, as claude:limits does (CD-29). */
+    bool five_hour_none;
+    double five_hour_pct;       /* clamped to [0,100]                         */
+    double five_hour_resets_at; /* 0 = unknown, or no window                  */
+    double seven_day_pct;       /* clamped to [0,100]                         */
+    double seven_day_resets_at; /* 0 = unknown                                */
+
+    /* The OBSERVATION time and the writer's cadence. Freshness is judged on
+     * these, never on `ts`: republishing a cached sample does not advance
+     * `updated_at`. See kdash_codex_limits_stale(). */
+    double updated_at;
+    double expected_refresh_s;
+
+    char host[KDASH_CODEX_HOST_MAX];     /* where the observation was made  */
+    char source[KDASH_CODEX_SOURCE_MAX]; /* provenance, e.g. "rollout"     */
+    char plan_type[KDASH_CODEX_PLAN_MAX]; /* "" when absent; never derive a
+                                           * window from it */
+} kdash_codex_limits_t;
+
+/* Parse the codex:limits hash from an HGETALL field/value list. Every field
+ * the v1 schema requires must be present and well-formed, or the record is
+ * rejected whole and `*out` left zeroed: `five_hour_none` exactly 0 or 1;
+ * both `*_pct` numeric and finite (clamped to [0,100]); both `*_resets_at`
+ * non-negative integers (0 = unknown); `updated_at` a positive integer;
+ * `expected_refresh_s` an integer in 1..86400; `host` matching the schema's
+ * token pattern; `source` non-empty. Unknown fields are ignored; `plan_type`
+ * and `ts` are optional. A rejected record is "unknown", never "no window" —
+ * `five_hour_none` is only ever true on a valid record. */
+bool kdash_parse_codex_limits(const char *const *fields,
+                              const char *const *values, int nfields,
+                              kdash_codex_limits_t *out);
+
+/* True when a valid record's `updated_at` is older than its own
+ * `expected_refresh_s` plus `grace_s` (KDASH_CADENCE_GRACE_S is the default) —
+ * kdash_cadence_stale() on the observation stamp. False for NULL or a record
+ * that is not valid: there is nothing to judge, and the caller already knows
+ * it has no reading. */
+bool kdash_codex_limits_stale(const kdash_codex_limits_t *l, long long now,
+                              long long grace_s);
+
 /* ---- claude:recent (list of JSON documents) ---- */
 
 typedef struct {
@@ -798,6 +851,16 @@ typedef enum {
     KDASH_AGENT_WAITING,  /* still open, and owes Ken an okay or a decision */
 } kdash_agent_state_t;
 
+/* The agent a bar belongs to (CD-31 addendum, sprint 029). The wire carries
+ * `claude`, `ghcp`, `codex` or `other`; an absent or unrecognized value is
+ * OTHER and the bar is kept. OTHER is 0 so a zeroed bar reads as unknown. */
+typedef enum {
+    KDASH_AGENT_PROVIDER_OTHER = 0,
+    KDASH_AGENT_PROVIDER_CLAUDE,
+    KDASH_AGENT_PROVIDER_GHCP,
+    KDASH_AGENT_PROVIDER_CODEX,
+} kdash_agent_provider_t;
+
 typedef struct {
     char id[KDASH_AGENTS_ID_MAX];
     char host[KDASH_AGENTS_HOST_MAX];
@@ -808,6 +871,7 @@ typedef struct {
     kdash_agent_state_t state;
     bool shipped;              /* a ship happened at `end`  */
     bool overseer;             /* this bar is an overseer's */
+    kdash_agent_provider_t provider; /* OTHER when absent or unrecognized */
     /* The overseer bar this one hangs from: "" and -1 when there is none, or
      * when the wire's `parent` did not name a kept overseer bar (dropped). */
     char parent[KDASH_AGENTS_ID_MAX];
@@ -839,6 +903,11 @@ bool kdash_parse_agents(const char *json, size_t len, kdash_agents_t *out);
 /* Map a `state` string to the enum, and back to the schema's own word. */
 bool kdash_agent_state_from_str(const char *s, kdash_agent_state_t *out);
 const char *kdash_agent_state_str(kdash_agent_state_t s);
+
+/* Map a `provider` string to the enum (anything else is OTHER), and back to
+ * the wire's own word. Never NULL. */
+kdash_agent_provider_t kdash_agent_provider_from_str(const char *s);
+const char *kdash_agent_provider_str(kdash_agent_provider_t p);
 
 /* Where the card draws bar `b`'s right edge, given its own clock `now`.
  * `done`: `end`, clipped to now. `working`/`waiting`: now, while the record is

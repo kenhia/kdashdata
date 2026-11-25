@@ -780,7 +780,8 @@ record changes and at least hourly, through `kdash-pub set`. Live since
 
 Bars may include `provider` (CD-31 addendum, sprint 029). ksitrep emits
 `claude`, `ghcp`, `codex` or `other`. Provider-aware readers keep the bar
-and use `other` when the value is absent or unrecognized.
+and use `other` when the value is absent or unrecognized. libkdash surfaces
+it as `kdash_agent_bar_t.provider` (sprint 030).
 
 kdashdata WI 4693, slice 1 of program korg:4699 (kpidash Agents card). **v1,
 field names pinned** (CD-31): a breaking change is `kdash:agents:v2`.
@@ -1017,7 +1018,7 @@ retired a *feed* from that instance, not the instance.
 
 | Key | Shape | Schema | Writer |
 |---|---|---|---|
-| `codex:limits` | HASH, no TTL | [limits](schemas/codex-limits.schema.json) — **v1** | kdeskdash Codex usage publisher (planned, korg:4939) |
+| `codex:limits` | HASH, no TTL | [limits](schemas/codex-limits.schema.json) — **v1** | kdeskdash `publisher/codex-pub.sh poll` (korg:4939; live on central since 2026-11-25) |
 
 Use `KDASH_CENTRAL_REDIS`, alongside `claude:limits`. The decoded hash has
 five-hour and seven-day utilization and reset fields, assigned by
@@ -1026,6 +1027,12 @@ Publish that reading as seven-day usage, with `five_hour_none=1` and both
 five-hour values set to zero. Write the required fields together, using the
 observation time in `updated_at`. Readers judge freshness by that stamp and
 `expected_refresh_s` plus reader grace. See CD-33.
+
+**C reader** (sprint 030): `kdash_parse_codex_limits()` decodes an HGETALL
+list into `kdash_codex_limits_t`, rejecting the record whole unless every
+required field is well-formed, and `kdash_codex_limits_stale()` judges it on
+`updated_at` and `expected_refresh_s` (`kdash_cadence_stale()`). The first
+consumer is kpidash's usage card (korg:4950).
 
 ## Family: kvscf (live, two homes — dev pair on central, work pair with its pair)
 

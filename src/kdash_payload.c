@@ -1030,6 +1030,109 @@ bool kdash_claude_limits_scoped_stale(const kdash_claude_limits_t *l,
                        grace_s, legacy_window_s);
 }
 
+/* ---- codex:limits (CD-33) ------------------------------------------------ */
+
+/* A non-negative integer: the `*_resets_at` fields, where 0 is the schema's
+ * own spelling of "unknown" and must parse rather than reject. */
+static bool field_ts0(const char *s, double *out) {
+    if (!s || s[0] == '\0')
+        return false;
+    char *end = NULL;
+    long long v = strtoll(s, &end, 10);
+    if (end == s || *end != '\0' || v < 0 || v > 100000000000LL)
+        return false;
+    *out = (double)v;
+    return true;
+}
+
+bool kdash_parse_codex_limits(const char *const *fields,
+                              const char *const *values, int nfields,
+                              kdash_codex_limits_t *out) {
+    if (!out)
+        return false;
+    memset(out, 0, sizeof(*out));
+    if (!fields || !values || nfields <= 0)
+        return false;
+
+    kdash_codex_limits_t l;
+    memset(&l, 0, sizeof(l));
+    /* One bit per required field; a field that is present but malformed
+     * leaves its bit clear, so it rejects exactly as an absent one does. */
+    enum {
+        R_NONE = 1 << 0, R_5PCT = 1 << 1, R_5RST = 1 << 2, R_7PCT = 1 << 3,
+        R_7RST = 1 << 4, R_UPD = 1 << 5, R_EXP = 1 << 6, R_HOST = 1 << 7,
+        R_SRC = 1 << 8, R_ALL = (1 << 9) - 1,
+    };
+    unsigned have = 0;
+
+    for (int i = 0; i < nfields; i++) {
+        const char *f = fields[i];
+        const char *v = values[i];
+        if (!f || !v)
+            continue;
+        double d = 0;
+        if (strcmp(f, "five_hour_none") == 0) {
+            if (strcmp(v, "0") == 0 || strcmp(v, "1") == 0) {
+                l.five_hour_none = v[0] == '1';
+                have |= R_NONE;
+            }
+        } else if (strcmp(f, "five_hour_pct") == 0) {
+            if (field_pct(v, &l.five_hour_pct))
+                have |= R_5PCT;
+        } else if (strcmp(f, "five_hour_resets_at") == 0) {
+            if (field_ts0(v, &l.five_hour_resets_at))
+                have |= R_5RST;
+        } else if (strcmp(f, "seven_day_pct") == 0) {
+            if (field_pct(v, &l.seven_day_pct))
+                have |= R_7PCT;
+        } else if (strcmp(f, "seven_day_resets_at") == 0) {
+            if (field_ts0(v, &l.seven_day_resets_at))
+                have |= R_7RST;
+        } else if (strcmp(f, "updated_at") == 0) {
+            if (field_ts(v, &l.updated_at) && l.updated_at <= 100000000000.0)
+                have |= R_UPD;
+        } else if (strcmp(f, "expected_refresh_s") == 0) {
+            if (field_ts(v, &d) && d <= 86400.0) {
+                l.expected_refresh_s = d;
+                have |= R_EXP;
+            }
+        } else if (strcmp(f, "host") == 0) {
+            if (kdash_token_ok(v, strlen(v))) {
+                field_str(l.host, sizeof(l.host), v);
+                have |= R_HOST;
+            }
+        } else if (strcmp(f, "source") == 0) {
+            if (v[0] != '\0') {
+                field_str(l.source, sizeof(l.source), v);
+                have |= R_SRC;
+            }
+        } else if (strcmp(f, "plan_type") == 0) {
+            field_str(l.plan_type, sizeof(l.plan_type), v);
+        }
+    }
+
+    if (have != R_ALL)
+        return false;
+
+    /* No five-hour window: whatever five-hour numbers sit beside the flag
+     * must not render as a reading (the CD-29 rule, carried over). */
+    if (l.five_hour_none) {
+        l.five_hour_pct = 0;
+        l.five_hour_resets_at = 0;
+    }
+    l.valid = true;
+    *out = l;
+    return true;
+}
+
+bool kdash_codex_limits_stale(const kdash_codex_limits_t *l, long long now,
+                              long long grace_s) {
+    if (!l || !l->valid)
+        return false;
+    return kdash_cadence_stale(l->updated_at, l->expected_refresh_s, now,
+                               grace_s);
+}
+
 /* ---- claude:recent ------------------------------------------------------- */
 
 bool kdash_parse_claude_recent(const char *json, size_t len,
@@ -1520,6 +1623,31 @@ const char *kdash_agent_state_str(kdash_agent_state_t s) {
     return "done";
 }
 
+static const struct {
+    const char *word;
+    kdash_agent_provider_t provider;
+} AGENT_PROVIDER[] = {
+    {"other", KDASH_AGENT_PROVIDER_OTHER},
+    {"claude", KDASH_AGENT_PROVIDER_CLAUDE},
+    {"ghcp", KDASH_AGENT_PROVIDER_GHCP},
+    {"codex", KDASH_AGENT_PROVIDER_CODEX},
+};
+
+kdash_agent_provider_t kdash_agent_provider_from_str(const char *s) {
+    if (s)
+        for (size_t i = 0; i < sizeof(AGENT_PROVIDER) / sizeof(AGENT_PROVIDER[0]); i++)
+            if (strcmp(s, AGENT_PROVIDER[i].word) == 0)
+                return AGENT_PROVIDER[i].provider;
+    return KDASH_AGENT_PROVIDER_OTHER;
+}
+
+const char *kdash_agent_provider_str(kdash_agent_provider_t p) {
+    for (size_t i = 0; i < sizeof(AGENT_PROVIDER) / sizeof(AGENT_PROVIDER[0]); i++)
+        if (AGENT_PROVIDER[i].provider == p)
+            return AGENT_PROVIDER[i].word;
+    return "other";
+}
+
 /* A token-grammar string ([A-Za-z0-9._-]) of 1..outsz-1 chars, copied whole:
  * `id`, `parent` and `host` are identity on this feed, never truncated. */
 static bool req_short_token(const cJSON *root, const char *field, char *out,
@@ -1578,6 +1706,12 @@ static bool take_agent_bar(const cJSON *item, const kdash_agents_t *ag,
      * before the window opened is outside what the record claims to cover. */
     if (b->start > b->end || b->end < ag->ts - ag->window_s)
         return false;
+    /* Optional (CD-31 addendum): absent, not a string or not a known word is
+     * OTHER, and the bar is kept either way. */
+    const cJSON *prov = cJSON_GetObjectItemCaseSensitive(item, "provider");
+    b->provider = cJSON_IsString(prov)
+                      ? kdash_agent_provider_from_str(prov->valuestring)
+                      : KDASH_AGENT_PROVIDER_OTHER;
     if (cJSON_GetObjectItemCaseSensitive(item, "parent") &&
         !req_short_token(item, "parent", b->parent, sizeof(b->parent))) {
         b->parent[0] = '\0';

@@ -1973,8 +1973,13 @@ The v1 bar can carry a session provider. The producer vocabulary matches
 ksitrep (Claude, Copilot CLI, Codex, Other) as lowercase wire values
 `claude`, `ghcp`, `codex`, `other`. Publishers normalize unknown providers
 to `other`. Provider-aware readers also use `other` for absent or
-unrecognized values and keep the bar. The existing C reader ignores the
-field, including when calculating freshness and resolving the parent.
+unrecognized values and keep the bar. The field plays no part in
+freshness or in resolving the parent.
+
+Sprint 030 (korg:4950) taught the C reader the field:
+`kdash_agent_bar_t.provider` is a `kdash_agent_provider_t`, OTHER (0) for an
+absent, non-string or unrecognized value, with
+`kdash_agent_provider_from_str()` / `_str()` for the words.
 
 ## CD-32 — A service card's layout rides the same key as optional fields, and the border stays the reader's (sprint 028)
 
@@ -2031,6 +2036,12 @@ values. Both publisher wrappers recognize the namespace.
 - `plan_type` is optional display metadata. The v1 feed projects the
   subscription windows. Upstream limit IDs, credits and reached-limit
   reasons are outside that projection.
+- **The C reader** (sprint 030, korg:4950): `kdash_parse_codex_limits()`
+  requires every field the schema requires — a record missing one is
+  rejected whole, never half-read, because a reader that defaulted a missing
+  `five_hour_none` would be guessing exactly what the writer must state. A
+  rejected record is "unknown" (`valid == false`), never "no window".
+  `kdash_codex_limits_stale()` is `kdash_cadence_stale()` on `updated_at`.
 
 ## Open questions
 
