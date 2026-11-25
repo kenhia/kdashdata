@@ -219,6 +219,10 @@ reader's (CD-32). `kdash_service_t` gained the fields.
 Sprint 029 (korg:4945, program korg:4951) specifies the duration-keyed
 `codex:limits` hash on central (CD-33) and adds optional `provider` on
 `kdash:agents` bars (CD-31 addendum).
+Sprint 030 (korg:4950, program korg:4951) gave libkdash the readers for both:
+`kdash_parse_codex_limits()` and `kdash_codex_limits_stale()`, and
+`provider` on `kdash_agent_bar_t`, for kpidash's usage card and Agents
+Timeline marker.
 See `docs/architecture.md` (decisions
 CD-1…CD-33, open questions OQ-n), `contracts/rules.md`,
 `contracts/registry.md`, `include/kdash/kdash.h` for the consumer API, and
