@@ -71,6 +71,9 @@
 #define KDASH_KEY_CLAUDE_LIMITS      "claude:limits"
 #define KDASH_KEY_CLAUDE_RECENT      "claude:recent"
 
+/* The codex family (registry.md, CD-33): one fixed key, a v1 hash. */
+#define KDASH_KEY_CODEX_LIMITS "codex:limits"
+
 /* The `<host>` sentinel meaning "this service has no host" (registry.md). */
 #define KDASH_HOST_SENTINEL "_"
 

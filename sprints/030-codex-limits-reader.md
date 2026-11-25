@@ -32,6 +32,7 @@ central at 2026-11-25 13:50 PST: `codex:limits` carries a Pro record
 
 ## What shipped
 
+- `include/kdash/kdash_keys.h`: `KDASH_KEY_CODEX_LIMITS`.
 - `include/kdash/kdash_payload.h`, `src/kdash_payload.c`:
   `kdash_codex_limits_t`, `kdash_parse_codex_limits()`,
   `kdash_codex_limits_stale()`; `kdash_agent_provider_t`,
