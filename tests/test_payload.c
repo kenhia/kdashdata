@@ -1679,7 +1679,7 @@ int main(void) {
                     "\"start\":1794680000,\"end\":1794700000.5,"
                     "\"state\":\"working\",\"shipped\":false,\"overseer\":true},"
                     AG_BAR("leg1", 1794685000, 1794690000, "done", true, false,
-                           ",\"parent\":\"ov1\"") ","
+                           ",\"parent\":\"ov1\",\"provider\":\"codex\"") ","
                     AG_BAR("s3.b2", 1794695000, 1794700000.5, "waiting", false,
                            false, "") "],"
                     "\"v\":1,\"unknown_future_field\":{\"x\":1}}",

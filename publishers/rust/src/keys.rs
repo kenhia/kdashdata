@@ -24,7 +24,8 @@ pub const KEY_MAX: usize = 512;
 ///
 /// `kdash` is the namespace for new shared feeds; `kpidash`, `claude` and
 /// `kvscf` are grandfathered families (CD-3); `ghcp` sits outside `kdash:` by
-/// one named exception (CD-21) and mirrors `claude:session` field-for-field;
+/// a named exception (CD-21) and mirrors `claude:session` field-for-field;
+/// `codex` is the usage limits exception (CD-33).
 /// `kdeskdash` is dashboard-local state, listed for visibility and not
 /// schema-governed. `kstudiodash` was the second dashboard-local namespace
 /// until kstudio left the homelab (2026-10-20); it is retired in the registry
@@ -36,7 +37,15 @@ pub const KEY_MAX: usize = 512;
 /// nothing taught this array, and every `ghcp:*` write was refused until
 /// sprint 013 (WI 2781). Neither repo's gate could see it, because no gate
 /// compared the two sides.
-pub const NAMESPACES: &[&str] = &["kdash", "kpidash", "claude", "kvscf", "ghcp", "kdeskdash"];
+pub const NAMESPACES: &[&str] = &[
+    "kdash",
+    "kpidash",
+    "claude",
+    "codex",
+    "kvscf",
+    "ghcp",
+    "kdeskdash",
+];
 
 /// The glob metacharacters `scan` accepts inside a segment.
 ///
@@ -270,6 +279,7 @@ mod tests {
         assert!(check_key("kpidash:services:sonarr:_").is_ok());
         assert!(check_key("claude:session:kai:abc-123").is_ok());
         assert!(check_key("claude:limits").is_ok());
+        assert!(check_key("codex:limits").is_ok());
         // The key sprint 012 legalised and this side refused (WI 2781).
         assert!(check_key("ghcp:session:kai:abc-123").is_ok());
         assert!(check_key("kvscf:instances:cleo").is_ok());

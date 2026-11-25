@@ -93,6 +93,11 @@
             "type": "boolean",
             "description": "This bar belongs to a session overseeing a program; legs hang beneath it and its name is drawn in the overseer colour."
           },
+          "provider": {
+            "type": "string",
+            "enum": ["claude", "ghcp", "codex", "other"],
+            "description": "Optional session provider from ksitrep. Publishers normalize unrecognized providers to other. Provider-aware readers treat absent or unrecognized values as other and keep the bar."
+          },
           "parent": {
             "type": "string",
             "pattern": "^[A-Za-z0-9._-]{1,23}$",
@@ -127,6 +132,7 @@
           "state": "done",
           "shipped": true,
           "overseer": false,
+          "provider": "codex",
           "parent": "cleo-4f2a.1"
         },
         {
@@ -168,6 +174,27 @@
     }
   ],
   "x-counterexamples": [
+    {
+      "record": {
+        "ts": 1794700000.5,
+        "expected_refresh_s": 60,
+        "window_s": 86400,
+        "bars": [
+          {
+            "id": "k1",
+            "host": "kai",
+            "name": "kdashdata",
+            "start": 1794690000,
+            "end": 1794691000,
+            "state": "done",
+            "shipped": false,
+            "overseer": false,
+            "provider": "unknown-provider"
+          }
+        ]
+      },
+      "why": "Writers normalize unrecognized providers to other."
+    },
     {
       "record": {
         "ts": 1794700000.5,

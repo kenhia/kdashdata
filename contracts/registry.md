@@ -13,7 +13,7 @@ stem answers today, and a move is an edit to the store, not to any consumer.
 
 | Home | khlenv stem | Value today | Auth | Holds |
 |---|---|---|---|---|
-| Central | `KDASH_CENTRAL_REDIS` (legacy alias `KPIDASH_REDIS`) | `rpi53:6379` | `REDISCLI_AUTH` (krot: rpi53-redis-password) | `kpidash:*`, `kdash:*` |
+| Central | `KDASH_CENTRAL_REDIS` (legacy alias `KPIDASH_REDIS`) | `rpi53:6379` | `REDISCLI_AUTH` (krot: rpi53-redis-password) | `kpidash:*`, `kdash:*`, `codex:*` |
 | Claude feed (CD-7, relocated) | `KDASH_CLAUDE_REDIS` | `rpi53:6379` | `REDISCLI_AUTH` (krot: rpi53-redis-password) | `claude:*`, `ghcp:*` |
 | Workstation pair (CD-8, amended) | per-app env (no stem yet) | **dev pair: central, `rpi53:6379`** (sprint 014); work pair its own | per-app env; the dev pair's half now uses the central `REDISCLI_AUTH` | `kvscf:*` — the work pair stays with the pair, because kwork cannot reach central |
 | Dashboard-local | none — `127.0.0.1:6379` by definition | `127.0.0.1:6379` on each dashboard host | none/local | `<dashboard>:*` |
@@ -778,6 +778,10 @@ record changes and at least hourly, through `kdash-pub set`. Live since
 
 ### `kdash:agents` — the last 24 hours of agent sessions as bars (sprint 026)
 
+Bars may include `provider` (CD-31 addendum, sprint 029). ksitrep emits
+`claude`, `ghcp`, `codex` or `other`. Provider-aware readers keep the bar
+and use `other` when the value is absent or unrecognized.
+
 kdashdata WI 4693, slice 1 of program korg:4699 (kpidash Agents card). **v1,
 field names pinned** (CD-31): a breaking change is `kdash:agents:v2`.
 
@@ -1008,6 +1012,20 @@ publisher wrappers and the stem (sprint 003), `kdash-pub` distribution
 window (kdeskdash sprint 031), and this close-out (sprint 005). The old home
 still serves `kvscf:*` for the dev pair and always will (CD-8) — this family
 retired a *feed* from that instance, not the instance.
+
+## Family: codex (central, contracted)
+
+| Key | Shape | Schema | Writer |
+|---|---|---|---|
+| `codex:limits` | HASH, no TTL | [limits](schemas/codex-limits.schema.json) — **v1** | kdeskdash Codex usage publisher (planned, korg:4939) |
+
+Use `KDASH_CENTRAL_REDIS`, alongside `claude:limits`. The decoded hash has
+five-hour and seven-day utilization and reset fields, assigned by
+`window_minutes`. A Pro sample can put 10080 minutes in its primary slot.
+Publish that reading as seven-day usage, with `five_hour_none=1` and both
+five-hour values set to zero. Write the required fields together, using the
+observation time in `updated_at`. Readers judge freshness by that stamp and
+`expected_refresh_s` plus reader grace. See CD-33.
 
 ## Family: kvscf (live, two homes — dev pair on central, work pair with its pair)
 

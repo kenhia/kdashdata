@@ -1,0 +1,188 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/kenhia/kdashdata/contracts/schemas/codex-limits.schema.json",
+  "title": "Codex usage limits",
+  "description": "Decoded fields of codex:limits v1, a central Redis HASH with no TTL (CD-33). Redis transports every value as a string. Map windows by window_minutes (300 and 10080) regardless of their upstream slot. Publish the required fields together. The observation stamp and cadence govern freshness.",
+  "type": "object",
+  "required": [
+    "five_hour_none",
+    "five_hour_pct",
+    "five_hour_resets_at",
+    "seven_day_pct",
+    "seven_day_resets_at",
+    "updated_at",
+    "expected_refresh_s",
+    "host",
+    "source"
+  ],
+  "additionalProperties": true,
+  "properties": {
+    "five_hour_none": {
+      "type": "integer",
+      "enum": [
+        0,
+        1
+      ],
+      "description": "1 when the source confirms no 300-minute window; 0 when it reports that window. With 1, write both five-hour fields as zero in the same HSET. A missing or unreadable sample is not evidence of no window."
+    },
+    "five_hour_pct": {
+      "type": "number",
+      "minimum": 0,
+      "maximum": 100,
+      "description": "Used percent for the 300-minute window. Zero when five_hour_none is 1."
+    },
+    "five_hour_resets_at": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 100000000000,
+      "description": "Unix seconds for the 300-minute reset. Zero means unknown or no window; use five_hour_none to distinguish absence."
+    },
+    "seven_day_pct": {
+      "type": "number",
+      "minimum": 0,
+      "maximum": 100,
+      "description": "Used percent for the 10080-minute window."
+    },
+    "seven_day_resets_at": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 100000000000,
+      "description": "Unix seconds for the 10080-minute reset. Zero means unknown."
+    },
+    "updated_at": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 100000000000,
+      "description": "Unix seconds when the sample was observed. Republishing a cached sample must not advance this stamp."
+    },
+    "expected_refresh_s": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 86400,
+      "description": "Seconds between expected fresh observations. Readers add their grace interval to this cadence."
+    },
+    "host": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9._-]{1,63}$",
+      "description": "Host where the observation was made."
+    },
+    "source": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Observation provenance. The rollout publisher writes rollout."
+    },
+    "ts": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 100000000000,
+      "description": "Publish time in Unix seconds, stamped by the publisher wrapper when absent. Freshness uses updated_at."
+    },
+    "plan_type": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Optional upstream plan label for display. Derive window assignments from duration even when this field is present."
+    }
+  },
+  "examples": [
+    {
+      "five_hour_none": 0,
+      "five_hour_pct": 42.5,
+      "five_hour_resets_at": 1795579200,
+      "seven_day_pct": 11.5,
+      "seven_day_resets_at": 1796104200,
+      "updated_at": 1795572000,
+      "expected_refresh_s": 300,
+      "host": "kai",
+      "source": "rollout",
+      "plan_type": "plus"
+    },
+    {
+      "five_hour_none": 1,
+      "five_hour_pct": 0,
+      "five_hour_resets_at": 0,
+      "seven_day_pct": 24.5,
+      "seven_day_resets_at": 1796104200,
+      "updated_at": 1795572000,
+      "expected_refresh_s": 300,
+      "host": "kai",
+      "source": "rollout",
+      "plan_type": "prolite"
+    }
+  ],
+  "x-counterexamples": [
+    {
+      "record": {
+        "five_hour_pct": 0,
+        "five_hour_resets_at": 0,
+        "seven_day_pct": 24.5,
+        "seven_day_resets_at": 1796104200,
+        "updated_at": 1795572000,
+        "expected_refresh_s": 300,
+        "host": "kai",
+        "source": "rollout",
+        "plan_type": "prolite"
+      },
+      "why": "A plan with no five-hour window must declare it explicitly."
+    },
+    {
+      "record": {
+        "five_hour_none": 1,
+        "five_hour_pct": 0,
+        "five_hour_resets_at": 0,
+        "seven_day_resets_at": 1796104200,
+        "updated_at": 1795572000,
+        "expected_refresh_s": 300,
+        "host": "kai",
+        "source": "rollout",
+        "plan_type": "prolite",
+        "primary_pct": 24.5
+      },
+      "why": "Upstream slot names cannot substitute for the duration-based fields."
+    },
+    {
+      "record": {
+        "five_hour_none": true,
+        "five_hour_pct": 0,
+        "five_hour_resets_at": 0,
+        "seven_day_pct": 24.5,
+        "seven_day_resets_at": 1796104200,
+        "updated_at": 1795572000,
+        "expected_refresh_s": 300,
+        "host": "kai",
+        "source": "rollout",
+        "plan_type": "prolite"
+      },
+      "why": "The absence flag is a decoded integer."
+    },
+    {
+      "record": {
+        "five_hour_none": 0,
+        "five_hour_pct": 42.5,
+        "five_hour_resets_at": 1795579200,
+        "seven_day_pct": "11.5",
+        "seven_day_resets_at": 1796104200,
+        "updated_at": 1795572000,
+        "expected_refresh_s": 300,
+        "host": "kai",
+        "source": "rollout",
+        "plan_type": "plus"
+      },
+      "why": "Hash strings must be decoded before validation."
+    },
+    {
+      "record": {
+        "five_hour_none": 0,
+        "five_hour_pct": 42.5,
+        "five_hour_resets_at": 1795579200,
+        "seven_day_pct": 11.5,
+        "seven_day_resets_at": 1796104200,
+        "updated_at": 1795572000,
+        "expected_refresh_s": 0,
+        "host": "kai",
+        "source": "rollout",
+        "plan_type": "plus"
+      },
+      "why": "Readers need a positive observation cadence."
+    }
+  ]
+}

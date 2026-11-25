@@ -1967,6 +1967,15 @@ reader. Also rejected: a per-host key. The card draws all hosts in one
 timeline, and a leg's overseer is usually on another host, so a link would
 have to cross keys.
 
+### CD-31 addendum — Optional provider on each bar (sprint 029)
+
+The v1 bar can carry a session provider. The producer vocabulary matches
+ksitrep (Claude, Copilot CLI, Codex, Other) as lowercase wire values
+`claude`, `ghcp`, `codex`, `other`. Publishers normalize unknown providers
+to `other`. Provider-aware readers also use `other` for absent or
+unrecognized values and keep the bar. The existing C reader ignores the
+field, including when calculating freshness and resolving the parent.
+
 ## CD-32 — A service card's layout rides the same key as optional fields, and the border stays the reader's (sprint 028)
 
 kdashdata WI 4846, slice 1 of program korg:4855. Ken wanted status cards that
@@ -1998,6 +2007,30 @@ Rejected: a magic code inside `text`. No honest schema can parse it, and it
 shows as garbage on every reader that has not learned it. Also rejected: a
 second key family. That means two discovery scans, two freshness rules and two
 eviction paths for what is one card.
+
+## CD-33 — Codex limits windows are identified by duration (sprint 029)
+
+WI 4936, proposal korg:4945 in program korg:4951. `codex:limits` is a named
+namespace exception so the Codex subscription reading can sit beside
+`claude:limits` on central Redis. It is a v1 hash with no TTL. The
+[schema](../contracts/schemas/codex-limits.schema.json) describes decoded
+values. Both publisher wrappers recognize the namespace.
+
+- Map 300 minutes to `five_hour_*` and 10080 minutes to `seven_day_*`
+  regardless of the upstream slot or plan label. Plus typically reports
+  both. Pro (`prolite`) can report only a weekly window in the primary slot.
+- Write all required fields in one HSET. For a confirmed absence of the
+  300-minute window, write `five_hour_none=1`, `five_hour_pct=0` and
+  `five_hour_resets_at=0`, replacing any earlier five-hour reading. With a
+  five-hour window, write `five_hour_none=0`. An unusable or incomplete
+  sample leaves the last valid observation to age. The field relationship
+  is a producer obligation under CD-24.
+- `updated_at` is the sample's observation time. Use it with
+  `expected_refresh_s` and reader grace for freshness. `host` and `source`
+  record provenance, with `rollout` as the rollout writer's source label.
+- `plan_type` is optional display metadata. The v1 feed projects the
+  subscription windows. Upstream limit IDs, credits and reached-limit
+  reasons are outside that projection.
 
 ## Open questions
 
