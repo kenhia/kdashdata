@@ -15,7 +15,7 @@
   schema-governed.
 - **Grandfathered**: `kpidash:*`, `claude:*`, `kvscf:*` — frozen shapes,
   documented in the registry, migrated opportunistically.
-- **`ghcp:*` — one named exception** (CD-21): a *new* family that sits outside
+- **`ghcp:*` — a named exception** (CD-21): a *new* family that sits outside
   `kdash:` because a consumer and a prior ruling had already spelled it that
   way, and renaming a family with no writer yet would spend the stability the
   namespace rule exists to buy. Being new rather than grandfathered, it has
@@ -23,6 +23,10 @@
   event below, not an opportunistic migration. An exception is a decision with
   a reason, recorded in [architecture](../docs/architecture.md) — not a
   precedent. The next family outside `kdash:` needs its own.
+
+- **`codex:*` — usage limits** (CD-33). The named exception puts
+  `codex:limits` beside `claude:limits` on central. It starts at v1 under the
+  versioning rules below.
 
 **Adding a family is two edits, and `just check` now insists on both.** A
 family documented here and in [registry.md](registry.md) but absent from the

@@ -216,8 +216,11 @@ most 8, each a string or `{t, size, align, color}`) and `span` (1 or 2) on the
 same key, with `text` still required as the fallback. A malformed `lines` is
 dropped whole and the card reads `text`, and the border colour stays the
 reader's (CD-32). `kdash_service_t` gained the fields.
+Sprint 029 (korg:4945, program korg:4951) specifies the duration-keyed
+`codex:limits` hash on central (CD-33) and adds optional `provider` on
+`kdash:agents` bars (CD-31 addendum).
 See `docs/architecture.md` (decisions
-CD-1…CD-32, open questions OQ-n), `contracts/rules.md`,
+CD-1…CD-33, open questions OQ-n), `contracts/rules.md`,
 `contracts/registry.md`, `include/kdash/kdash.h` for the consumer API, and
 `publishers/README.md` for the publish side and the version-and-skip rule.
 Next: kpidash's service card draws the multi-line fields (korg:4853), then
