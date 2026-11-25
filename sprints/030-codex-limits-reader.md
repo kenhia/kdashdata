@@ -45,3 +45,15 @@ central at 2026-11-25 13:50 PST: `codex:limits` carries a Pro record
   `codex:limits` no longer says "planned".
 
 No publisher change, so `publish` self-skips.
+
+## Deployed
+
+2026-11-25 ~15:12 PST, from the kpidash 049 karc ship turn on kai, after PR #31
+squash-merged as `2d59768`. `just publish` was a no-op ("nothing to publish:
+0.1.0-6381ec3 already in the store"): this sprint changed only the C library,
+not `kdash-pub`'s inputs. `just deploy` (Knarr deploy
+`01a214f9-4fee-7ceb-ac4e-c54ff1f71a92`) reinstalled `latest` = `0.1.0-6381ec3`
+on kai, kubs0, cleo, komarchy, kbook2 and thrall, with Ken's approval for kai
+and kubs0 (korg:4950 comment 5129). It skipped kimac (ssh timeout) and
+thrall-arch (DNS), both of which are optional hosts. The library itself ships
+inside its consumers: kpidash 049 links it and deploys to rpi53.
